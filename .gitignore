@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+.coverage
+.pytest_cache/
+.ruff_cache/
+
+# Framework working dirs
+/cache/
+/output/
+
+# Local docs (design specs, plans)
+/docs/

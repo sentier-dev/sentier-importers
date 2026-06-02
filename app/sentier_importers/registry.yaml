@@ -1,0 +1,13 @@
+# The human-readable list of all data sources. Read top-to-bottom; one block per
+# source. Adding a source = new folder under sources/ + one block here.
+sources:
+  - name: example-csv
+    module: sentier_importers.sources.example_csv.source
+    target: sentier_inventory
+    category: example
+    fetch:
+      url: "bundled://example.csv"  # overridden by the plugin's fetch(); see source.py
+      format: csv
+    output_format: json
+    validate_against: null
+    enabled: true

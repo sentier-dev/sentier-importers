@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentier_importers"
+authors = [{ name = "Chris Mutel", email = "chris@d-d-s.ch" }]
+maintainers = [{ name = "Chris Mutel", email = "chris@d-d-s.ch" }]
+description = "Source-centric framework to import external data into Sentier target repos"
+readme = "README.md"
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "httpx",
+    "linkml",
+    "linkml-runtime",
+    "loguru",
+    "orjson",
+    "platformdirs",
+    "pyarrow",
+    "pyyaml",
+    "rdflib",
+]
+
+[project.urls]
+source = "https://github.com/sentier-dev/sentier_importers"
+homepage = "https://github.com/sentier-dev/sentier_importers"
+tracker = "https://github.com/sentier-dev/sentier_importers/issues"
+
+[project.scripts]
+sentier-importers = "sentier_importers.__main__:main"
+
+[project.optional-dependencies]
+testing = ["sentier_importers", "pytest", "pytest-cov", "pytest-randomly"]
+dev = [
+    "black",
+    "build",
+    "ruff",
+    "isort",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "pytest-randomly",
+    "setuptools",
+]
+
+[tool.setuptools]
+license-files = ["LICENSE"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["app"]
+
+[tool.setuptools.package-data]
+"sentier_importers" = ["registry.yaml", "sources/**/data/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sentier_importers.__version__" }
+
+[tool.pytest.ini_options]
+addopts = "--cov sentier_importers.core --cov-report term-missing --verbose"
+norecursedirs = ["dist", "build", ".tox"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 99
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "PLC0415"]
+ignore = ["E203"]
+
+[tool.black]
+line-length = 99
+
+[tool.isort]
+profile = "black"
+line_length = 99
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true

@@ -1,0 +1,43 @@
+---
+name: CI checks
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (pre-commit hooks)
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Framework tests (coverage on core/)
+        run: pytest --cov-fail-under=80
+
+      - name: Source plugin tests
+        run: pytest app/sentier_importers/sources/
+
+      - name: Dry-run smoke import
+        run: python -m sentier_importers run --all --output-dir output --cache-dir cache
+
+      - name: Build sdist + wheel
+        run: |
+          pip install build
+          python -m build
