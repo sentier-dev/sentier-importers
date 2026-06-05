@@ -1,5 +1,4 @@
 import pytest
-
 from sentier_importers.core import deliver as deliver_mod
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import DeliveryError

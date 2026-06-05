@@ -1,5 +1,4 @@
 import pytest
-
 import sentier_importers.__main__ as cli
 
 

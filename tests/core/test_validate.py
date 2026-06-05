@@ -1,11 +1,15 @@
 from pathlib import Path
 
 import pytest
-
 from sentier_importers.core import validate as validate_mod
 from sentier_importers.core.errors import ValidationError
 
 SCHEMA = Path(__file__).parent / "fixtures" / "widget.yaml"
+COLLECTION_SCHEMA = Path(__file__).parent / "fixtures" / "product_collection.yaml"
+
+
+def _collection(products):
+    return {"scheme": "https://vocab.sentier.dev/products/", "products": products}
 
 
 def test_none_validator_accepts_anything():
@@ -32,3 +36,34 @@ def test_linkml_requires_schema_path():
 def test_unknown_validator_raises():
     with pytest.raises(ValidationError):
         validate_mod.validate([], "bogus", None, None)
+
+
+def test_linkml_collection_accepts_valid_collection():
+    collection = _collection(
+        [
+            {"iri": "https://vocab.sentier.dev/products/a", "pref_label": "A"},
+            {"iri": "https://vocab.sentier.dev/products/b", "pref_label": "B"},
+        ]
+    )
+    validate_mod.validate(collection, "linkml_collection", COLLECTION_SCHEMA, "ProductCollection")
+
+
+def test_linkml_collection_rejects_missing_scheme():
+    collection = {"products": [{"iri": "x", "pref_label": "A"}]}  # no scheme
+    with pytest.raises(ValidationError):
+        validate_mod.validate(
+            collection, "linkml_collection", COLLECTION_SCHEMA, "ProductCollection"
+        )
+
+
+def test_linkml_collection_rejects_item_missing_pref_label():
+    collection = _collection([{"iri": "https://vocab.sentier.dev/products/a"}])  # no pref_label
+    with pytest.raises(ValidationError):
+        validate_mod.validate(
+            collection, "linkml_collection", COLLECTION_SCHEMA, "ProductCollection"
+        )
+
+
+def test_linkml_collection_requires_schema_path():
+    with pytest.raises(ValidationError):
+        validate_mod.validate(_collection([]), "linkml_collection", None, "ProductCollection")

@@ -6,7 +6,6 @@ import inspect
 from pathlib import Path
 
 import yaml
-
 from sentier_importers.core.errors import RegistryError
 from sentier_importers.core.source import Source, SourceConfig
 
@@ -16,6 +15,8 @@ REGISTRY_PATH = Path(__file__).resolve().parents[1] / "registry.yaml"
 def _to_config(entry: dict) -> SourceConfig:
     try:
         fetch = entry["fetch"]
+        collection = entry.get("collection") or {}
+        dedup = entry.get("dedup") or {}
         return SourceConfig(
             name=entry["name"],
             module=entry["module"],
@@ -26,6 +27,12 @@ def _to_config(entry: dict) -> SourceConfig:
             output_format=entry["output_format"],
             validate_against=entry.get("validate_against"),
             enabled=entry.get("enabled", True),
+            collection_class=collection.get("class"),
+            collection_items_key=collection.get("items_key"),
+            collection_scheme=collection.get("scheme"),
+            schema_file=collection.get("schema_file"),
+            dedup_on_existing=dedup.get("on_existing", "skip"),
+            dedup_check_existing=dedup.get("check_existing", True),
         )
     except (KeyError, TypeError) as exc:
         raise RegistryError(f"invalid source entry {entry!r}: {exc}") from exc

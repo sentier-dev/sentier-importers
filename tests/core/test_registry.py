@@ -1,7 +1,6 @@
 import textwrap
 
 import pytest
-
 from sentier_importers.core import registry as registry_mod
 from sentier_importers.core.errors import RegistryError
 from sentier_importers.core.source import Source, SourceConfig
@@ -38,6 +37,59 @@ def test_load_registry_parses_entries(tmp_path):
     assert cfg.fetch_url == "file:///tmp/x.csv"
     assert cfg.fetch_format == "csv"
     assert cfg.validate_against is None
+
+
+def test_load_registry_parses_collection_and_dedup(tmp_path):
+    path = _write_registry(
+        tmp_path,
+        """
+        sources:
+          - name: agribalyse-products
+            module: m.a
+            target: sentier_vocab
+            category: products
+            fetch: { url: "file:///a.xlsx", format: xlsx }
+            output_format: yaml
+            collection:
+              class: ProductCollection
+              items_key: products
+              scheme: https://vocab.sentier.dev/products/
+              schema_file: product
+            validate_against: Product
+            dedup:
+              on_existing: error
+              check_existing: false
+        """,
+    )
+    cfg = registry_mod.load_registry(path)[0]
+    assert cfg.collection_class == "ProductCollection"
+    assert cfg.collection_items_key == "products"
+    assert cfg.collection_scheme == "https://vocab.sentier.dev/products/"
+    assert cfg.schema_file == "product"
+    assert cfg.dedup_on_existing == "error"
+    assert cfg.dedup_check_existing is False
+
+
+def test_collection_and_dedup_default_when_absent(tmp_path):
+    path = _write_registry(
+        tmp_path,
+        """
+        sources:
+          - name: plain
+            module: m.a
+            target: sentier_inventory
+            category: c
+            fetch: { url: "file:///a", format: csv }
+            output_format: json
+        """,
+    )
+    cfg = registry_mod.load_registry(path)[0]
+    assert cfg.collection_class is None
+    assert cfg.collection_items_key is None
+    assert cfg.collection_scheme is None
+    assert cfg.schema_file is None
+    assert cfg.dedup_on_existing == "skip"
+    assert cfg.dedup_check_existing is True
 
 
 def test_get_config_by_name(tmp_path):

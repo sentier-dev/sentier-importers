@@ -14,7 +14,12 @@ from sentier_importers.core.targets import Target
 
 
 def _raw_url(target: Target, schema_id: str) -> str:
-    """Build the raw.githubusercontent.com URL for ``schema_id`` at the pinned ref."""
+    """Build the raw.githubusercontent.com URL for the ``schema_id`` file at the pinned ref.
+
+    ``schema_id`` is the schema *file* id (e.g. ``product`` → ``schemas/product.yaml``),
+    not a class name — a collection class (``ProductCollection``) and its schema file
+    need not share a name.
+    """
     repo = target.repo.removesuffix(".git").removeprefix("https://github.com/")
     return (
         f"https://raw.githubusercontent.com/{repo}/"

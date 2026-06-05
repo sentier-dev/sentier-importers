@@ -1,5 +1,28 @@
 # The human-readable list of all data sources. Read top-to-bottom; one block per
 # source. Adding a source = new folder under sources/ + one block here.
+#
+# Vocab (sentier_vocab) sources additionally declare a `collection` block — the
+# framework wraps the transformed rows into a single `{scheme, <items_key>: [...]}`
+# Collection object and validates it against the tree-root `class`. A `dedup` block
+# tunes the deterministic in-repo dedup (see core/dedup.py). Both are optional;
+# omitting them yields the legacy flat-list behavior used by bulk targets. Example:
+#
+#   - name: agribalyse-products
+#     module: sentier_importers.sources.agribalyse.source
+#     target: sentier_vocab
+#     category: products
+#     fetch: { url: "https://…/agribalyse.xlsx", format: xlsx }
+#     output_format: yaml
+#     collection:
+#       class: ProductCollection                      # tree-root class to validate against
+#       items_key: products                           # plural slot holding the items
+#       scheme: https://vocab.sentier.dev/products/    # required ConceptScheme IRI
+#       schema_file: product                          # schema file id (schemas/product.yaml)
+#     validate_against: Product                        # item class — documentation / per-item
+#     dedup:
+#       on_existing: skip                              # skip | error | overwrite (default skip)
+#       check_existing: true                           # Layer B on/off (default true)
+#     enabled: true
 sources:
   - name: example-csv
     module: sentier_importers.sources.example_csv.source

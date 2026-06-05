@@ -1,9 +1,13 @@
-import orjson
+from pathlib import Path
 
+import orjson
+import yaml
 from sentier_importers.core import pipeline
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.source import SourceConfig
+from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.sources.example_csv.source import ExampleCsvSource
+
+COLLECTION_SCHEMA = Path(__file__).parent / "fixtures" / "product_collection.yaml"
 
 
 def _source(**overrides):
@@ -52,6 +56,102 @@ def test_run_source_delivers_when_not_dry_run(tmp_path, monkeypatch):
 
 def test_validate_source_returns_row_count(tmp_path):
     assert pipeline.validate_source(_source(), _ctx(tmp_path)) == 3
+
+
+def test_assemble_passthrough_without_collection():
+    rows = [{"a": 1}]
+    assert pipeline._assemble(rows, _source().config) is rows
+
+
+def test_assemble_wraps_rows_into_collection():
+    cfg = _source(
+        collection_class="ProductCollection",
+        collection_items_key="products",
+        collection_scheme="https://vocab.sentier.dev/products/",
+    ).config
+    rows = [{"iri": "x", "pref_label": "A"}]
+    assert pipeline._assemble(rows, cfg) == {
+        "scheme": "https://vocab.sentier.dev/products/",
+        "products": rows,
+    }
+
+
+class _ProductSource(Source):
+    """Emits two product rows shaped for the ProductCollection schema."""
+
+    def fetch(self, ctx):
+        return None
+
+    def parse(self, raw):
+        return []
+
+    def transform(self, records):
+        return [
+            {"iri": "https://vocab.sentier.dev/products/electricity", "pref_label": "Electricity"},
+            {"iri": "https://vocab.sentier.dev/products/wheat", "pref_label": "Wheat"},
+        ]
+
+
+def _product_source(**overrides):
+    base = dict(
+        name="agribalyse-products",
+        module="m",
+        target="sentier_vocab",
+        category="products",
+        fetch_url="unused",
+        fetch_format="xlsx",
+        output_format="yaml",
+        collection_class="ProductCollection",
+        collection_items_key="products",
+        collection_scheme="https://vocab.sentier.dev/products/",
+        schema_file="product",
+        validate_against="Product",
+        dedup_check_existing=False,  # no Layer B network in this test
+    )
+    base.update(overrides)
+    return _ProductSource(SourceConfig(**base))
+
+
+def test_run_source_emits_collection_mapping(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        pipeline.schema_provider, "resolve_schema", lambda target, sid, ctx: COLLECTION_SCHEMA
+    )
+    out = pipeline.run_source(_product_source(), _ctx(tmp_path))
+    assert out == tmp_path / "o" / "sentier_vocab" / "products" / "agribalyse-products.yaml"
+    loaded = yaml.safe_load(out.read_text())
+    assert isinstance(loaded, dict)
+    assert loaded["scheme"] == "https://vocab.sentier.dev/products/"
+    assert {p["pref_label"] for p in loaded["products"]} == {"Electricity", "Wheat"}
+
+
+def test_run_source_resolves_schema_by_file_id(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_resolve(target, schema_id, ctx):
+        captured["schema_id"] = schema_id
+        return COLLECTION_SCHEMA
+
+    monkeypatch.setattr(pipeline.schema_provider, "resolve_schema", fake_resolve)
+    pipeline.run_source(_product_source(), _ctx(tmp_path))
+    # Resolves by the schema FILE id ("product"), not the class name ("ProductCollection").
+    assert captured["schema_id"] == "product"
+
+
+def test_collection_source_validates_with_linkml_collection(tmp_path, monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(pipeline.schema_provider, "resolve_schema", lambda *a: COLLECTION_SCHEMA)
+
+    def fake_validate(payload, validator, schema_path, schema_id):
+        captured["validator"] = validator
+        captured["schema_id"] = schema_id
+        captured["is_mapping"] = isinstance(payload, dict)
+
+    monkeypatch.setattr(pipeline.validate_mod, "validate", fake_validate)
+    pipeline.run_source(_product_source(), _ctx(tmp_path))
+    assert captured["validator"] == "linkml_collection"
+    assert captured["schema_id"] == "ProductCollection"
+    assert captured["is_mapping"] is True
 
 
 def test_run_source_validates_when_schema_declared(tmp_path, monkeypatch):
