@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 
 from platformdirs import user_cache_dir
-
 from sentier_importers.core import pipeline, registry
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import SentierImporterError

@@ -4,7 +4,6 @@ import hashlib
 from pathlib import Path
 
 import httpx
-
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import FetchError
 from sentier_importers.core.types import RawData

@@ -24,7 +24,7 @@ class Target:
 TARGETS: dict[str, Target] = {
     "sentier_vocab": Target(
         name="sentier_vocab",
-        repo="https://github.com/sentier-dev/sentier_vocab.git",
+        repo="https://github.com/sentier-dev/sentier-vocab.git",
         output_subdir="data",
         schema_ref="main",
         validator="linkml",

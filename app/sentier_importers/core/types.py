@@ -1,5 +1,6 @@
 """Shared data types passed between pipeline stages."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -8,6 +9,11 @@ from typing import Any
 Record = dict[str, Any]
 Records = list[Record]
 Rows = list[Record]
+
+# What the validate/emit stages handle: either a flat list of rows (bulk/per-item
+# targets) or a single assembled collection mapping (vocab tree-root targets).
+Collection = Mapping[str, Any]
+Payload = Rows | Collection
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,4 @@
 import pytest
-
 from sentier_importers.core import schema_provider
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import ValidationError
@@ -13,14 +12,14 @@ def _ctx(tmp_path):
 def test_raw_url_builds_pinned_github_raw_path():
     target = Target(
         name="sentier_vocab",
-        repo="https://github.com/sentier-dev/sentier_vocab.git",
+        repo="https://github.com/sentier-dev/sentier-vocab.git",
         output_subdir="data",
         schema_ref="v1.2.3",
         validator="linkml",
     )
     url = schema_provider._raw_url(target, "unit-group")
     assert url == (
-        "https://raw.githubusercontent.com/sentier-dev/sentier_vocab/"
+        "https://raw.githubusercontent.com/sentier-dev/sentier-vocab/"
         "v1.2.3/schemas/unit-group.yaml"
     )
 

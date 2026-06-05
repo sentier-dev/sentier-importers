@@ -1,5 +1,4 @@
 import pytest
-
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.core.types import RawData
