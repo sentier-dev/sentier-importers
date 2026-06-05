@@ -2,7 +2,6 @@ import orjson
 import pyarrow.parquet as pq
 import pytest
 import yaml
-
 from sentier_importers.core import write as write_mod
 from sentier_importers.core.errors import SentierImporterError
 
@@ -34,3 +33,19 @@ def test_write_creates_parent_dirs(tmp_path):
 def test_unknown_format_raises(tmp_path):
     with pytest.raises(SentierImporterError):
         write_mod.write(ROWS, tmp_path / "data.xml", "xml")
+
+
+COLLECTION = {"scheme": "https://vocab.sentier.dev/products/", "products": ROWS}
+
+
+def test_write_yaml_accepts_mapping(tmp_path):
+    out = write_mod.write(COLLECTION, tmp_path / "data.yaml", "yaml")
+    loaded = yaml.safe_load(out.read_text())
+    assert isinstance(loaded, dict)
+    assert loaded == COLLECTION
+    assert loaded["scheme"] == "https://vocab.sentier.dev/products/"
+
+
+def test_write_json_accepts_mapping(tmp_path):
+    out = write_mod.write(COLLECTION, tmp_path / "data.json", "json")
+    assert orjson.loads(out.read_bytes()) == COLLECTION

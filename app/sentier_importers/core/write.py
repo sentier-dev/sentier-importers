@@ -1,18 +1,17 @@
 """Registry of output writers: json | yaml | parquet. The framework never emits
 TTL — RDF is an input concern only."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
-
 from sentier_importers.core.errors import SentierImporterError
-from sentier_importers.core.types import Rows
+from sentier_importers.core.types import Payload, Rows
 
-WriterFn = Callable[[Rows, Path], Path]
+WriterFn = Callable[[Payload, Path], Path]
 
 _WRITERS: dict[str, WriterFn] = {}
 
@@ -25,26 +24,30 @@ def register_writer(fmt: str, fn: WriterFn) -> None:
     _WRITERS[fmt] = fn
 
 
-def write(rows: Rows, path: Path, fmt: str) -> Path:
-    """Write ``rows`` to ``path`` using the writer registered for ``fmt``.
+def write(payload: Payload, path: Path, fmt: str) -> Path:
+    """Write ``payload`` to ``path`` using the writer registered for ``fmt``.
 
-    Creates parent directories as needed. Returns the written path.
+    ``payload`` is a list of rows or a single assembled collection mapping. The
+    ``json``/``yaml`` writers serialize either; ``parquet`` is list-only (bulk
+    targets). Creates parent directories as needed. Returns the written path.
     """
     try:
         writer = _WRITERS[fmt]
     except KeyError:
         raise SentierImporterError(f"no writer registered for format {fmt!r}") from None
     path.parent.mkdir(parents=True, exist_ok=True)
-    return writer(rows, path)
+    return writer(payload, path)
 
 
-def _write_json(rows: Rows, path: Path) -> Path:
-    path.write_bytes(orjson.dumps(rows, option=orjson.OPT_INDENT_2))
+def _write_json(payload: Payload, path: Path) -> Path:
+    path.write_bytes(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
     return path
 
 
-def _write_yaml(rows: Rows, path: Path) -> Path:
-    path.write_text(yaml.safe_dump(rows, sort_keys=True, allow_unicode=True), encoding="utf-8")
+def _write_yaml(payload: Payload, path: Path) -> Path:
+    # ``safe_dump`` needs a plain dict, not an arbitrary Mapping subclass.
+    data = dict(payload) if isinstance(payload, Mapping) else payload
+    path.write_text(yaml.safe_dump(data, sort_keys=True, allow_unicode=True), encoding="utf-8")
     return path
 
 

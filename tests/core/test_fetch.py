@@ -1,7 +1,6 @@
 import hashlib
 
 import pytest
-
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import FetchError

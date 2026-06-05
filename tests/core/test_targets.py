@@ -1,7 +1,6 @@
 import dataclasses
 
 import pytest
-
 from sentier_importers.core import targets as targets_mod
 from sentier_importers.core.errors import RegistryError
 from sentier_importers.core.targets import Target

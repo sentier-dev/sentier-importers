@@ -4,7 +4,6 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import (
     DeliveryError,

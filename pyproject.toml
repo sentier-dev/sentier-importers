@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sentier_importers"
+name = "sentier-importers"
 authors = [{ name = "Chris Mutel", email = "chris@d-d-s.ch" }]
 maintainers = [{ name = "Chris Mutel", email = "chris@d-d-s.ch" }]
 description = "Source-centric framework to import external data into Sentier target repos"
@@ -25,6 +25,7 @@ dependencies = [
     "linkml",
     "linkml-runtime",
     "loguru",
+    "openpyxl",
     "orjson",
     "platformdirs",
     "pyarrow",
@@ -33,9 +34,9 @@ dependencies = [
 ]
 
 [project.urls]
-source = "https://github.com/sentier-dev/sentier_importers"
-homepage = "https://github.com/sentier-dev/sentier_importers"
-tracker = "https://github.com/sentier-dev/sentier_importers/issues"
+source = "https://github.com/sentier-dev/sentier-importers"
+homepage = "https://github.com/sentier-dev/sentier-importers"
+tracker = "https://github.com/sentier-dev/sentier-importers/issues"
 
 [project.scripts]
 sentier-importers = "sentier_importers.__main__:main"
