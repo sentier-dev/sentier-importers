@@ -31,14 +31,14 @@ TARGETS: dict[str, Target] = {
     ),
     "sentier_inventory": Target(
         name="sentier_inventory",
-        repo="https://github.com/sentier-dev/sentier_inventory.git",
+        repo="https://github.com/sentier-dev/sentier-inventory.git",
         output_subdir="data",
         schema_ref=None,
         validator="none",
     ),
     "sentier_methods": Target(
         name="sentier_methods",
-        repo="https://github.com/sentier-dev/sentier_methods.git",
+        repo="https://github.com/sentier-dev/sentier-methods.git",
         output_subdir="data",
         schema_ref=None,
         validator="none",

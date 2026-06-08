@@ -47,7 +47,7 @@ _VOCAB_TARGET = Target(
 )
 _BULK_TARGET = Target(
     name="sentier_inventory",
-    repo="https://github.com/sentier-dev/sentier_inventory.git",
+    repo="https://github.com/sentier-dev/sentier-inventory.git",
     output_subdir="data",
 )
 
