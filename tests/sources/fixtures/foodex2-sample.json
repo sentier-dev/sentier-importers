@@ -1,0 +1,79 @@
+{
+  "metadata": { "source": "foodex2", "version": "8.9", "totalTerms": 9 },
+  "terms": [
+    {
+      "id": "FOOD", "name": "Food", "shortName": "", "description": "Food list root.",
+      "source": "foodex2", "level": 0, "status": "active",
+      "properties": { "commonNames": [], "scientificNames": "", "hierarchyCode": "Z0001.0001" },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    },
+    {
+      "id": "A000A", "name": "Teff grain", "shortName": "TEFF",
+      "description": "Cereal grains from the species Eragrostis tef (Zucc.) Trotter.",
+      "source": "foodex2", "level": 1, "status": "active",
+      "properties": {
+        "commonNames": ["Tef grain", "Teff grain"],
+        "scientificNames": "Eragrostis tef (Zucc.) Trotter",
+        "hierarchyCode": "Z0001.0001.0001",
+        "facets": { "F01": "ORG1", "F28": "FAC1", "F27": "A000A" },
+        "implicitFacets": {}
+      },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": { "foodexOldCode": "A.01.000028", "GEMSCode": "GC0652", "matrixCode": "" }
+    },
+    {
+      "id": "FEED", "name": "Feed", "shortName": "", "description": "Feed list root.",
+      "source": "foodex2", "level": 0, "status": "active",
+      "properties": { "commonNames": [], "scientificNames": "", "hierarchyCode": "Z0001.0002" },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    },
+    {
+      "id": "A001B", "name": "Obsolete millet term", "shortName": "", "description": "",
+      "source": "foodex2", "level": 1, "status": "deprecated",
+      "properties": { "commonNames": [], "scientificNames": "", "hierarchyCode": "Z0001.0002.0001" },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    },
+    {
+      "id": "NSRC", "name": "Natural sources", "shortName": "",
+      "description": "Natural sources list root.",
+      "source": "foodex2", "level": 0, "status": "active",
+      "properties": { "commonNames": [], "scientificNames": "", "hierarchyCode": "Z0001.0003" },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    },
+    {
+      "id": "ORG1", "name": "Frogs (as animal)", "shortName": "",
+      "description": "Frogs as living organisms classified in the Order Anura.",
+      "source": "foodex2", "level": 1, "status": "active",
+      "properties": { "commonNames": [], "scientificNames": "Anura", "hierarchyCode": "Z0001.0003.0001" },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    },
+    {
+      "id": "FACR", "name": "Facets", "shortName": "", "description": "Facets list root.",
+      "source": "foodex2", "level": 0, "status": "active",
+      "properties": { "commonNames": [], "scientificNames": "", "hierarchyCode": "Z0001.0006" },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    },
+    {
+      "id": "FAC1", "name": "Boiling (as process)", "shortName": "",
+      "description": "Cooking by boiling, a process descriptor.",
+      "source": "foodex2", "level": 1, "status": "active",
+      "properties": { "commonNames": [], "scientificNames": "", "hierarchyCode": "Z0001.0006.0001" },
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    },
+    {
+      "id": "A999Z", "name": "", "shortName": "",
+      "description": "Malformed term with no preferred label — must be skipped.",
+      "source": "foodex2", "level": 0, "status": "active",
+      "properties": {},
+      "relationships": { "parents": [], "children": [], "related": [] },
+      "metadata": {}
+    }
+  ]
+}

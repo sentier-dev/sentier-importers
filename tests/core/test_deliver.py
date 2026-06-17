@@ -71,3 +71,13 @@ def test_run_wrapper_failure_raises(tmp_path, monkeypatch):
             body="x",
             ctx=_ctx(tmp_path, dry_run=False),
         )
+
+
+def test_remove_stale_same_stem(tmp_path):
+    (tmp_path / "foodex2.yaml").write_text("old")
+    (tmp_path / "foodex2.parquet").write_text("new")
+    (tmp_path / "other.yaml").write_text("keep")
+    deliver_mod._remove_stale_same_stem(tmp_path / "foodex2.parquet")
+    assert not (tmp_path / "foodex2.yaml").exists()  # stale prior format removed
+    assert (tmp_path / "foodex2.parquet").exists()  # incoming file untouched
+    assert (tmp_path / "other.yaml").exists()  # unrelated file kept

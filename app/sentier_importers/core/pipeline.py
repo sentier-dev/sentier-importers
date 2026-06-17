@@ -40,6 +40,21 @@ def _validate(payload: Payload, config: SourceConfig, target: Target, ctx: RunCo
         validate_mod.validate(payload, target.validator, schema_path, config.validate_against)
 
 
+def _arrow_schema(config: SourceConfig, target: Target, ctx: RunContext):
+    """Explicit Arrow schema for a Parquet collection target, else None.
+
+    Built from the item class (``validate_against``) in the resolved LinkML schema, so
+    optional columns are never dropped. The schema fetch is a cache hit (already pulled
+    during validation). Non-parquet or non-collection targets need no schema.
+    """
+    if config.output_format != "parquet" or config.collection_class is None:
+        return None
+    if config.schema_file is None or config.validate_against is None:
+        return None
+    schema_path = schema_provider.resolve_schema(target, config.schema_file, ctx)
+    return write_mod.arrow_schema_for(schema_path, config.validate_against)
+
+
 def _produce(source: Source, ctx: RunContext) -> tuple[Rows, Payload, Target]:
     """Run fetch → parse → transform → dedup → assemble → validate.
 
@@ -71,7 +86,8 @@ def run_source(source: Source, ctx: RunContext) -> Path:
         / config.category
         / f"{config.name}{write_mod.EXTENSIONS[config.output_format]}"
     )
-    write_mod.write(payload, out_path, config.output_format)
+    arrow_schema = _arrow_schema(config, target, ctx)
+    write_mod.write(payload, out_path, config.output_format, arrow_schema)
 
     if not ctx.dry_run:
         deliver_mod.deliver(

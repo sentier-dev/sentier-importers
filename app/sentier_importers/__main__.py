@@ -26,6 +26,7 @@ def _ctx(args: argparse.Namespace) -> RunContext:
         output_dir=Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_DIR,
         dry_run=not getattr(args, "deliver", False),
         offline=getattr(args, "offline", False),
+        schema_dir=Path(args.schema_dir) if getattr(args, "schema_dir", None) else None,
     )
 
 
@@ -33,6 +34,11 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cache-dir", default=None, help="Fetch cache directory.")
     parser.add_argument("--output-dir", default=None, help="Where to stage emitted files.")
     parser.add_argument("--offline", action="store_true", help="Fail on any fetch cache miss.")
+    parser.add_argument(
+        "--schema-dir",
+        default=None,
+        help="Validate against schemas in this local dir instead of the target's pinned ref.",
+    )
 
 
 def cmd_list(args: argparse.Namespace) -> None:

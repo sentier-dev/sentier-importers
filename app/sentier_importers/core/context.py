@@ -12,9 +12,13 @@ class RunContext:
     - ``output_dir``: where emitted files are staged before delivery.
     - ``dry_run``: when True (default), never open a PR — stage locally only.
     - ``offline``: when True, a fetch cache miss is an error (used in tests/CI).
+    - ``schema_dir``: when set, validate against schemas in this local directory instead
+      of fetching the target repo's pinned ref — for co-developing data and schema before
+      the schema change is pushed.
     """
 
     cache_dir: Path
     output_dir: Path
     dry_run: bool = True
     offline: bool = False
+    schema_dir: Path | None = None

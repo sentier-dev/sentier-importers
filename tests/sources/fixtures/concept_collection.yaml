@@ -1,0 +1,55 @@
+id: https://example.org/concept
+name: concept
+description: >
+  Flattened stand-in for sentier_vocab's product schema, used so closed-world LinkML
+  validation can run offline. Mirrors the Concept slots the esfc importer emits without
+  the multi-file ``common`` import the real schema uses.
+prefixes:
+  linkml: https://w3id.org/linkml/
+  ex: https://example.org/
+default_prefix: ex
+default_range: string
+imports:
+  - linkml:types
+classes:
+  ProductCollection:
+    tree_root: true
+    attributes:
+      scheme:
+        required: true
+        range: uriorcurie
+      products:
+        multivalued: true
+        inlined_as_list: true
+        range: Product
+  Product:
+    attributes:
+      iri:
+        identifier: true
+        required: true
+        range: uriorcurie
+      pref_label:
+        required: true
+      alt_labels:
+        multivalued: true
+      definition:
+        required: false
+      notation:
+        required: false
+      additional_notations:
+        multivalued: true
+      broader:
+        range: uriorcurie
+      related:
+        multivalued: true
+        range: uriorcurie
+      source:
+        range: uriorcurie
+      status:
+        range: status_enum
+enums:
+  status_enum:
+    permissible_values:
+      draft:
+      published:
+      deprecated:

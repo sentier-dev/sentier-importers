@@ -16,6 +16,17 @@ def _run(cmd: list[str], cwd: Path | None = None) -> str:
     return result.stdout
 
 
+def _remove_stale_same_stem(dest: Path) -> None:
+    """Delete any sibling of ``dest`` with the same stem but a different extension.
+
+    When a source's output format changes (e.g. ``foodex2.yaml`` -> ``foodex2.parquet``),
+    this prevents the target repo from ending up with both the old and new files.
+    """
+    for sibling in dest.parent.glob(f"{dest.stem}.*"):
+        if sibling.name != dest.name:
+            sibling.unlink()
+
+
 def deliver(
     files: list[Path],
     target: Target,
@@ -45,7 +56,9 @@ def deliver(
         dest_dir = workdir / target.output_subdir
         dest_dir.mkdir(parents=True, exist_ok=True)
         for file in files:
-            shutil.copy2(file, dest_dir / file.name)
+            dest = dest_dir / file.name
+            _remove_stale_same_stem(dest)
+            shutil.copy2(file, dest)
 
         _run(["git", "add", target.output_subdir], cwd=workdir)
         _run(["git", "commit", "-m", title], cwd=workdir)
