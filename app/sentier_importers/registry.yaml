@@ -35,20 +35,21 @@ sources:
     validate_against: null
     enabled: true
 
-  # esfc "LCA Food Glossary" (https://gitlab.com/eaternity/esfc-glossary, AGPL).
-  # We import the published data only (a snapshot JSON), not the upstream code.
-  # NOTE: ecoinvent is deliberately NOT imported — its nomenclature is proprietary
-  # and license-restricted regardless of esfc's AGPL license.
-  # FoodEx2 routes across three categories by master-hierarchy list (see foodex2/source.py).
-  # All three blocks fetch the same cached 27MB file and filter to their own slice; opt-in
-  # (enabled: false) so the ~31k-term download stays out of the blanket `run --all`.
-  - name: foodex2-products            # Food + Feed + grouping nodes (~5.9k)
+  # FoodEx2, imported from EFSA's PRIMARY source: the MTX catalogue published at
+  # openefsa/efsa-catalogues as MTX.ecf (a ZIP wrapping MTX.xml). Pinned to a specific
+  # commit (catalogue v17.1) so re-imports are deliberate; the pin is recorded in
+  # foodex2/provenance.py (CATALOGUE_VERSION / CATALOGUE_COMMIT / MTX_URL). This replaces
+  # the former third-party esfc-glossary pull (AGPL, opaque AI transforms).
+  # FoodEx2 routes across three categories by `termType` (see foodex2/source.py).
+  # All three blocks fetch the same cached ~3.8MB .ecf and filter to their own slice; opt-in
+  # (enabled: false) so the ~31k-term import stays out of the blanket `run --all`.
+  - name: foodex2-products            # Commodities + grouping nodes, termType r/d/s/c/g (~5.9k)
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
     category: products
     fetch:
-      url: "https://gitlab.com/eaternity/esfc-glossary/-/raw/main/website/public/glossary-foodex2.json"
-      format: json
+      url: "https://raw.githubusercontent.com/openefsa/efsa-catalogues/242ead56e40a29002a66d63fc64c6a497151af4b/ecf_catalogues/MTX.ecf"
+      format: ecf
     output_format: parquet
     collection:
       class: ProductCollection
@@ -61,13 +62,13 @@ sources:
       check_existing: true                           # dedup against existing products
     enabled: false
 
-  - name: foodex2-organisms           # Natural sources — biological taxa (~23.8k)
+  - name: foodex2-organisms           # Biological source taxa, termType n (~23.9k)
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
     category: organisms
     fetch:
-      url: "https://gitlab.com/eaternity/esfc-glossary/-/raw/main/website/public/glossary-foodex2.json"
-      format: json
+      url: "https://raw.githubusercontent.com/openefsa/efsa-catalogues/242ead56e40a29002a66d63fc64c6a497151af4b/ecf_catalogues/MTX.ecf"
+      format: ecf
     output_format: parquet
     collection:
       class: OrganismCollection
@@ -80,13 +81,13 @@ sources:
       check_existing: false                          # new category; no existing data dir
     enabled: false
 
-  - name: foodex2-qualifiers          # Facets + Non-food matrices — descriptors (~1.9k)
+  - name: foodex2-qualifiers          # Facet descriptors, termType f (~1.9k)
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
     category: qualifiers
     fetch:
-      url: "https://gitlab.com/eaternity/esfc-glossary/-/raw/main/website/public/glossary-foodex2.json"
-      format: json
+      url: "https://raw.githubusercontent.com/openefsa/efsa-catalogues/242ead56e40a29002a66d63fc64c6a497151af4b/ecf_catalogues/MTX.ecf"
+      format: ecf
     output_format: parquet
     collection:
       class: QualifierCollection
