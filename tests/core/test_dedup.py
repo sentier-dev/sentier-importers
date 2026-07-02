@@ -186,7 +186,7 @@ def _seed(cache_dir, url, payload: bytes):
 def test_existing_index_reads_seeded_collections(tmp_path):
     ctx = _ctx(tmp_path, offline=True)
     listing_url = (
-        "https://api.github.com/repos/sentier-dev/sentier-vocab/" "contents/data/products?ref=main"
+        "https://api.github.com/repos/sentier-dev/sentier-vocab/contents/data/products?ref=main"
     )
     file_url = "https://example.test/core.yaml"
     _seed(

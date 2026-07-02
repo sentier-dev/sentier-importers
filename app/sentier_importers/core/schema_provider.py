@@ -28,10 +28,7 @@ def _raw_url(target: Target, schema_id: str) -> str:
     need not share a name.
     """
     repo = target.repo.removesuffix(".git").removeprefix("https://github.com/")
-    return (
-        f"https://raw.githubusercontent.com/{repo}/"
-        f"{target.schema_ref}/schemas/{schema_id}.yaml"
-    )
+    return f"https://raw.githubusercontent.com/{repo}/{target.schema_ref}/schemas/{schema_id}.yaml"
 
 
 def _local_imports(content: bytes) -> list[str]:

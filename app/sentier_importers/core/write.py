@@ -110,7 +110,7 @@ def _write_yaml(payload: Payload, path: Path, arrow_schema: "pa.Schema | None" =
 
 def _write_parquet(payload: Payload, path: Path, arrow_schema: "pa.Schema | None" = None) -> Path:
     scheme, rows = _split_collection(payload)
-    rows = sorted(rows, key=lambda r: (r.get("notation") or r.get("iri") or ""))
+    rows = sorted(rows, key=lambda r: r.get("notation") or r.get("iri") or "")
     schema = arrow_schema if arrow_schema is not None else _infer_arrow_schema(rows)
     table = pa.Table.from_pylist(rows, schema=schema)
     if scheme is not None:

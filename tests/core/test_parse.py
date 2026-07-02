@@ -41,7 +41,7 @@ def test_parse_yaml():
 
 
 def test_parse_ttl():
-    ttl = "@prefix ex: <http://example.org/> .\n" "ex:s ex:p ex:o .\n"
+    ttl = "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .\n"
     records = parse_mod.parse(_raw(ttl), "ttl")
     assert records == [
         {

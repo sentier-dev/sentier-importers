@@ -15,3 +15,5 @@ build/
 
 # Local docs (design specs, plans)
 /docs/
+.gstack/
+.observer.lock
