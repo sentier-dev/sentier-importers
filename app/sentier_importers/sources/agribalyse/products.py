@@ -43,6 +43,27 @@ def _norm(value: object) -> str:
     return " ".join(str(value).split()) if value is not None else ""
 
 
+def parse_reference_synthese(raw: RawData) -> Records:
+    """Read the reference-synthese parquet, take the header from row 2, stream data rows.
+
+    Shared by the products and processes importers (both key off the same workbook).
+    """
+    data = pq.read_table(io.BytesIO(raw.content)).to_pydict()
+    columns = list(data.keys())
+    length = len(data[columns[0]]) if columns else 0
+    label_to_col = {_norm(data[col][_HEADER_ROW]): col for col in columns if _HEADER_ROW < length}
+    records: Records = []
+    for i in range(_DATA_START, length):
+        records.append(
+            {
+                field: _norm(data[label_to_col[label]][i])
+                for label, field in _FIELDS.items()
+                if label in label_to_col
+            }
+        )
+    return records
+
+
 def group_iri(name: str) -> str:
     """IRI for a food-group grouping term."""
     return f"{PRODUCTS_SCHEME}{SOURCE_PREFIX}/group/{slugify(name)}"
@@ -62,23 +83,7 @@ class AgribalyseProductsSource(Source):
     """Map the Agribalyse reference synthese into ``Product`` SKOS rows."""
 
     def parse(self, raw: RawData) -> Records:
-        """Read the parquet, take the header from row 2, and stream data rows."""
-        table = pq.read_table(io.BytesIO(raw.content))
-        data = table.to_pydict()
-        columns = list(data.keys())
-        length = len(data[columns[0]]) if columns else 0
-        label_to_col = {
-            _norm(data[col][_HEADER_ROW]): col for col in columns if _HEADER_ROW < length
-        }
-        records: Records = []
-        for i in range(_DATA_START, length):
-            record = {
-                field: _norm(data[label_to_col[label]][i])
-                for label, field in _FIELDS.items()
-                if label in label_to_col
-            }
-            records.append(record)
-        return records
+        return parse_reference_synthese(raw)
 
     def transform(self, records: Records) -> Rows:
         rows: Rows = []

@@ -180,6 +180,68 @@ sources:
       check_existing: false
     enabled: false
 
+  # Agribalyse process catalog into sentier-vocab (processes). Nomenclature only — the
+  # LCI process name per CIQUAL product, linked to its product term via `related`. No
+  # geography IRI, no exchanges (amounts are the licensed LCI). ~2.45k processes.
+  - name: agribalyse-processes
+    module: sentier_importers.sources.agribalyse.processes
+    target: sentier_vocab
+    category: processes
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
+      format: parquet
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  # EF 3.1 descriptive terms in sentier-vocab (the ID authority). The method + its 25
+  # impact categories as SKOS terms; the numeric CF *values* live in sentier-methods.
+  - name: ef-lcia-method
+    module: sentier_importers.sources.agribalyse.vocab_lcia_methods
+    target: sentier_vocab
+    category: lcia-methods
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    output_format: yaml
+    collection:
+      class: LCIAMethodCollection
+      items_key: lcia_methods
+      scheme: https://vocab.sentier.dev/lcia-methods/
+      schema_file: lcia-method
+    validate_against: LCIAMethod
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: ef-impact-categories
+    module: sentier_importers.sources.agribalyse.vocab_impact_categories
+    target: sentier_vocab
+    category: impact-categories
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    output_format: yaml
+    collection:
+      class: ImpactCategoryCollection
+      items_key: impact_categories
+      scheme: https://vocab.sentier.dev/impact-categories/
+      schema_file: impact-category
+    validate_against: ImpactCategory
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
   # EF 3.1 LCIA layer into sentier-methods (the data repo). Two parquet slices over the
   # same JRC characterization-factor file: the methods table (one row per impact category)
   # and the CF table (one row per CF, keyed to the vocab flow IRIs). CF values are

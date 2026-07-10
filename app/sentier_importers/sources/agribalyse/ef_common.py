@@ -27,6 +27,17 @@ METHOD_SOURCE = "European Commission, Joint Research Centre — Environmental Fo
 #: Base of the flow IRIs CFs reference (must match agribalyse.flows).
 FLOWS_SCHEME = "https://vocab.sentier.dev/flows/"
 
+#: Vocab term IRIs (the descriptive layer; the numeric CF data lives in sentier-methods).
+EF31_SOURCE_IRI = "https://vocab.sentier.dev/sources/ef-3.1"
+VOCAB_METHOD_IRI = "https://vocab.sentier.dev/lcia-methods/ef-3.1"
+VOCAB_IMPACT_SCHEME = "https://vocab.sentier.dev/impact-categories/"
+
+
+def vocab_impact_iri(impact_category: str) -> str:
+    """Vocab IRI for an EF impact-category term."""
+    return f"{VOCAB_IMPACT_SCHEME}ef-3.1/{slugify(impact_category)}"
+
+
 #: EF CF parquet columns we read.
 _COL_FLOW_UUID = "FLOW_uuid"
 _COL_FLOW_NAME = "FLOW_name"
