@@ -36,6 +36,11 @@ class SourceConfig:
     # Deterministic dedup against the target vocab (see core.dedup).
     dedup_on_existing: str = "skip"  # skip | error | overwrite
     dedup_check_existing: bool = True  # Layer B on/off (only active when target has a schema_ref)
+    # Randonneur mapping-package emission (sentier_mappings target). ``package_verb`` set ⇒
+    # wrap rows into ``{name, version, <verb>: rows}`` instead of a vocab collection.
+    package_name: str | None = None
+    package_version: str | None = None
+    package_verb: str | None = None  # replace | update | delete | create
 
 
 class Source(ABC):

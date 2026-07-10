@@ -24,6 +24,23 @@
 #       check_existing: true                           # Layer B on/off (default true)
 #     enabled: true
 sources:
+  # sentier-mappings: Agribalyse 3.2 → EF 3.1 biosphere crosswalk (randonneur package).
+  # Non-ecoinvent, hand-authored entries only (curated + LLM-reviewed); see
+  # docs/specs/2026-07-10-sentier-mappings-target.md. Emits data/<category>/biosphere.json.
+  - name: biosphere
+    module: sentier_importers.sources.agribalyse.mappings_biosphere
+    target: sentier_mappings
+    category: 02-agribalyse-3.2__ef-3.1
+    fetch:
+      url: "https://github.com/sentier-dev/sentier-importers/releases/download/agribalyse-flows-v1/mappings_biosphere.parquet"
+      format: parquet
+    output_format: json
+    package:
+      name: agribalyse-3.2__ef-3.1-biosphere
+      version: 0.1.0
+      verb: replace
+    enabled: false
+
   - name: example-csv
     module: sentier_importers.sources.example_csv.source
     target: sentier_inventory
