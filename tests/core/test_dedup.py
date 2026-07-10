@@ -110,7 +110,9 @@ def test_rows_without_iri_pass_through(tmp_path):
 
 def _patch_existing(monkeypatch, iris, labels):
     monkeypatch.setattr(
-        dedup_mod, "_existing_index", lambda target, items_key, ctx: (set(iris), dict(labels))
+        dedup_mod,
+        "_existing_index",
+        lambda target, category, items_key, ctx: (set(iris), dict(labels)),
     )
 
 
@@ -207,6 +209,6 @@ def test_existing_index_reads_seeded_collections(tmp_path):
         b"  - iri: https://vocab.sentier.dev/products/electricity\n"
         b"    pref_label: Electricity\n",
     )
-    iris, labels = dedup_mod._existing_index(_VOCAB_TARGET, "products", ctx)
+    iris, labels = dedup_mod._existing_index(_VOCAB_TARGET, "products", "products", ctx)
     assert iris == {"https://vocab.sentier.dev/products/electricity"}
     assert labels == {"electricity": "https://vocab.sentier.dev/products/electricity"}
