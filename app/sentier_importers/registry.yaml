@@ -32,7 +32,7 @@ sources:
     target: sentier_mappings
     category: 02-agribalyse-3.2__ef-3.1
     fetch:
-      url: "https://github.com/sentier-dev/sentier-importers/releases/download/agribalyse-flows-v1/mappings_biosphere.parquet"
+      url: "file:///home/laurenz/dds/dds-agribalyse/registry/mappings_biosphere.parquet"
       format: parquet
     output_format: json
     package:
@@ -146,7 +146,7 @@ sources:
     target: sentier_vocab
     category: products
     fetch:
-      url: "https://github.com/sentier-dev/sentier-importers/releases/download/agribalyse-flows-v1/AGRIBALYSE3.2_reference_synthese_raw.parquet"
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
       format: parquet
     output_format: parquet
     collection:
@@ -180,64 +180,28 @@ sources:
       check_existing: false
     enabled: false
 
-  # EF 3.1 LCIA layer (JRC public). Three slices over the same characterization-factor
-  # parquet: one method, its 25 impact categories, and the CF values (re-keyed to the
-  # agribalyse flow IRIs — no ecoinvent). CF values are JRC-public and uncapped.
+  # EF 3.1 LCIA layer into sentier-methods (the data repo). Two parquet slices over the
+  # same JRC characterization-factor file: the methods table (one row per impact category)
+  # and the CF table (one row per CF, keyed to the vocab flow IRIs). CF values are
+  # JRC-public and uncapped; no ecoinvent involvement. Fills data/01-ef-3.1/.
   - name: methods
     module: sentier_importers.sources.agribalyse.methods
-    target: sentier_vocab
-    category: lcia-methods
+    target: sentier_methods
+    category: 01-ef-3.1
     fetch:
-      url: "https://github.com/sentier-dev/sentier-importers/releases/download/agribalyse-flows-v1/EF-LCIAMethod-CF-EF-v3.1.parquet"
-      format: parquet
-    output_format: yaml
-    collection:
-      class: LCIAMethodCollection
-      items_key: lcia_methods
-      scheme: https://vocab.sentier.dev/lcia-methods/
-      schema_file: lcia-method
-    validate_against: LCIAMethod
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: impact_categories
-    module: sentier_importers.sources.agribalyse.impact_categories
-    target: sentier_vocab
-    category: impact-categories
-    fetch:
-      url: "https://github.com/sentier-dev/sentier-importers/releases/download/agribalyse-flows-v1/EF-LCIAMethod-CF-EF-v3.1.parquet"
-      format: parquet
-    output_format: yaml
-    collection:
-      class: ImpactCategoryCollection
-      items_key: impact_categories
-      scheme: https://vocab.sentier.dev/impact-categories/
-      schema_file: impact-category
-    validate_against: ImpactCategory
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: cfs
-    module: sentier_importers.sources.agribalyse.cfs
-    target: sentier_vocab
-    category: characterization-factors
-    fetch:
-      url: "https://github.com/sentier-dev/sentier-importers/releases/download/agribalyse-flows-v1/EF-LCIAMethod-CF-EF-v3.1.parquet"
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
     output_format: parquet
-    collection:
-      class: CharacterizationFactorCollection
-      items_key: characterization_factors
-      scheme: https://vocab.sentier.dev/characterization-factors/
-      schema_file: characterization-factor
-    validate_against: CharacterizationFactor
-    dedup:
-      on_existing: skip
-      check_existing: false                          # new category; keeps first per (impact,flow)
+    enabled: false
+
+  - name: characterization-factors
+    module: sentier_importers.sources.agribalyse.cfs
+    target: sentier_methods
+    category: 01-ef-3.1
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    output_format: parquet
     enabled: false
 
   # Agribalyse adapter — EF 3.1 harmonised elementary flows (license-free, JRC public).
@@ -249,7 +213,7 @@ sources:
     target: sentier_vocab
     category: elementary-flows
     fetch:
-      url: "https://github.com/sentier-dev/sentier-importers/releases/download/agribalyse-flows-v1/harmonised-flows-simple.json.gz"
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz                                # unused: the plugin overrides parse() to gunzip
     output_format: parquet
     collection:

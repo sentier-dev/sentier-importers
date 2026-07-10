@@ -5,24 +5,31 @@ import pyarrow.parquet as pq
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
 from sentier_importers.sources.agribalyse.cfs import AgribalyseEfCfsSource
-from sentier_importers.sources.agribalyse.ef_common import METHOD_IRI, cf_iri, flow_iri, impact_iri
-from sentier_importers.sources.agribalyse.impact_categories import (
-    AgribalyseEfImpactCategoriesSource,
-)
+from sentier_importers.sources.agribalyse.ef_common import flow_iri, method_id, unit_for
 from sentier_importers.sources.agribalyse.methods import AgribalyseEfMethodsSource
 
 
 def _raw() -> RawData:
     cols = {
         "FLOW_uuid": ["u1", "u2", "u1"],
+        "FLOW_name": ["Carbon dioxide", "Methane", "Carbon dioxide"],
         "LCIAMethod_name": ["Climate change", "Climate change", "Acidification"],
-        "CF EF3.1": [1.0, 2.0, 0.5],
+        "CF EF3.1": [1.0, 28.0, 0.5],
+        "LCIAMethod_location": [None, None, None],
+        "FLOW_class0": ["Emissions", "Emissions", "Emissions"],
+        "FLOW_class1": ["air", "air", "air"],
+        "FLOW_class2": [None, None, None],
     }
     table = pa.table(
         {
             "FLOW_uuid": pa.array(cols["FLOW_uuid"], pa.string()),
+            "FLOW_name": pa.array(cols["FLOW_name"], pa.string()),
             "LCIAMethod_name": pa.array(cols["LCIAMethod_name"], pa.string()),
             "CF EF3.1": pa.array(cols["CF EF3.1"], pa.float64()),
+            "LCIAMethod_location": pa.array(cols["LCIAMethod_location"], pa.string()),
+            "FLOW_class0": pa.array(cols["FLOW_class0"], pa.string()),
+            "FLOW_class1": pa.array(cols["FLOW_class1"], pa.string()),
+            "FLOW_class2": pa.array(cols["FLOW_class2"], pa.string()),
         }
     )
     buf = io.BytesIO()
@@ -30,78 +37,37 @@ def _raw() -> RawData:
     return RawData(content=buf.getvalue(), source_url="file://cf.parquet")
 
 
-def _cfg(name, category, cls, items_key, scheme, schema_file, validate):
+def _cfg(name):
     return SourceConfig(
         name=name,
         module=f"sentier_importers.sources.agribalyse.{name}",
-        target="sentier_vocab",
-        category=category,
+        target="sentier_methods",
+        category="01-ef-3.1",
         fetch_url="unused://",
         fetch_format="parquet",
         output_format="parquet",
-        collection_class=cls,
-        collection_items_key=items_key,
-        collection_scheme=scheme,
-        schema_file=schema_file,
-        validate_against=validate,
-        dedup_check_existing=False,
     )
 
 
-def test_methods_emits_one_method_linking_impact_categories():
-    cfg = _cfg(
-        "methods",
-        "lcia-methods",
-        "LCIAMethodCollection",
-        "lcia_methods",
-        "https://vocab.sentier.dev/lcia-methods/",
-        "lcia-method",
-        "LCIAMethod",
-    )
-    src = AgribalyseEfMethodsSource(cfg)
+def test_methods_one_row_per_impact_category_with_units():
+    src = AgribalyseEfMethodsSource(_cfg("methods"))
     rows = src.transform(src.parse(_raw()))
-    assert len(rows) == 1
-    assert rows[0]["iri"] == METHOD_IRI
-    assert set(rows[0]["impact_categories"]) == {
-        impact_iri("Climate change"),
-        impact_iri("Acidification"),
-    }
+    assert {r["impact_category"] for r in rows} == {"Climate change", "Acidification"}
+    cc = next(r for r in rows if r["impact_category"] == "Climate change")
+    assert cc["method_id"] == method_id("Climate change")
+    assert cc["method_name"] == "EF v3.1"
+    assert cc["unit"] == "kg CO2 eq"
+    assert cc["datasource"] == "ef-3.1"
 
 
-def test_impact_categories_one_per_distinct_method_name():
-    cfg = _cfg(
-        "impact_categories",
-        "impact-categories",
-        "ImpactCategoryCollection",
-        "impact_categories",
-        "https://vocab.sentier.dev/impact-categories/",
-        "impact-category",
-        "ImpactCategory",
-    )
-    src = AgribalyseEfImpactCategoriesSource(cfg)
-    rows = src.transform(src.parse(_raw()))
-    assert {r["pref_label"] for r in rows} == {"Climate change", "Acidification"}
-    assert {r["iri"] for r in rows} == {
-        impact_iri("Climate change"),
-        impact_iri("Acidification"),
-    }
-
-
-def test_cfs_emit_one_per_row_keyed_to_flows():
-    cfg = _cfg(
-        "cfs",
-        "characterization-factors",
-        "CharacterizationFactorCollection",
-        "characterization_factors",
-        "https://vocab.sentier.dev/characterization-factors/",
-        "characterization-factor",
-        "CharacterizationFactor",
-    )
-    src = AgribalyseEfCfsSource(cfg)
+def test_cfs_one_row_per_cf_keyed_to_flow_and_method():
+    src = AgribalyseEfCfsSource(_cfg("characterization-factors"))
     rows = src.transform(src.parse(_raw()))
     assert len(rows) == 3
-    first = next(r for r in rows if r["iri"] == cf_iri("Climate change", "u1"))
-    assert first["method"] == METHOD_IRI
-    assert first["impact_category"] == impact_iri("Climate change")
-    assert first["flow"] == flow_iri("u1")
-    assert first["factor_value"] == 1.0
+    ch4 = next(r for r in rows if r["flow_name"] == "Methane")
+    assert ch4["method_id"] == method_id("Climate change")
+    assert ch4["impact_category"] == "Climate change"
+    assert ch4["flow"] == flow_iri("u2")
+    assert ch4["factor_value"] == 28.0
+    assert ch4["unit"] == unit_for("Climate change") == "kg CO2 eq"
+    assert ch4["flow_context"] == "Emissions / air"
