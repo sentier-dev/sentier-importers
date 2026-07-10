@@ -52,6 +52,12 @@ def test_cas_and_formula_pick_first_and_property():
     assert formula(flow) == "C22H38O6"
     assert cas_number({}) is None
     assert formula({"properties": {}}) is None
+    # molecular_formula is sometimes a list of candidate formulas -> take the first.
+    list_flow = {
+        "properties": {"https://w3id.org/chemrof/molecular_formula": ["C11H9NO3", "C13H23BN2O3"]}
+    }
+    assert formula(list_flow) == "C11H9NO3"
+    assert formula({"properties": {"https://w3id.org/chemrof/molecular_formula": []}}) is None
 
 
 def test_exact_matches_reads_exactmatch_associations_only():

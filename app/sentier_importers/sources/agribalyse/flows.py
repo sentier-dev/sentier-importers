@@ -56,8 +56,15 @@ def cas_number(flow: Record) -> str | None:
 
 
 def formula(flow: Record) -> str | None:
-    """Molecular formula from the chemrof properties, or ``None``."""
-    return (flow.get("properties") or {}).get(_FORMULA_KEY)
+    """Molecular formula from the chemrof properties, or ``None``.
+
+    The property is usually a scalar but is sometimes a list of candidate formulas
+    (isomers/salts); the schema wants a single string, so take the first.
+    """
+    value = (flow.get("properties") or {}).get(_FORMULA_KEY)
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return value or None
 
 
 def exact_matches(flow: Record) -> list[str]:
