@@ -43,6 +43,13 @@ TARGETS: dict[str, Target] = {
         schema_ref=None,
         validator="none",
     ),
+    "sentier_mappings": Target(
+        name="sentier_mappings",
+        repo="https://github.com/sentier-dev/sentier-mappings.git",
+        output_subdir="data",
+        schema_ref=None,  # randonneur JSON Schema, not LinkML — validated in-source
+        validator="none",
+    ),
 }
 
 

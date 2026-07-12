@@ -1,0 +1,55 @@
+id: https://vocab.sentier.dev/schemas/elementary-flow
+name: sentier_elementary_flow_test
+prefixes:
+  linkml: https://w3id.org/linkml/
+  skos: http://www.w3.org/2004/02/skos/core#
+  sentier: https://vocab.sentier.dev/
+default_prefix: sentier
+default_range: string
+imports:
+  - linkml:types
+classes:
+  ElementaryFlow:
+    class_uri: skos:Concept
+    slots:
+      - iri
+      - pref_label
+      - alt_labels
+      - definition
+      - compartment
+      - sub_compartment
+      - cas_number
+      - formula
+      - additional_notations
+      - exact_match
+      - source
+      - status
+  ElementaryFlowCollection:
+    tree_root: true
+    attributes:
+      scheme:
+        range: uriorcurie
+        required: true
+      flows:
+        range: ElementaryFlow
+        multivalued: true
+        inlined_as_list: true
+slots:
+  iri: { identifier: true, range: uriorcurie }
+  pref_label: { required: true }
+  alt_labels: { multivalued: true }
+  definition: {}
+  compartment: {}
+  sub_compartment: {}
+  cas_number: {}
+  formula: {}
+  additional_notations: { multivalued: true }
+  exact_match: { multivalued: true, range: uriorcurie }
+  source: { range: uriorcurie }
+  status: { range: status_enum }
+enums:
+  status_enum:
+    permissible_values:
+      draft: {}
+      published: {}
+      deprecated: {}

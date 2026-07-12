@@ -77,17 +77,20 @@ def _dedup_intra(rows: Rows) -> Rows:
 
 
 def _existing_index(
-    target: Target, items_key: str, ctx: RunContext
+    target: Target, category: str, items_key: str, ctx: RunContext
 ) -> tuple[set[str], dict[str, str]]:
     """Read the target's ``data/<category>`` collections at the pinned ref.
 
     Lists the directory via the GitHub contents API and fetches each ``*.yaml`` file,
-    all through the cached fetcher so CI can run offline against a seeded cache.
+    all through the cached fetcher so CI can run offline against a seeded cache. The
+    directory is the ``category`` (the on-disk data folder), while ``items_key`` is the
+    plural slot each collection stores its items under — the two differ when they must
+    (e.g. category ``elementary-flows`` / items_key ``flows``).
     Returns the set of existing IRIs and a normalized-label → IRI index.
     """
     repo = target.repo.removesuffix(".git").removeprefix("https://github.com/")
     listing_url = (
-        f"https://api.github.com/repos/{repo}/contents/data/{items_key}?ref={target.schema_ref}"
+        f"https://api.github.com/repos/{repo}/contents/data/{category}?ref={target.schema_ref}"
     )
     entries = orjson.loads(fetch_mod.fetch(listing_url, ctx).content)
 
@@ -147,7 +150,9 @@ def dedup(rows: Rows, config: SourceConfig, target: Target, ctx: RunContext) -> 
         and config.collection_items_key is not None
     )
     if layer_b_active:
-        existing_iris, existing_labels = _existing_index(target, config.collection_items_key, ctx)
+        existing_iris, existing_labels = _existing_index(
+            target, config.category, config.collection_items_key, ctx
+        )
         rows = _dedup_against_existing(
             rows, existing_iris, existing_labels, config.dedup_on_existing
         )

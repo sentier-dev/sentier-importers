@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://data.sentier.dev/mappings/schema/randonneur-package",
+  "title": "Sentier mappings randonneur package profile",
+  "description": "Profile of a randonneur datapackage as stored in data/<NN>-<source>__<target>/{technosphere,biosphere}.json. A self-describing mapping package.",
+  "type": "object",
+  "required": ["name", "version"],
+  "additionalProperties": true,
+  "properties": {
+    "name": { "type": "string", "description": "Package name, e.g. agribalyse-3.2__ecoinvent-3.9.1-technosphere." },
+    "description": { "type": "string" },
+    "version": { "type": "string", "description": "Package version, e.g. 0.1.0." },
+    "replace": { "$ref": "#/$defs/entryArray" },
+    "update": { "$ref": "#/$defs/entryArray" },
+    "delete": { "$ref": "#/$defs/entryArray" },
+    "create": { "$ref": "#/$defs/entryArray" }
+  },
+  "$defs": {
+    "entryArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "entry": {
+      "type": "object",
+      "required": ["source"],
+      "additionalProperties": true,
+      "properties": {
+        "source": {
+          "type": "object",
+          "description": "Open source identifier dict (e.g. {name, unit} or {flow, unit}).",
+          "minProperties": 1
+        },
+        "target": {
+          "type": "object",
+          "description": "Target identifier dict. For ecoinvent (target_proprietary bridges) MUST contain only {database, code} — no name/reference product/location. Otherwise full open identifiers.",
+          "minProperties": 1
+        },
+        "conversion_factor": { "type": "number", "description": "Optional multiplier applied when units differ." },
+        "comment": { "type": "string" }
+      }
+    }
+  }
+}
