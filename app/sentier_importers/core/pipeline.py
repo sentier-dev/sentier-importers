@@ -19,8 +19,15 @@ def _assemble(rows: Rows, config: SourceConfig) -> Payload:
     """Wrap rows into a ``{scheme, <items_key>: [...]}`` collection, or pass through.
 
     Returns ``rows`` unchanged for bulk/non-collection targets (``collection_class``
-    unset); otherwise the assembled collection mapping matching ``data/<category>/*``.
+    unset); a randonneur mapping package when ``package_verb`` is set; otherwise the
+    assembled collection mapping matching ``data/<category>/*``.
     """
+    if config.package_verb is not None:
+        return {
+            "name": config.package_name,
+            "version": config.package_version,
+            config.package_verb: rows,
+        }
     if config.collection_class is None:
         return rows
     return {"scheme": config.collection_scheme, config.collection_items_key: rows}

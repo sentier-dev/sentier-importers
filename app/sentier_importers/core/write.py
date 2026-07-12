@@ -71,20 +71,44 @@ def arrow_schema_for(schema_path: Path | str, item_class: str) -> pa.Schema:
 def _infer_arrow_schema(rows: Rows) -> pa.Schema:
     """Fallback schema when no LinkML schema is available (bulk non-vocab targets).
 
-    Scans *all* rows (not just the first) for the key union and detects list columns, so
-    sparse optional columns are not dropped the way ``from_pylist`` inference would.
+    Scans *all* rows (not just the first) for the key union and infers each column's type
+    from its observed values, so sparse optional columns are not dropped and numeric
+    columns (e.g. ``factor_value``) are not forced to string. Precedence per column:
+    list > string > float > int > bool (a column seen as both int and float becomes float;
+    any string presence wins, since strings can't be coerced to numbers safely).
     """
-    list_keys: set[str] = set()
     order: list[str] = []
+    kinds: dict[str, set[str]] = {}
     for row in rows:
         for key, value in row.items():
             if key not in order:
                 order.append(key)
+                kinds[key] = set()
+            if value is None:
+                continue
             if isinstance(value, list):
-                list_keys.add(key)
-    return pa.schema(
-        [(k, pa.list_(pa.string()) if k in list_keys else pa.string()) for k in order]
-    )
+                kinds[key].add("list")
+            elif isinstance(value, bool):  # bool before int (bool is a subclass of int)
+                kinds[key].add("bool")
+            elif isinstance(value, int):
+                kinds[key].add("int")
+            elif isinstance(value, float):
+                kinds[key].add("float")
+            else:
+                kinds[key].add("str")
+
+    def arrow_type(seen: set[str]) -> "pa.DataType":
+        if "list" in seen:
+            return pa.list_(pa.string())
+        if "str" in seen or not seen:
+            return pa.string()
+        if "float" in seen:
+            return pa.float64()
+        if "int" in seen:
+            return pa.int64()
+        return pa.bool_()
+
+    return pa.schema([(k, arrow_type(kinds[k])) for k in order])
 
 
 def _split_collection(payload: Payload) -> tuple[str | None, Rows]:

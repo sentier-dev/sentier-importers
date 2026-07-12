@@ -24,6 +24,23 @@
 #       check_existing: true                           # Layer B on/off (default true)
 #     enabled: true
 sources:
+  # sentier-mappings: Agribalyse 3.2 → EF 3.1 biosphere crosswalk (randonneur package).
+  # Non-ecoinvent, hand-authored entries only (curated + LLM-reviewed); see
+  # docs/specs/2026-07-10-sentier-mappings-target.md. Emits data/<category>/biosphere.json.
+  - name: biosphere
+    module: sentier_importers.sources.agribalyse.mappings_biosphere
+    target: sentier_mappings
+    category: 02-agribalyse-3.2__ef-3.1
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/registry/mappings_biosphere.parquet"
+      format: parquet
+    output_format: json
+    package:
+      name: agribalyse-3.2__ef-3.1-biosphere
+      version: 0.1.0
+      verb: replace
+    enabled: false
+
   - name: example-csv
     module: sentier_importers.sources.example_csv.source
     target: sentier_inventory
@@ -108,6 +125,178 @@ sources:
     category: sources
     fetch:
       url: "static://foodex2-source"  # unused: the plugin's fetch() returns no input
+      format: json
+    output_format: yaml
+    collection:
+      class: SourceCollection
+      items_key: sources
+      scheme: https://vocab.sentier.dev/sources/
+      schema_file: source
+    validate_against: Source
+    dedup:
+      on_existing: skip
+      check_existing: false                          # single static record; no Layer B
+    enabled: false
+
+  # Agribalyse adapter — CIQUAL products (ADEME Etalab open data). Nomenclature only
+  # (codes, French names, food-group hierarchy); NO impact scores, NO LCI amounts.
+  # ~2.5k terms (11 groups + 61 subgroups + ~2.45k products). Opt-in.
+  - name: agribalyse-products
+    module: sentier_importers.sources.agribalyse.products
+    target: sentier_vocab
+    category: products
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
+      format: parquet
+    output_format: parquet
+    collection:
+      class: ProductCollection
+      items_key: products
+      scheme: https://vocab.sentier.dev/products/
+      schema_file: product
+    validate_against: Product
+    dedup:
+      on_existing: skip
+      check_existing: true                           # dedup against existing products (incl. FoodEx2)
+    enabled: false
+
+  # Bibliographic provenance for Agribalyse 3.2 — the Source every product links to.
+  - name: agribalyse-source
+    module: sentier_importers.sources.agribalyse.agribalyse_provenance
+    target: sentier_vocab
+    category: sources
+    fetch:
+      url: "static://agribalyse-source"  # unused: the plugin's fetch() returns no input
+      format: json
+    output_format: yaml
+    collection:
+      class: SourceCollection
+      items_key: sources
+      scheme: https://vocab.sentier.dev/sources/
+      schema_file: source
+    validate_against: Source
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  # Agribalyse process catalog into sentier-vocab (processes). Nomenclature only — the
+  # LCI process name per CIQUAL product, linked to its product term via `related`. No
+  # geography IRI, no exchanges (amounts are the licensed LCI). ~2.45k processes.
+  - name: agribalyse-processes
+    module: sentier_importers.sources.agribalyse.processes
+    target: sentier_vocab
+    category: processes
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
+      format: parquet
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  # EF 3.1 descriptive terms in sentier-vocab (the ID authority). The method + its 25
+  # impact categories as SKOS terms; the numeric CF *values* live in sentier-methods.
+  - name: ef-lcia-method
+    module: sentier_importers.sources.agribalyse.vocab_lcia_methods
+    target: sentier_vocab
+    category: lcia-methods
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    output_format: yaml
+    collection:
+      class: LCIAMethodCollection
+      items_key: lcia_methods
+      scheme: https://vocab.sentier.dev/lcia-methods/
+      schema_file: lcia-method
+    validate_against: LCIAMethod
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: ef-impact-categories
+    module: sentier_importers.sources.agribalyse.vocab_impact_categories
+    target: sentier_vocab
+    category: impact-categories
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    output_format: yaml
+    collection:
+      class: ImpactCategoryCollection
+      items_key: impact_categories
+      scheme: https://vocab.sentier.dev/impact-categories/
+      schema_file: impact-category
+    validate_against: ImpactCategory
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  # EF 3.1 LCIA layer into sentier-methods (the data repo). Two parquet slices over the
+  # same JRC characterization-factor file: the methods table (one row per impact category)
+  # and the CF table (one row per CF, keyed to the vocab flow IRIs). CF values are
+  # JRC-public and uncapped; no ecoinvent involvement. Fills data/01-ef-3.1/.
+  - name: methods
+    module: sentier_importers.sources.agribalyse.methods
+    target: sentier_methods
+    category: 01-ef-3.1
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    output_format: parquet
+    enabled: false
+
+  - name: characterization-factors
+    module: sentier_importers.sources.agribalyse.cfs
+    target: sentier_methods
+    category: 01-ef-3.1
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    output_format: parquet
+    enabled: false
+
+  # Agribalyse adapter — EF 3.1 harmonised elementary flows (license-free, JRC public).
+  # Fetches the pinned release asset (see docs/plans/2026-07-10-agribalyse-elementary-flows-import.md
+  # Task 0); nomenclature only, NO LCI amounts. Flows tagged "ecoinvent algorithm addition"
+  # are excluded in transform(). ~79.3k flows; opt-in so it stays out of `run --all`.
+  - name: agribalyse-elementary-flows
+    module: sentier_importers.sources.agribalyse.flows
+    target: sentier_vocab
+    category: elementary-flows
+    fetch:
+      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      format: json-gz                                # unused: the plugin overrides parse() to gunzip
+    output_format: parquet
+    collection:
+      class: ElementaryFlowCollection
+      items_key: flows
+      scheme: https://vocab.sentier.dev/flows/
+      schema_file: elementary-flow
+    validate_against: ElementaryFlow
+    dedup:
+      on_existing: skip                              # do not clobber curated flows/ENVO_* terms
+      check_existing: true
+    enabled: false
+
+  # Bibliographic provenance for the EF 3.1 flow list — one Source record every flow
+  # links to via its `source` slot. Static metadata, no fetch input.
+  - name: agribalyse-ef31-source
+    module: sentier_importers.sources.agribalyse.provenance
+    target: sentier_vocab
+    category: sources
+    fetch:
+      url: "static://agribalyse-ef31-source"  # unused: the plugin's fetch() returns no input
       format: json
     output_format: yaml
     collection:

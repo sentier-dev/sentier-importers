@@ -17,6 +17,7 @@ def _to_config(entry: dict) -> SourceConfig:
         fetch = entry["fetch"]
         collection = entry.get("collection") or {}
         dedup = entry.get("dedup") or {}
+        package = entry.get("package") or {}
         return SourceConfig(
             name=entry["name"],
             module=entry["module"],
@@ -33,6 +34,9 @@ def _to_config(entry: dict) -> SourceConfig:
             schema_file=collection.get("schema_file"),
             dedup_on_existing=dedup.get("on_existing", "skip"),
             dedup_check_existing=dedup.get("check_existing", True),
+            package_name=package.get("name"),
+            package_version=package.get("version"),
+            package_verb=package.get("verb"),
         )
     except (KeyError, TypeError) as exc:
         raise RegistryError(f"invalid source entry {entry!r}: {exc}") from exc
