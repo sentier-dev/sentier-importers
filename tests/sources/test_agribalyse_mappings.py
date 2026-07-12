@@ -12,7 +12,9 @@ from sentier_importers.sources.agribalyse.mappings_biosphere import (
     AgribalyseBiosphereMappingsSource,
 )
 
-_SCHEMA = Path("/home/laurenz/dds/sentier-mappings/schema/randonneur-package.schema.json")
+# Vendored copy of sentier-mappings/schema/randonneur-package.schema.json so tests are
+# self-contained (no dependency on a sibling checkout path — CI has no such path).
+_SCHEMA = Path(__file__).parent / "fixtures" / "randonneur-package.schema.json"
 
 _COLS = [
     "source_name",
