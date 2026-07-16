@@ -130,7 +130,7 @@ _FLOWS = [
 
 def _flows_config():
     return SourceConfig(
-        name="agribalyse-elementary-flows",
+        name="ef31-elementary-flows",
         module="sentier_importers.sources.agribalyse.flows",
         target="sentier_vocab",
         category="elementary-flows",
