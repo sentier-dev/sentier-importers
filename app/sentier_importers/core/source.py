@@ -28,6 +28,10 @@ class SourceConfig:
     output_format: str
     validate_against: str | None = None
     enabled: bool = True
+    # Emitted file name override (without extension). ``None`` ⇒ the source name.
+    # Needed when several sources fill one target folder with contract-named files
+    # (e.g. sentier-inventory's ``processes.parquet`` / ``exchanges.parquet``).
+    emit_filename: str | None = None
     # Collection (tree-root) emission for vocab targets. ``None`` ⇒ legacy flat-list.
     collection_class: str | None = None  # tree-root class to validate the collection against
     collection_items_key: str | None = None  # plural slot holding the items (e.g. "products")

@@ -27,6 +27,27 @@ def _remove_stale_same_stem(dest: Path) -> None:
             sibling.unlink()
 
 
+def deliver_local(files: list[Path], target: Target, *, category: str, root: Path) -> list[Path]:
+    """Copy emitted ``files`` into a local checkout of ``target`` — no git, no PR.
+
+    Places each file at ``root/<output_subdir>/<category>/<name>``, preserving the
+    category folder (unlike :func:`deliver`, which currently flattens). This is the
+    regenerate-locally delivery path for sources whose data cannot be pushed to a
+    public repo yet; ``root`` must be an existing directory.
+    """
+    if not root.is_dir():
+        raise DeliveryError(f"local delivery root is not a directory: {root}")
+    dest_dir = root / target.output_subdir / category
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dests: list[Path] = []
+    for file in files:
+        dest = dest_dir / file.name
+        _remove_stale_same_stem(dest)
+        shutil.copy2(file, dest)
+        dests.append(dest)
+    return dests
+
+
 def deliver(
     files: list[Path],
     target: Target,

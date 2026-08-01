@@ -27,6 +27,9 @@ def _ctx(args: argparse.Namespace) -> RunContext:
         dry_run=not getattr(args, "deliver", False),
         offline=getattr(args, "offline", False),
         schema_dir=Path(args.schema_dir) if getattr(args, "schema_dir", None) else None,
+        deliver_local_root=(
+            Path(args.deliver_local) if getattr(args, "deliver_local", None) else None
+        ),
     )
 
 
@@ -83,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("source", nargs="?", default=None)
     run.add_argument("--all", action="store_true", help="Run every enabled source.")
     run.add_argument("--deliver", action="store_true", help="Open a PR (default: dry-run).")
+    run.add_argument(
+        "--deliver-local",
+        default=None,
+        metavar="PATH",
+        help="Copy emitted files into this local target checkout (no git/PR).",
+    )
     _add_common(run)
     run.set_defaults(func=cmd_run)
 
