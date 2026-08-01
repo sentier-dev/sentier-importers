@@ -28,6 +28,7 @@ def _to_config(entry: dict) -> SourceConfig:
             output_format=entry["output_format"],
             validate_against=entry.get("validate_against"),
             enabled=entry.get("enabled", True),
+            emit_filename=entry.get("emit_filename"),
             collection_class=collection.get("class"),
             collection_items_key=collection.get("items_key"),
             collection_scheme=collection.get("scheme"),
