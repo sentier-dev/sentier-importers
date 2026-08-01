@@ -87,14 +87,20 @@ def run_source(source: Source, ctx: RunContext) -> Path:
     config = source.config
     _, payload, target = _produce(source, ctx)
 
+    filename = config.emit_filename or config.name
     out_path = (
         ctx.output_dir
         / config.target
         / config.category
-        / f"{config.name}{write_mod.EXTENSIONS[config.output_format]}"
+        / f"{filename}{write_mod.EXTENSIONS[config.output_format]}"
     )
     arrow_schema = _arrow_schema(config, target, ctx)
     write_mod.write(payload, out_path, config.output_format, arrow_schema)
+
+    if ctx.deliver_local_root is not None:
+        deliver_mod.deliver_local(
+            [out_path], target, category=config.category, root=ctx.deliver_local_root
+        )
 
     if not ctx.dry_run:
         deliver_mod.deliver(

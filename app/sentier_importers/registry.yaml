@@ -311,3 +311,339 @@ sources:
       on_existing: skip
       check_existing: false                          # single static record; no Layer B
     enabled: false
+
+  # ---------------------------------------------------------------------------
+  # BAFU-2026 v1 source family. All entries are opt-in (`enabled: false`): run
+  # them locally against the freely downloadable EcoSpold v1 zip and place
+  # results with `run <name> --deliver-local <path-to-target-clone>`. Data
+  # delivery upstream (`--deliver`) is held until BAFU's written consent.
+  # Citation: "Life Cycle Inventory database of the Swiss Federal
+  # Administration, BAFU:2026".
+  # ---------------------------------------------------------------------------
+  # Bibliographic provenance — the one deliverable artifact (a citation, not Data).
+  - name: bafu-2026-source
+    module: sentier_importers.sources.bafu.provenance
+    target: sentier_vocab
+    category: sources
+    fetch:
+      url: "static://bafu-2026-source"  # unused: the plugin's fetch() returns no input
+      format: json
+    output_format: yaml
+    collection:
+      class: SourceCollection
+      items_key: sources
+      scheme: https://vocab.sentier.dev/sources/
+      schema_file: source
+    validate_against: Source
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  # All 11,947 BAFU process terms (incl. obsolete link targets). Regenerate-locally.
+  - name: bafu-processes
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  # The 2,515 distinct BAFU biosphere flows; uuid5 ids shared with the inventory
+  # exchanges.
+  - name: bafu-elementary-flows
+    module: sentier_importers.sources.bafu.vocab_flows
+    target: sentier_vocab
+    category: elementary-flows
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ElementaryFlowCollection
+      items_key: flows
+      scheme: https://vocab.sentier.dev/flows/
+      schema_file: elementary-flow
+    validate_against: ElementaryFlow
+    dedup:
+      on_existing: skip                              # never clobber EF 3.1/ENVO terms
+      check_existing: true
+    enabled: false
+
+  # Full inventory, one processes/exchanges pair per sector folder (sector map in
+  # sources/bafu/ecospold.py). emit_filename gives the contract file names.
+
+  - name: bafu-agriculture-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 01-agriculture
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-agriculture-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 01-agriculture
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-electricity-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 02-electricity
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-electricity-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 02-electricity
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-chemicals-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 03-chemicals
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-chemicals-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 03-chemicals
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-transport-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 04-transport
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-transport-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 04-transport
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-energy-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 05-energy
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-energy-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 05-energy
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-waste-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 06-waste
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-waste-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 06-waste
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-construction-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 07-construction
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-construction-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 07-construction
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-materials-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 08-materials
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-materials-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 08-materials
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-electronics-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 09-electronics
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-electronics-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 09-electronics
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-building-services-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 10-building-services
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-building-services-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 10-building-services
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-obsolete-processes
+    module: sentier_importers.sources.bafu.inventory_processes
+    target: sentier_inventory
+    category: 99-obsolete
+    emit_filename: processes
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
+
+  - name: bafu-obsolete-exchanges
+    module: sentier_importers.sources.bafu.inventory_exchanges
+    target: sentier_inventory
+    category: 99-obsolete
+    emit_filename: exchanges
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    validate_against: null
+    enabled: false
