@@ -106,10 +106,26 @@ def test_conversion_factor_only_when_units_differ():
     assert entry["conversion_factor"] == 1000.0
 
 
-def test_comment_records_the_tier_and_candidate_count():
-    entry = _transform([_row(tier="T3", candidate_count=2)])[0]
-    assert "T3" in entry["comment"]
-    assert "2 CF-equivalent candidates" in entry["comment"]
+def test_exact_matches_carry_no_comment():
+    """An exact match says everything in the entry; a generic note is noise."""
+    for tier in ("T1", "T2"):
+        assert "comment" not in _transform([_row(tier=tier)])[0]
+
+
+def test_superset_matches_warn_that_the_ef_flow_is_broader():
+    entry = _transform([_row(tier="T3")])[0]
+    assert entry["comment"] == (
+        "the EF flow is characterised in impact categories beyond those this "
+        "flow currently receives"
+    )
+
+
+def test_no_entry_ever_names_the_intermediate_database():
+    """De-bridging removes ecoinvent from the link; it must not survive in prose."""
+    entries = _transform([_row(tier=t) for t in ("T1", "T2", "T3")])
+    blob = json.dumps(entries).lower()
+    assert "ecoinvent" not in blob
+    assert "debridge" not in blob
 
 
 def test_stringified_nan_never_reaches_an_entry():

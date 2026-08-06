@@ -51,10 +51,18 @@ _COLUMNS = [
     "target_db",
 ]
 
+#: Comments are for what a reader could not otherwise tell. An exact match (T1,
+#: T2) needs none — the entry says everything. Only T3 carries a caveat: the EF
+#: flow is characterised in impact categories beyond the ones this BAFU flow is
+#: characterised in today, so adopting it broadens the assessment.
+#:
+#: Nothing here names the intermediate database the factor was matched through.
+#: That is the point of de-bridging, and this repo is public.
 _TIER_COMMENT = {
-    "T1": "already an EF target",
-    "T2": "exact CF twin via ecoinvent",
-    "T3": "EF target agrees on every current factor and adds more",
+    "T3": (
+        "the EF flow is characterised in impact categories beyond those this "
+        "flow currently receives"
+    ),
 }
 
 
@@ -112,13 +120,8 @@ class BafuBiosphereMappingsSource(Source):
         if conversion is not None and float(conversion) != 1.0:
             entry["conversion_factor"] = float(conversion)
 
-        tier = self._clean(record.get("tier"))
-        note = _TIER_COMMENT.get(tier, tier)
-        candidates = record.get("candidate_count") or 0
-        entry["comment"] = (
-            f"debridge {tier}: {note}; {candidates} CF-equivalent candidate"
-            f"{'' if candidates == 1 else 's'}"
-        )
+        if note := _TIER_COMMENT.get(self._clean(record.get("tier"))):
+            entry["comment"] = note
         return entry
 
     @staticmethod
