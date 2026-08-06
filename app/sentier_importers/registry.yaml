@@ -656,10 +656,11 @@ sources:
   # enabled: false — the source side is BAFU flow names, so the payload is held
   # under the same regenerate-locally licence gate as the other bafu-* sources
   # (2026-08-01 spec §3) until a BAFU ToU §2.2 consent lands.
-  - name: biosphere
+  - name: bafu-ef-biosphere          # unique source name; emits biosphere.json
     module: sentier_importers.sources.bafu.mappings_biosphere
     target: sentier_mappings
     category: 03-bafu-2026-v1__ef-3.1
+    emit_filename: biosphere
     fetch:
       url: "file:///home/laurenz/dds/dds-carbonminds-data/registry/mappings_biosphere_ef.parquet"
       format: parquet
