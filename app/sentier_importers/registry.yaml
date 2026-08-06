@@ -647,3 +647,25 @@ sources:
     output_format: parquet
     validate_against: null
     enabled: false
+
+  # sentier-mappings: BAFU-2026 v1 elementary flows → EF 3.1 CF keys.
+  # De-bridged from dds-carbonminds-data, whose bridge targets ecoinvent for
+  # 98.7% of matched flows; each entry here names the EF flow carrying the
+  # identical factor, so no ecoinvent identifier reaches this public repo.
+  # Spec: docs/specs/2026-08-06-bafu-ef-debridged-mappings.md.
+  # enabled: false — the source side is BAFU flow names, so the payload is held
+  # under the same regenerate-locally licence gate as the other bafu-* sources
+  # (2026-08-01 spec §3) until a BAFU ToU §2.2 consent lands.
+  - name: biosphere
+    module: sentier_importers.sources.bafu.mappings_biosphere
+    target: sentier_mappings
+    category: 03-bafu-2026-v1__ef-3.1
+    fetch:
+      url: "file:///home/laurenz/dds/dds-carbonminds-data/registry/mappings_biosphere_ef.parquet"
+      format: parquet
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere
+      version: 0.1.0
+      verb: replace
+    enabled: false
