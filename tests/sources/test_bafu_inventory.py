@@ -113,8 +113,14 @@ def test_registry_declares_full_bafu_family():
     from sentier_importers.core.registry import load_registry
 
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
-    assert len(bafu) == 25  # 11 sectors x 2 tables + source + processes + flows terms
+    # 11 sectors x 2 tables + source + processes + flows terms + the EF crosswalk
+    assert len(bafu) == 26
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
+
+    mappings = [c for c in bafu if c.target == "sentier_mappings"]
+    assert [c.name for c in mappings] == ["bafu-ef-biosphere"]
+    # the bridge folder contract names the file, not the source
+    assert mappings[0].emit_filename == "biosphere"
 
     inventory = [c for c in bafu if c.target == "sentier_inventory"]
     assert len(inventory) == 22
