@@ -313,18 +313,23 @@ sources:
     enabled: false
 
   # ---------------------------------------------------------------------------
-  # BAFU-2026 v1 source family. All entries are opt-in (`enabled: false`): run
-  # them locally against the freely downloadable EcoSpold v1 zip and place
-  # results with `run <name> --deliver-local <path-to-target-clone>`. Data
-  # delivery upstream (`--deliver`) is held until BAFU's written consent.
+  # BAFU-2026 v1 source family. All entries stay opt-in (`enabled: false`):
+  # the fetch URL is a local file path (regenerate-locally pattern), so they
+  # only run on a machine holding the freely downloadable EcoSpold v1 zip.
+  # The BAFU §2.2 licence hold was lifted 2026-08-07 — data ships as normal
+  # PRs (`--deliver`) or into a local clone (`--deliver-local`).
+  # Vocab payload files are content-named, never source-named (rule
+  # 2026-08-07): one file per sector for process terms, one per compartment
+  # for elementary flows; `emit_filename` is the slug the source filters on.
   # Citation: "Life Cycle Inventory database of the Swiss Federal
   # Administration, BAFU:2026".
   # ---------------------------------------------------------------------------
-  # Bibliographic provenance — the one deliverable artifact (a citation, not Data).
+  # Bibliographic provenance record (a citation, not Data).
   - name: bafu-2026-source
     module: sentier_importers.sources.bafu.provenance
     target: sentier_vocab
     category: sources
+    emit_filename: bafu-2026
     fetch:
       url: "static://bafu-2026-source"  # unused: the plugin's fetch() returns no input
       format: json
@@ -340,11 +345,13 @@ sources:
       check_existing: false
     enabled: false
 
-  # All 11,947 BAFU process terms (incl. obsolete link targets). Regenerate-locally.
-  - name: bafu-processes
+  # 11,947 BAFU process terms (incl. obsolete link targets), one per-sector
+  # file (emit_filename = rank-free sector slug from ecospold.SECTORS).
+  - name: bafu-processes-agriculture
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    emit_filename: agriculture
     fetch:
       url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
@@ -360,12 +367,213 @@ sources:
       check_existing: false
     enabled: false
 
-  # The 2,515 distinct BAFU biosphere flows; uuid5 ids shared with the inventory
-  # exchanges.
-  - name: bafu-elementary-flows
+  - name: bafu-processes-electricity
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: electricity
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-chemicals
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: chemicals
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-transport
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: transport
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-energy
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: energy
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-waste
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: waste
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-construction
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: construction
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-materials
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: materials
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-electronics
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: electronics
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-building-services
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: building-services
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  - name: bafu-processes-obsolete
+    module: sentier_importers.sources.bafu.vocab_processes
+    target: sentier_vocab
+    category: processes
+    emit_filename: obsolete
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ProcessCollection
+      items_key: processes
+      scheme: https://vocab.sentier.dev/processes/
+      schema_file: process
+    validate_against: Process
+    dedup:
+      on_existing: skip
+      check_existing: false
+    enabled: false
+
+  # 2,515 distinct BAFU biosphere flows, one per-compartment file; uuid5 ids
+  # shared with the inventory exchanges.
+  - name: bafu-elementary-flows-emissions-to-air
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
     category: elementary-flows
+    emit_filename: emissions-to-air
     fetch:
       url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
@@ -378,6 +586,106 @@ sources:
     validate_against: ElementaryFlow
     dedup:
       on_existing: skip                              # never clobber EF 3.1/ENVO terms
+      check_existing: true
+    enabled: false
+
+  - name: bafu-elementary-flows-emissions-to-water
+    module: sentier_importers.sources.bafu.vocab_flows
+    target: sentier_vocab
+    category: elementary-flows
+    emit_filename: emissions-to-water
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ElementaryFlowCollection
+      items_key: flows
+      scheme: https://vocab.sentier.dev/flows/
+      schema_file: elementary-flow
+    validate_against: ElementaryFlow
+    dedup:
+      on_existing: skip
+      check_existing: true
+    enabled: false
+
+  - name: bafu-elementary-flows-emissions-to-soil
+    module: sentier_importers.sources.bafu.vocab_flows
+    target: sentier_vocab
+    category: elementary-flows
+    emit_filename: emissions-to-soil
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ElementaryFlowCollection
+      items_key: flows
+      scheme: https://vocab.sentier.dev/flows/
+      schema_file: elementary-flow
+    validate_against: ElementaryFlow
+    dedup:
+      on_existing: skip
+      check_existing: true
+    enabled: false
+
+  - name: bafu-elementary-flows-resources
+    module: sentier_importers.sources.bafu.vocab_flows
+    target: sentier_vocab
+    category: elementary-flows
+    emit_filename: resources
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ElementaryFlowCollection
+      items_key: flows
+      scheme: https://vocab.sentier.dev/flows/
+      schema_file: elementary-flow
+    validate_against: ElementaryFlow
+    dedup:
+      on_existing: skip
+      check_existing: true
+    enabled: false
+
+  - name: bafu-elementary-flows-non-material-emissions
+    module: sentier_importers.sources.bafu.vocab_flows
+    target: sentier_vocab
+    category: elementary-flows
+    emit_filename: non-material-emissions
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ElementaryFlowCollection
+      items_key: flows
+      scheme: https://vocab.sentier.dev/flows/
+      schema_file: elementary-flow
+    validate_against: ElementaryFlow
+    dedup:
+      on_existing: skip
+      check_existing: true
+    enabled: false
+
+  - name: bafu-elementary-flows-economic-issues
+    module: sentier_importers.sources.bafu.vocab_flows
+    target: sentier_vocab
+    category: elementary-flows
+    emit_filename: economic-issues
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    output_format: parquet
+    collection:
+      class: ElementaryFlowCollection
+      items_key: flows
+      scheme: https://vocab.sentier.dev/flows/
+      schema_file: elementary-flow
+    validate_against: ElementaryFlow
+    dedup:
+      on_existing: skip
       check_existing: true
     enabled: false
 

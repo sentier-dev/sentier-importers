@@ -102,7 +102,7 @@ _CATEGORY_TO_SECTOR: dict[str, str] = {
 
 _FILENAME_RE = re.compile(r"process_(.+)\.xml$")
 
-#: Parsed-records memo, keyed by content digest — 22 inventory slices + 2 vocab
+#: Parsed-records memo, keyed by content digest — 22 inventory slices + 17 vocab
 #: slices reuse one 37 MB parse when run in a single process.
 _PARSE_CACHE: dict[str, Records] = {}
 
@@ -113,6 +113,20 @@ def sector_for(category: str) -> str:
         return _CATEGORY_TO_SECTOR[category]
     except KeyError:
         raise ParseError(f"BAFU category not in the sector map: {category!r}") from None
+
+
+def sector_slug(sector: str) -> str:
+    """Rank-free sector name (``01-agriculture`` -> ``agriculture``).
+
+    Vocab payload files are content-named per sector without the inventory
+    folder's rank prefix.
+    """
+    return sector.split("-", 1)[1]
+
+
+def compartment_slug(compartment: str) -> str:
+    """File-name slug of a biosphere compartment (``emissions to air`` -> ``emissions-to-air``)."""
+    return re.sub(r"[^a-z0-9]+", "-", compartment.lower()).strip("-")
 
 
 def flow_id(name: str, category: str | None, subcategory: str | None) -> str:

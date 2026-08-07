@@ -106,9 +106,11 @@ def main() -> None:
         f"technosphere/production flows resolved ({tech_unresolved} dangling)",
     )
 
-    vocab_flows_path = next((out / "sentier_vocab" / "elementary-flows").glob("*.parquet"), None)
-    if vocab_flows_path:
-        vocab_ids = set(pq.read_table(vocab_flows_path).column("notation").to_pylist())
+    vocab_flow_files = sorted((out / "sentier_vocab" / "elementary-flows").glob("*.parquet"))
+    if vocab_flow_files:
+        vocab_ids: set[str] = set()
+        for path in vocab_flow_files:
+            vocab_ids.update(pq.read_table(path).column("notation").to_pylist())
         bio_missing = {
             r["flow"]
             for r in flows

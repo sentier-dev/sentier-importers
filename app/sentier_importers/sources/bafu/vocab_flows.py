@@ -16,17 +16,29 @@ FLOWS_SCHEME = "https://vocab.sentier.dev/flows/"
 
 
 class BafuVocabFlowsSource(Source):
-    """Map the distinct BAFU biosphere flows into ``ElementaryFlow`` terms."""
+    """Map distinct BAFU biosphere flows into ``ElementaryFlow`` terms, one file per compartment.
+
+    ``emit_filename`` is the compartment slug (``emissions-to-air``,
+    ``resources``, …): each registry entry emits only that compartment's flows,
+    so the delivered files are named by content, never by source. Without
+    ``emit_filename`` the source emits every distinct flow.
+    """
 
     def parse(self, raw: RawData) -> Records:
         return ecospold.parse_ecospold_zip(raw)
 
     def transform(self, records: Records) -> Rows:
+        compartment = self.config.emit_filename
         rows: Rows = []
         seen: set[str] = set()
         for record in records:
             for exchange in record["exchanges"]:
                 if exchange["group_code"] != 4:  # FromNature / ToNature only
+                    continue
+                if (
+                    compartment
+                    and ecospold.compartment_slug(exchange["category"] or "") != compartment
+                ):
                     continue
                 fid = ecospold.flow_id(
                     exchange["name"], exchange["category"], exchange["subcategory"]

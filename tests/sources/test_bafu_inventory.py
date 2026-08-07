@@ -113,8 +113,9 @@ def test_registry_declares_full_bafu_family():
     from sentier_importers.core.registry import load_registry
 
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
-    # 11 sectors x 2 tables + source + processes + flows terms + the EF crosswalk
-    assert len(bafu) == 26
+    # 11 sectors x 2 inventory tables + source record + 11 per-sector process
+    # term files + 6 per-compartment flow term files + the EF crosswalk
+    assert len(bafu) == 41
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
@@ -127,5 +128,19 @@ def test_registry_declares_full_bafu_family():
     assert {c.category for c in inventory} == set(ecospold.SECTORS)
     assert {c.emit_filename for c in inventory} == {"processes", "exchanges"}
 
-    vocab = {c.name for c in bafu if c.target == "sentier_vocab"}
-    assert vocab == {"bafu-2026-source", "bafu-processes", "bafu-elementary-flows"}
+    vocab = [c for c in bafu if c.target == "sentier_vocab"]
+    processes = {c.emit_filename for c in vocab if c.category == "processes"}
+    assert processes == {sector.split("-", 1)[1] for sector in ecospold.SECTORS}
+    flows = {c.emit_filename for c in vocab if c.category == "elementary-flows"}
+    assert flows == {
+        "emissions-to-air",
+        "emissions-to-water",
+        "emissions-to-soil",
+        "resources",
+        "non-material-emissions",
+        "economic-issues",
+    }
+    (provenance,) = [c for c in vocab if c.category == "sources"]
+    assert provenance.emit_filename == "bafu-2026"
+    # delivered payload files are content-named, never source-named
+    assert all("bafu" not in c.emit_filename for c in vocab if c.category != "sources")
