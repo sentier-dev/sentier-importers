@@ -128,7 +128,7 @@ _FLOWS = [
 ]
 
 
-def _flows_config():
+def _flows_config(emit_filename=None):
     return SourceConfig(
         name="ef31-elementary-flows",
         module="sentier_importers.sources.agribalyse.flows",
@@ -137,6 +137,7 @@ def _flows_config():
         fetch_url="unused://",
         fetch_format="json-gz",
         output_format="parquet",
+        emit_filename=emit_filename,
         collection_class="ElementaryFlowCollection",
         collection_items_key="flows",
         collection_scheme="https://vocab.sentier.dev/flows/",
@@ -173,6 +174,46 @@ def test_transform_maps_ef_flows_and_drops_ecoinvent_additions():
     assert iron["compartment"] == "natural resource"
     assert "cas_number" not in iron
     assert "formula" not in iron
+
+
+def test_transform_filters_to_compartment_file():
+    # emit_filename is the compartment slug: each registry entry emits one
+    # content-named per-compartment file (no source-named payload files).
+    air = AgribalyseFlowsSource(_flows_config(emit_filename="air")).transform(_FLOWS)
+    assert [r["iri"] for r in air] == ["https://vocab.sentier.dev/flows/abc"]
+    resource = AgribalyseFlowsSource(_flows_config(emit_filename="natural-resource")).transform(
+        _FLOWS
+    )
+    assert [r["iri"] for r in resource] == ["https://vocab.sentier.dev/flows/def"]
+    assert AgribalyseFlowsSource(_flows_config(emit_filename="biota")).transform(_FLOWS) == []
+
+
+def test_transform_filtered_run_rejects_unresolvable_compartment():
+    # A compartment-less flow would silently vanish from every per-compartment
+    # slice — fail loudly instead so a new unmapped context forces a decision.
+    import pytest
+
+    orphan = [{"identifier": "xyz", "source": "EF 3.1", "prefLabel": "Weird", "context_iri": None}]
+    with pytest.raises(ValueError, match="compartment"):
+        AgribalyseFlowsSource(_flows_config(emit_filename="air")).transform(orphan)
+    # unfiltered emission keeps accepting it (compartment simply stays unset)
+    (row,) = AgribalyseFlowsSource(_flows_config()).transform(orphan)
+    assert "compartment" not in row
+
+
+def test_registry_declares_per_compartment_ef31_family():
+    from sentier_importers.core.registry import load_registry
+
+    ef31 = [c for c in load_registry() if c.name.startswith("ef31-elementary-flows")]
+    assert {c.emit_filename for c in ef31} == {
+        "air",
+        "water",
+        "soil",
+        "land-use",
+        "natural-resource",
+        "biota",
+    }
+    assert all(c.category == "elementary-flows" and not c.enabled for c in ef31)
 
 
 def test_parse_gunzips_and_reads_flows(tmp_path):
