@@ -98,8 +98,20 @@ def _definition(flow: Record) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def compartment_slug(compartment: str) -> str:
+    """File-name slug of a compartment (``natural resource`` -> ``natural-resource``)."""
+    return re.sub(r"[^a-z0-9]+", "-", compartment.lower()).strip("-")
+
+
 class AgribalyseFlowsSource(Source):
-    """Map the EF 3.1 harmonised flow list into ``ElementaryFlow`` SKOS rows."""
+    """Map the EF 3.1 harmonised flow list into ``ElementaryFlow`` SKOS rows.
+
+    ``emit_filename`` is the compartment slug (``air``, ``natural-resource``, …):
+    each registry entry emits only that compartment's flows, so the delivered
+    files are named by content, never by source. Without ``emit_filename`` the
+    source emits every flow. In a filtered run a flow whose compartment cannot
+    be resolved raises — it would otherwise silently vanish from every slice.
+    """
 
     def parse(self, raw: RawData) -> Records:
         """Gunzip the ``.json.gz`` payload and return its ``flows`` list."""
@@ -107,6 +119,7 @@ class AgribalyseFlowsSource(Source):
         return list(data["flows"])
 
     def transform(self, records: Records) -> Rows:
+        slice_slug = self.config.emit_filename
         rows: Rows = []
         for flow in records:
             if flow.get("source") != ALLOWED_SOURCE:
@@ -115,6 +128,16 @@ class AgribalyseFlowsSource(Source):
             identifier = flow.get("identifier")
             if not label or not identifier:
                 continue
+            if slice_slug:
+                flow_compartment = compartment_for_context(flow.get("context_iri"))
+                if flow_compartment is None:
+                    raise ValueError(
+                        f"flow {identifier!r} has no resolvable compartment "
+                        f"(context {flow.get('context_iri')!r}) — it would be dropped "
+                        f"from every per-compartment file"
+                    )
+                if compartment_slug(flow_compartment) != slice_slug:
+                    continue
 
             row: Record = {"iri": f"{FLOWS_SCHEME}{identifier}", "pref_label": label}
 
