@@ -6,10 +6,10 @@ from sentier_importers.sources.bafu.provenance import BAFU_PROVENANCE_IRI, BafuP
 from sentier_importers.sources.bafu.vocab_flows import BafuVocabFlowsSource
 from sentier_importers.sources.bafu.vocab_processes import BafuVocabProcessesSource
 
-from tests.sources.bafu_fixture import UUID_ELEC, UUID_OBSOLETE, fixture_zip
+from tests.sources.bafu_fixture import UUID_ELEC, UUID_GAS, UUID_OBSOLETE, fixture_zip
 
 
-def _cfg(name, category, module):
+def _cfg(name, category, module, emit_filename=None):
     return SourceConfig(
         name=name,
         module=f"sentier_importers.sources.bafu.{module}",
@@ -18,6 +18,7 @@ def _cfg(name, category, module):
         fetch_url="unused://",
         fetch_format="zip",
         output_format="parquet",
+        emit_filename=emit_filename,
     )
 
 
@@ -40,6 +41,43 @@ def test_vocab_processes_one_term_per_dataset():
     assert elec["source"] == BAFU_PROVENANCE_IRI
     obsolete = next(r for r in rows if r["notation"] == UUID_OBSOLETE)
     assert obsolete["definition"].startswith("[obsolete]")
+
+
+def test_vocab_processes_filters_to_sector_file():
+    # emit_filename is the sector slug: each registry entry emits one
+    # content-named per-sector file (no source-named payload files).
+    def rows_for(sector):
+        src = BafuVocabProcessesSource(
+            _cfg(f"bafu-processes-{sector}", "processes", "vocab_processes", emit_filename=sector)
+        )
+        return src.transform(src.parse(fixture_zip()))
+
+    (elec,) = rows_for("electricity")
+    assert elec["notation"] == UUID_ELEC
+    (gas,) = rows_for("energy")  # natural gas routes to 05-energy
+    assert gas["notation"] == UUID_GAS
+    (obsolete,) = rows_for("obsolete")
+    assert obsolete["notation"] == UUID_OBSOLETE
+    assert rows_for("agriculture") == []
+
+
+def test_vocab_flows_filters_to_compartment_file():
+    def rows_for(compartment_slug):
+        src = BafuVocabFlowsSource(
+            _cfg(
+                f"bafu-elementary-flows-{compartment_slug}",
+                "elementary-flows",
+                "vocab_flows",
+                emit_filename=compartment_slug,
+            )
+        )
+        return src.transform(src.parse(fixture_zip()))
+
+    (co2,) = rows_for("emissions-to-air")
+    assert co2["pref_label"] == "Carbon dioxide, fossil"
+    (water,) = rows_for("resources")
+    assert water["pref_label"] == "Water, river"
+    assert rows_for("emissions-to-soil") == []
 
 
 def test_vocab_flows_distinct_biosphere_terms():

@@ -55,7 +55,7 @@ def sector_metadata(sector: str, folder: Path) -> dict:
     return {
         "sector": sector.split("-", 1)[1],
         "title": SECTOR_TITLES[sector],
-        "description": f"BAFU:2026 v1 datasets, regenerated locally. Source: {CITATION}.",
+        "description": f"Source: {CITATION}.",
         "rank": int(sector.split("-", 1)[0]),
         "schema_version": "0.1.0",
         "row_counts": row_counts,
