@@ -1080,6 +1080,6 @@ sources:
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-biosphere
-      version: 0.1.0
+      version: 0.1.1
       verb: replace
     enabled: false
