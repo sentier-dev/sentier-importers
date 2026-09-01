@@ -672,8 +672,9 @@ sources:
       check_existing: false
     enabled: false
 
-  # 2,515 distinct BAFU biosphere flows, one per-compartment file; uuid5 ids
-  # shared with the inventory exchanges.
+  # 2,515+ distinct BAFU biosphere flows, one per-compartment file; uuid5 ids
+  # shared with the inventory exchanges. Unit is part of identity since 0.2.0,
+  # so Bq/kBq twins mint separate ids.
   - name: bafu-elementary-flows-emissions-to-air
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
