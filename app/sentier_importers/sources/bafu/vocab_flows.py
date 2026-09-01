@@ -41,7 +41,10 @@ class BafuVocabFlowsSource(Source):
                 ):
                     continue
                 fid = ecospold.flow_id(
-                    exchange["name"], exchange["category"], exchange["subcategory"]
+                    exchange["name"],
+                    exchange["category"],
+                    exchange["subcategory"],
+                    exchange["unit"],
                 )
                 if fid in seen:
                     continue

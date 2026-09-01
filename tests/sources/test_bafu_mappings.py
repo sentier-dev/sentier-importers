@@ -91,7 +91,7 @@ def test_source_code_matches_the_vocab_flow_id():
     """The bridge must join to the IRI the BAFU vocab importer mints."""
     entry = _transform([_row()])[0]
     assert entry["source"]["code"] == flow_id(
-        "Carbon dioxide, fossil", "emissions to air", "unspecified"
+        "Carbon dioxide, fossil", "emissions to air", "unspecified", "kg"
     )
 
 

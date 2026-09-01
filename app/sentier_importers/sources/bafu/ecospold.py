@@ -129,9 +129,15 @@ def compartment_slug(compartment: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", compartment.lower()).strip("-")
 
 
-def flow_id(name: str, category: str | None, subcategory: str | None) -> str:
-    """Deterministic elementary-flow id over the (name, category, subCategory) triple."""
-    return str(uuid.uuid5(BAFU_FLOW_NS, f"{name}|{category or ''}|{subcategory or ''}"))
+def flow_id(name: str, category: str | None, subcategory: str | None, unit: str | None) -> str:
+    """Deterministic elementary-flow id over the (name, category, subCategory, unit) tuple.
+
+    Unit is part of flow identity: BAFU-2026 carries twin flows differing only in
+    unit (58 radionuclides in both Bq and kBq) which must not share an id.
+    """
+    return str(
+        uuid.uuid5(BAFU_FLOW_NS, f"{name}|{category or ''}|{subcategory or ''}|{unit or ''}")
+    )
 
 
 def bw_uncertainty(
