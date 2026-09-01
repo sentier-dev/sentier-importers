@@ -85,7 +85,7 @@ def test_vocab_flows_distinct_biosphere_terms():
     rows = src.transform(src.parse(fixture_zip()))
     assert len(rows) == 2  # CO2 + river water, deduped across datasets
     co2 = next(r for r in rows if r["pref_label"] == "Carbon dioxide, fossil")
-    fid = ecospold.flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified")
+    fid = ecospold.flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified", "kg")
     assert co2["iri"] == f"https://vocab.sentier.dev/flows/{fid}"
     assert co2["notation"] == fid
     assert co2["compartment"] == "emissions to air"

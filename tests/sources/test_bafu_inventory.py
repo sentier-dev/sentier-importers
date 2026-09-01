@@ -84,7 +84,7 @@ def test_exchanges_flow_ids_and_types():
     co2 = by_name["Carbon dioxide, fossil"]
     assert (co2["flow_type"], co2["direction"]) == ("biosphere", "output")
     assert co2["flow"] == ecospold.flow_id(
-        "Carbon dioxide, fossil", "emissions to air", "unspecified"
+        "Carbon dioxide, fossil", "emissions to air", "unspecified", "kg"
     )
 
     water = by_name["Water, river"]

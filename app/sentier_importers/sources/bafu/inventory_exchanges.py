@@ -38,7 +38,10 @@ class BafuInventoryExchangesSource(Source):
                     flow = record["uuid"]
                 elif flow_type == "biosphere":
                     flow = ecospold.flow_id(
-                        exchange["name"], exchange["category"], exchange["subcategory"]
+                        exchange["name"],
+                        exchange["category"],
+                        exchange["subcategory"],
+                        exchange["unit"],
                     )
                 else:
                     # exact by construction; an unmapped number stays as-is for triage

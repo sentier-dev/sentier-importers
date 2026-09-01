@@ -66,14 +66,23 @@ def test_sector_map_routes_all_spec_categories():
 
 
 def test_flow_id_deterministic_uuid5():
-    a = ecospold.flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified")
-    b = ecospold.flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified")
+    a = ecospold.flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified", "kg")
+    b = ecospold.flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified", "kg")
     assert a == b
-    expected = str(
-        uuid.uuid5(ecospold.BAFU_FLOW_NS, "Carbon dioxide, fossil|emissions to air|unspecified")
+    assert a == str(
+        uuid.uuid5(
+            ecospold.BAFU_FLOW_NS,
+            "Carbon dioxide, fossil|emissions to air|unspecified|kg",
+        )
     )
-    assert a == expected
-    assert ecospold.flow_id("Water, river", "resources", None) != a
+    assert ecospold.flow_id("Water, river", "resources", None, "m3") != a
+
+
+def test_flow_id_distinguishes_unit_twins():
+    # BAFU-2026 carries 58 radionuclide flows in both Bq and kBq; identity must not collapse them
+    kbq = ecospold.flow_id("Radium-226", "emissions to water", "river", "kBq")
+    bq = ecospold.flow_id("Radium-226", "emissions to water", "river", "Bq")
+    assert kbq != bq
 
 
 def test_bw_uncertainty_mapping():
