@@ -95,14 +95,15 @@ class BafuBiosphereMappingsSource(Source):
 
         category = self._clean(record.get("source_category"))
         subcategory = self._clean(record.get("source_subcategory"))
+        unit = self._clean(record.get("source_unit"))
 
         source: Record = {
             "name": name,
             # the id sentier-vocab mints for this flow, so the bridge joins to
             # the published IRI rather than to a bare string
-            "code": flow_id(name, category, subcategory),
+            "code": flow_id(name, category, subcategory, unit),
         }
-        if unit := self._clean(record.get("source_unit")):
+        if unit:
             source["unit"] = unit
         if context := [c for c in (category, subcategory) if c]:
             source["context"] = context
