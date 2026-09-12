@@ -144,3 +144,25 @@ def test_load_source_instantiates_subclass(tmp_path):
     source = registry_mod.load_source(cfg)
     assert isinstance(source, Source)
     assert source.config.name == "example-csv"
+
+
+def test_load_registry_parses_named_inputs(tmp_path):
+    path = _write_registry(
+        tmp_path,
+        """
+        sources:
+          - name: demo
+            module: sentier_importers.sources.example_csv.source
+            target: sentier_mappings
+            category: demo
+            fetch:
+              url: "file:///tmp/primary.json"
+              format: json
+            inputs:
+              rank3: "file:///tmp/rank3.json"
+              ecospold: "file:///tmp/bafu.zip"
+            output_format: json
+        """,
+    )
+    cfg = registry_mod.load_registry(path)[0]
+    assert cfg.inputs == {"rank3": "file:///tmp/rank3.json", "ecospold": "file:///tmp/bafu.zip"}

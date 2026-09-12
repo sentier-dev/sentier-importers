@@ -38,6 +38,7 @@ def _to_config(entry: dict) -> SourceConfig:
             package_name=package.get("name"),
             package_version=package.get("version"),
             package_verb=package.get("verb"),
+            inputs=dict(entry.get("inputs") or {}),
         )
     except (KeyError, TypeError) as exc:
         raise RegistryError(f"invalid source entry {entry!r}: {exc}") from exc
