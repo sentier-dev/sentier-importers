@@ -64,7 +64,7 @@ def test_processes_obsolete_sector_flags_comment():
 def test_exchanges_filters_to_sector_processes():
     rows = _exchanges()
     assert {r["process_id"] for r in rows} == {UUID_ELEC}
-    assert len(rows) == 4
+    assert len(rows) == 5
 
 
 def test_exchanges_flow_ids_and_types():
@@ -114,14 +114,15 @@ def test_registry_declares_full_bafu_family():
 
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
     # 11 sectors x 2 inventory tables + source record + 11 per-sector process
-    # term files + 6 per-compartment flow term files + the EF crosswalk
-    assert len(bafu) == 41
+    # term files + 6 per-compartment flow term files + the EF crosswalk (rank 3)
+    # + the EF public-matching crosswalk (rank 7)
+    assert len(bafu) == 42
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
-    assert [c.name for c in mappings] == ["bafu-ef-biosphere"]
+    assert [c.name for c in mappings] == ["bafu-ef-biosphere", "bafu-ef-biosphere-matched"]
     # the bridge folder contract names the file, not the source
-    assert mappings[0].emit_filename == "biosphere"
+    assert {m.emit_filename for m in mappings} == {"biosphere"}
 
     inventory = [c for c in bafu if c.target == "sentier_inventory"]
     assert len(inventory) == 22

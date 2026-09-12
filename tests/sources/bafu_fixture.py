@@ -50,6 +50,11 @@ _ELEC = """<?xml version='1.0' encoding='UTF-8'?>
         uncertaintyType="0" unit="m3">
         <inputGroup>4</inputGroup>
       </exchange>
+      <exchange CASNumber="014859-67-7" category="emissions to air" subCategory="low. pop."
+        meanValue="2.0" name="Radon-222" number="203"
+        uncertaintyType="0" unit="Bq">
+        <outputGroup>4</outputGroup>
+      </exchange>
     </flowData>
   </dataset>
 </ecoSpold>
