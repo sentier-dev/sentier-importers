@@ -7,14 +7,14 @@ from sentier_importers.core.context import RunContext
 from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
-from sentier_importers.matching.pipeline import Match, Unmatched
+from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeline
 from sentier_importers.sources.bafu.ecospold import flow_id
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     BafuEfMatchedSource,
     _decide,
-    classify_unmatched,
-    conversion,
     substance_cas,
+    unit_conversion,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
@@ -60,6 +60,10 @@ WATER = flow_id("Water, river", "resources", "in water", "m3")
 RADON = flow_id("Radon-222", "emissions to air", "low. pop.", "Bq")
 GAS = flow_id("Gas, natural/m3", "resources", "in ground", "m3")
 PEAT = flow_id("Peat", "resources", "in ground", "kg")
+#: _decide never touches its ``index`` argument for a pure Unmatched-in/Unmatched-out
+#: call (the freshwater check and _refine_unmatched are both index-free); an empty
+#: index documents that rather than passing None.
+_EMPTY_INDEX = EfFlowIndex.from_tables([], [])
 
 
 def _payload(codes):
@@ -161,8 +165,10 @@ def test_kilogram_water_emission_onto_an_ef_water_use_flow_converts_to_cubic_met
     (r,) = records
     from_kg = source.entry_for(
         BafuFlow("Water", "emissions to water", "unspecified", "kg"),
-        r["pipeline"].match(BafuFlow("Water", "emissions to water", "unspecified", "kg"), None),
-        r["index"],
+        r["inputs"].pipeline.match(
+            BafuFlow("Water", "emissions to water", "unspecified", "kg"), None
+        ),
+        r["inputs"].index,
     )
     assert from_kg["target"]["unit"] == "cubic meter" and from_kg["conversion_factor"] == 0.001
 
@@ -192,10 +198,10 @@ def test_location_and_caveats_are_carried(tmp_path):
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
     )
     flow = BafuFlow("Water, KR", "emissions to water", "unspecified", "m3")
-    entry = source.entry_for(flow, r["pipeline"].match(flow, None), r["index"])
+    entry = source.entry_for(flow, r["inputs"].pipeline.match(flow, None), r["inputs"].index)
     assert entry["target"]["location"] == "KR" and "conversion_factor" not in entry
     flow = BafuFlow("Water, Europe", "emissions to water", "unspecified", "m3")
-    entry = source.entry_for(flow, r["pipeline"].match(flow, None), r["index"])
+    entry = source.entry_for(flow, r["inputs"].pipeline.match(flow, None), r["inputs"].index)
     assert "location" not in entry["target"]
     assert (
         entry["comment"]
@@ -224,8 +230,10 @@ def test_location_and_caveats_are_carried(tmp_path):
         ("kg", "unknown-unit", None),  # unit outside the dimension table at all
     ],
 )
-def test_conversion_fixed_factors_and_cross_dimension_mismatches(bafu_unit, ef_unit, expected):
-    assert conversion(bafu_unit, ef_unit) == expected
+def test_unit_conversion_fixed_factors_and_cross_dimension_mismatches(
+    bafu_unit, ef_unit, expected
+):
+    assert unit_conversion(bafu_unit, ef_unit) == expected
 
 
 def test_natural_gas_volume_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_path):
@@ -288,9 +296,9 @@ def test_uranium_mass_onto_an_ionising_radiation_flow_is_withheld_as_unit_mismat
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
     )
     flow = BafuFlow("Uranium", "emissions to air", "unspecified", "kg")
-    match = r["pipeline"].match(flow, None)
+    match = r["inputs"].pipeline.match(flow, None)
     assert isinstance(match, Match)  # sanity: the pipeline itself matches by synonym
-    outcome = _decide(flow, match, r["index"])
+    outcome = _decide(flow, match, r["inputs"].index)
     assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
     assert "kg" in outcome.detail and "kBq" in outcome.detail
 
@@ -312,10 +320,10 @@ def test_ocean_discharge_does_not_take_the_water_use_unspecified_fallback(tmp_pa
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
     )
     flow = BafuFlow("Water", "emissions to water", "ocean", "kg")
-    match = r["pipeline"].match(flow, None)
+    match = r["inputs"].pipeline.match(flow, None)
     # sanity: the pipeline itself would take the unspecified fallback onto "Water"
     assert isinstance(match, Match)
-    outcome = _decide(flow, match, r["index"])
+    outcome = _decide(flow, match, r["inputs"].index)
     assert outcome == Unmatched("no_ef_flow", "EF water use has no sea-water discharge flow")
 
 
@@ -399,60 +407,111 @@ def test_substance_cas_is_per_name_and_drops_conflicts():
     ]
     cas, conflicts = substance_cas(records)
     assert cas == {"Methanol": "67-56-1"}
-    assert conflicts == {"Mixed": {"1-1-1", "2-2-2"}}
+    assert conflicts == {"Mixed": ("1-1-1", "2-2-2")}
 
 
-def test_classify_unmatched_applies_the_plan_decisions():
+def test_decide_refines_unmatched_outcomes():
     none = Unmatched("no_ef_flow", "x")
     assert (
-        classify_unmatched(
-            BafuFlow("Arsenic, ion", "emissions to water", "river", "kg"), none
+        _decide(
+            BafuFlow("Arsenic, ion", "emissions to water", "river", "kg"), none, _EMPTY_INDEX
         ).reason
         == "speciation"
     )
     assert (
-        classify_unmatched(
-            BafuFlow("Copper ion", "emissions to water", "river", "kg"), none
+        _decide(
+            BafuFlow("Copper ion", "emissions to water", "river", "kg"), none, _EMPTY_INDEX
         ).reason
         == "speciation"
     )
     assert (
-        classify_unmatched(
-            BafuFlow("Calcium II", "emissions to water", "river", "kg"), none
+        _decide(
+            BafuFlow("Calcium II", "emissions to water", "river", "kg"), none, _EMPTY_INDEX
         ).reason
         == "speciation"
     )
     assert (
-        classify_unmatched(
-            BafuFlow("Carbon dioxide", "emissions to air", "unspecified", "kg"), none
+        _decide(
+            BafuFlow("Carbon dioxide", "emissions to air", "unspecified", "kg"), none, _EMPTY_INDEX
         ).reason
         == "qualifier_missing"
     )
     assert (
-        classify_unmatched(
-            BafuFlow("Carbon monoxide", "emissions to air", "high. pop.", "kg"), none
+        _decide(
+            BafuFlow("Carbon monoxide", "emissions to air", "high. pop.", "kg"), none, _EMPTY_INDEX
         ).reason
         == "qualifier_missing"
     )
     assert (
-        classify_unmatched(
-            BafuFlow("Carbon dioxide", "emissions to water", "river", "kg"), none
+        _decide(
+            BafuFlow("Carbon dioxide", "emissions to water", "river", "kg"), none, _EMPTY_INDEX
         ).reason
         == "no_ef_flow"
     )
-    salt = classify_unmatched(BafuFlow("Water, salt, ocean", "resources", "in water", "m3"), none)
-    assert salt.reason == "no_ef_flow" and "freshwater deprivation" in salt.detail
     other = Unmatched("sub_compartment_absent", "y")
     assert (
-        classify_unmatched(BafuFlow("Arsenic, ion", "emissions to water", "river", "kg"), other)
+        _decide(BafuFlow("Arsenic, ion", "emissions to water", "river", "kg"), other, _EMPTY_INDEX)
         is other
     )
-    # Decision 5 also covers fossil water even when the pipeline finds candidates
-    fossil = classify_unmatched(
+
+
+def test_decide_reports_non_freshwater_for_both_match_and_unmatched_inputs(tmp_path):
+    # Decision 5 fires for an Unmatched outcome regardless of its original reason...
+    salt = _decide(
+        BafuFlow("Water, salt, ocean", "resources", "in water", "m3"),
+        Unmatched("no_ef_flow", "x"),
+        _EMPTY_INDEX,
+    )
+    assert salt == Unmatched(
+        "non_freshwater", "EF water use characterises freshwater deprivation only"
+    )
+    fossil = _decide(
         BafuFlow("Water, fossil", "resources", "in water", "m3"),
         Unmatched("ambiguous_substances", "z"),
+        _EMPTY_INDEX,
     )
-    assert fossil.reason == "no_ef_flow" and "freshwater deprivation" in fossil.detail
+    assert fossil == Unmatched(
+        "non_freshwater", "EF water use characterises freshwater deprivation only"
+    )
+    # ...and it must override a real Match too: build a tiny index + pipeline where
+    # "Water, salt, ocean" resolves (via a curated alias) to a real water-use flow.
+    cf, vocab = write_ef_inputs(
+        tmp_path,
+        [cf_row("sea", "water", RES_WATER, method="ef-3.1:water-use", value=1.0)],
+        [vocab_row("sea", "Water", cas="7732-18-5")],
+    )
+    index = EfFlowIndex.from_files(cf, vocab)
+    pipeline = default_pipeline(index, {"water, salt, ocean": "Water"})
+    flow = BafuFlow("Water, salt, ocean", "resources", "in water", "m3")
+    match = pipeline.match(flow, None)
+    assert isinstance(match, Match)  # sanity: the pipeline itself would happily match
+    outcome = _decide(flow, match, index)
+    assert outcome == Unmatched(
+        "non_freshwater", "EF water use characterises freshwater deprivation only"
+    )
+
+
+def test_entry_for_raises_when_no_fixed_conversion_exists(tmp_path):
+    cf = CF + [
+        cf_row(
+            "u238",
+            "uranium-238",
+            AIR_UNSPEC,
+            method="ef-3.1:ionising-radiation-human-health",
+            value=1.0,
+        )
+    ]
+    vocab = VOCAB + [vocab_row("u238", "Uranium-238", alt=["Uranium"])]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    (r,) = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    flow = BafuFlow("Uranium", "emissions to air", "unspecified", "kg")
+    match = r["inputs"].pipeline.match(flow, None)
+    assert isinstance(match, Match)  # sanity: the pipeline itself matches by synonym
+    with pytest.raises(ValueError, match="no fixed conversion"):
+        source.entry_for(flow, match, r["inputs"].index)
 
 
 def test_assembled_package_validates_against_the_randonneur_schema(tmp_path):

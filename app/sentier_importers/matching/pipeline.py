@@ -224,18 +224,14 @@ class MatchPipeline:
                         for c in candidates
                         if c is not winner
                     )
-                    if cas_names_none:
-                        identity_caveat = (
-                            f"{len(candidates)} EF flows with identical factors; source CAS "
-                            f"{normalised_cas} matches none, chose {winner.flow.name} "
-                            f"(CAS {winner.flow.cas or 'none'}) over " + ", ".join(others),
-                        )
-                    else:
-                        identity_caveat = (
-                            f"{len(candidates)} EF flows with identical factors; chose "
-                            f"{winner.flow.name} (CAS {winner.flow.cas or 'none'}) over "
-                            + ", ".join(others),
-                        )
+                    cas_note = (
+                        f"source CAS {normalised_cas} matches none, " if cas_names_none else ""
+                    )
+                    identity_caveat = (
+                        f"{len(candidates)} EF flows with identical factors; {cas_note}chose "
+                        f"{winner.flow.name} (CAS {winner.flow.cas or 'none'}) over "
+                        + ", ".join(others),
+                    )
         pick = chosen[0]
         extra: tuple[str, ...] = identity_caveat
         if pick.caveat:

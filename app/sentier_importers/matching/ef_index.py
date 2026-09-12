@@ -12,6 +12,7 @@ rows (land use, water use, some regionalised categories) are not part of flow id
 
 from __future__ import annotations
 
+import io
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -150,10 +151,23 @@ class EfFlowIndex:
     def from_files(cls, cf_parquet: Path, vocab_dir: Path) -> "EfFlowIndex":
         """Build an index by reading the CF parquet file and every vocab shard parquet file."""
         cf_rows = pq.read_table(cf_parquet, columns=_CF_COLUMNS).to_pylist()
+        return cls.from_tables(cf_rows, cls._read_vocab_dir(vocab_dir))
+
+    @classmethod
+    def from_bytes(cls, cf_parquet_bytes: bytes, vocab_dir: Path) -> "EfFlowIndex":
+        """Build an index from the CF parquet file's raw bytes (e.g. already fetched
+        through the content-addressed cache, so the cache/offline contract holds) and
+        every vocab shard parquet file read from ``vocab_dir`` on disk.
+        """
+        cf_rows = pq.read_table(io.BytesIO(cf_parquet_bytes), columns=_CF_COLUMNS).to_pylist()
+        return cls.from_tables(cf_rows, cls._read_vocab_dir(vocab_dir))
+
+    @staticmethod
+    def _read_vocab_dir(vocab_dir: Path) -> list[dict]:
         vocab_rows = []
         for path in sorted(Path(vocab_dir).glob("*.parquet")):
             vocab_rows += pq.read_table(path, columns=_VOCAB_COLUMNS).to_pylist()
-        return cls.from_tables(cf_rows, vocab_rows)
+        return vocab_rows
 
     def get(self, code: str) -> EfFlow | None:
         """Return the flow for ``code``, or ``None`` if it is not indexed."""
@@ -176,10 +190,15 @@ class EfFlowIndex:
         3.1 / ILCD fixes one reference unit per impact-category family, and every
         flow that family characterises is reported in it. A resource-use-fossils
         flow is in megajoule, an ionising-radiation-human-health flow in kBq, a
-        water-use flow in cubic meter, a land-use flow in m2 (or m2*a when the
-        flow is an "occupation", not a "transformation"); everything else -- the
-        overwhelming majority, all substance emissions and non-energy/water/land
-        resources -- is in kilogram.
+        water-use flow in cubic meter, a land-use flow in m2 (or m2*a when its EF
+        context leaf is ``land occupation``, not ``land transformation``); everything
+        else -- the overwhelming majority, all substance emissions and non-energy/
+        water/land resources -- is in kilogram.
+
+        The land-use unit is keyed on the EF context *leaf*, not the flow name: EF
+        occupation flows are named ``Arable``, ``Pasture/meadow`` and so on, never
+        anything starting with "occupation" -- rank 3's published payload uses
+        ``m2*a`` for exactly the flows whose leaf is ``land occupation``.
         """
         methods = set(self.vector(code))
         if _MJ_METHOD in methods:
@@ -190,8 +209,7 @@ class EfFlowIndex:
             return "cubic meter"
         if _LAND_METHOD in methods:
             flow = self.get(code)
-            name = flow.name.lower() if flow is not None else ""
-            return "m2*a" if name.startswith("occupation") else "m2"
+            return "m2*a" if flow is not None and flow.leaf == "land occupation" else "m2"
         return "kilogram"
 
     def by_name(self, name: str, bucket: str | None) -> list[EfFlow]:

@@ -18,7 +18,6 @@ sibling :mod:`inference_review` source emits the withheld pairs. See ``inference
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import orjson
 import pyarrow.parquet as pq
@@ -36,12 +35,6 @@ _EF_COLUMNS = ["flow", "flow_name", "flow_context"]
 
 
 _REQUIRED_INPUTS = ("rank3", "ecospold", "ef_flows", _METHOD_CFS)
-
-
-def _local_path(url: str | None) -> Path:
-    if not url or not url.startswith("file://"):
-        raise ValueError(f"{_METHOD_CFS} must be a local file:// directory, got {url!r}")
-    return Path(url[len("file://") :])
 
 
 class EaternityInferredBafuEfSource(Source):
@@ -79,7 +72,9 @@ class EaternityInferredBafuEfSource(Source):
                 if e.get("source", {}).get("code")
             ),
             bafu=BafuFlowIndex.from_ecospold(parse_ecospold_zip(self.inputs["ecospold"])),
-            vectors=CfVectors.from_directory(_local_path(self.config.inputs.get(_METHOD_CFS))),
+            vectors=CfVectors.from_directory(
+                fetch_mod.local_path(self.config.inputs.get(_METHOD_CFS), _METHOD_CFS)
+            ),
             labels=EfLabels.from_rows(ef_rows),
         )
         return [{"inputs": inputs}]

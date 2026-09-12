@@ -34,7 +34,7 @@ CF = [
     cf_row("cu-unspec", "copper", AIR_UNSPEC, value=2.0),
     cf_row("ccl4", "carbon tetrachloride", AIR_UNSPEC, value=3.0),
     cf_row("cfc10", "cfc-10", AIR_UNSPEC, value=3.0),
-    cf_row("occ", "occupation, arable", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+    cf_row("occ", "arable", LAND_OCC, method="ef-3.1:land-use", value=1.0),
     cf_row("nullctx", "ghost", None),
     cf_row("gas-mj", "natural gas", AIR_UNSPEC, method="ef-3.1:resource-use-fossils", value=1.0),
     cf_row(
@@ -47,7 +47,7 @@ CF = [
     cf_row("water-test", "water", RES_WATER, method="ef-3.1:water-use", value=1.0),
     cf_row(
         "land-trans",
-        "transformation, from arable",
+        "from arable",
         LAND_TRANS,
         method="ef-3.1:land-use",
         value=1.0,
@@ -163,7 +163,7 @@ def test_names_and_synonyms_are_stripped_of_whitespace(tmp_path):
 def test_land_context_is_a_resource(tmp_path):
     index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
     assert index.get("occ").bucket == "resource"
-    assert index.by_name("occupation, arable", "resource")[0].code == "occ"
+    assert index.by_name("arable", "resource")[0].code == "occ"
 
 
 def test_flow_without_vocab_row_keeps_the_cf_table_name(tmp_path):
@@ -211,6 +211,14 @@ def test_from_files_reads_all_vocab_shards(tmp_path):
     assert len(index) == 10
 
 
+def test_from_bytes_reads_the_cf_table_from_memory(tmp_path):
+    cf, vocab = write_ef_inputs(tmp_path, CF, VOCAB)
+    index = EfFlowIndex.from_bytes(cf.read_bytes(), vocab)
+    assert index.get("cu-urban").name == "Copper"
+    assert index.get("cu-urban").synonyms == ("Cu",)
+    assert len(index) == len(EfFlowIndex.from_files(cf, vocab))
+
+
 def test_reference_unit_is_megajoule_for_resource_use_fossils(tmp_path):
     index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
     assert index.reference_unit("gas-mj") == "megajoule"
@@ -227,9 +235,13 @@ def test_reference_unit_is_cubic_meter_for_water_use(tmp_path):
 
 
 def test_reference_unit_is_area_or_area_time_for_land_use(tmp_path):
+    # keyed on the EF context leaf, not the flow name: EF names occupation flows
+    # "Arable", "Pasture/meadow" etc., never anything starting with "occupation"
     index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
-    assert index.reference_unit("occ") == "m2*a"  # "occupation, arable"
-    assert index.reference_unit("land-trans") == "m2"  # "transformation, from arable"
+    assert index.get("occ").leaf == "land occupation"
+    assert index.reference_unit("occ") == "m2*a"  # "arable", leaf "land occupation"
+    assert index.get("land-trans").leaf == "land transformation"
+    assert index.reference_unit("land-trans") == "m2"  # "from arable", leaf "land transformation"
 
 
 def test_reference_unit_defaults_to_kilogram(tmp_path):
