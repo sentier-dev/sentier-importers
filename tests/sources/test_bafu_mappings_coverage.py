@@ -9,7 +9,7 @@ from sentier_importers.sources.bafu.ecospold import flow_id
 from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCoverageSource
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
-from tests.matching.ef_fixtures import CF_SCHEMA, cf_row, vocab_row
+from tests.matching.ef_fixtures import CF_SCHEMA, RES_GROUND, VOCAB_SCHEMA, cf_row, vocab_row
 from tests.sources.test_bafu_mappings_matched import (
     CF,
     CO2,
@@ -68,10 +68,39 @@ def test_every_universe_flow_has_exactly_one_row(tmp_path):
     }
 
 
+def test_rank_3_wins_when_a_flow_is_named_by_both_rank_3_and_rank_6(tmp_path):
+    root = _stage(tmp_path, rank3=[CO2], rank6=[CO2])
+    rows = _run(_source(root), tmp_path)
+    co2 = next(r for r in rows if r["source"]["code"] == CO2)
+    assert co2["status"] == "mapped" and co2["bridge"] == 3
+
+
 def test_rows_are_sorted_by_name_then_context(tmp_path):
     rows = _run(_source(_stage(tmp_path)), tmp_path)
-    names = [r["source"]["name"] for r in rows]
-    assert names == sorted(names)
+    keys = [
+        (r["source"]["name"], tuple(r["source"]["context"]), r["source"]["unit"]) for r in rows
+    ]
+    assert keys == sorted(keys)
+
+
+def test_rows_sharing_a_name_are_ordered_by_subcategory(tmp_path):
+    # two Zinc flows differing only in sub-compartment, built out of order, must come back
+    # agricultural before industrial: the tiebreak the fixture's five distinct names cannot
+    # exercise on their own.
+    root = _stage(tmp_path)
+    source = _source(root)
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    zn_industrial = BafuFlow("Zinc", "emissions to soil", "industrial", "kg")
+    zn_agricultural = BafuFlow("Zinc", "emissions to soil", "agricultural", "kg")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows([zn_industrial, zn_agricultural]))
+    rows = source.transform([{"inputs": augmented}])
+    assert [r["source"]["context"] for r in rows] == [
+        ["emissions to soil", "agricultural"],
+        ["emissions to soil", "industrial"],
+    ]
 
 
 def test_unmapped_rows_carry_reason_and_detail(tmp_path):
@@ -86,28 +115,23 @@ def test_unmapped_rows_carry_reason_and_detail(tmp_path):
 
 def test_unit_mismatch_is_reported_as_unmapped(tmp_path):
     root = _stage(tmp_path)
-    # an EF natural-gas flow in MJ: the BAFU m3 flow matches by alias/name but cannot be converted
-    extra = [
-        cf_row(
-            "gas",
-            "natural gas",
-            "Resources / Resources from ground / Non-renewable energy resources from ground",
-            method="ef-3.1:resource-use-fossils",
-            value=1.0,
-        )
+    # an EF natural-gas flow in MJ, reachable from the BAFU m3 flow by alias, so the
+    # pipeline resolves a real Match that the unit check must then withhold.
+    extra_cf = [
+        cf_row("gas", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
     ]
-    cf = pq.read_table(root / "characterization-factors.parquet").to_pylist() + extra
+    cf = pq.read_table(root / "characterization-factors.parquet").to_pylist() + extra_cf
     pq.write_table(
         pa.Table.from_pylist(cf, schema=CF_SCHEMA), root / "characterization-factors.parquet"
     )
-    # give the BAFU name a route to the EF flow through a synonym-free exact name is impossible
-    # ("Gas, natural/m3" != "natural gas"), so rely on the matched source's alias table only if it
-    # has one; otherwise this stays no_ef_flow. Assert the row is unmapped either way and, if it
-    # reached the unit check, that the reason is unit_mismatch.
+    extra_vocab = [vocab_row("gas", "Natural gas", alt=["Gas, natural/m3"])]
+    vocab_path = root / "elementary-flows" / "air-01.parquet"
+    vocab = pq.read_table(vocab_path).to_pylist() + extra_vocab
+    pq.write_table(pa.Table.from_pylist(vocab, schema=VOCAB_SCHEMA), vocab_path)
     rows = _run(_source(root), tmp_path)
     gas = next(r for r in rows if r["source"]["name"] == "Gas, natural/m3")
-    assert gas["status"] == "unmapped"
-    assert gas["reason"] in {"no_ef_flow", "unit_mismatch"}
+    assert gas["status"] == "unmapped" and gas["reason"] == "unit_mismatch"
+    assert "megajoule" in gas["detail"]
 
 
 def test_location_and_caveats_appear_only_when_present(tmp_path):
