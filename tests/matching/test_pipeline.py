@@ -1,12 +1,13 @@
 import pytest
 from sentier_importers.matching.ef_index import EfFlowIndex
-from sentier_importers.matching.matchers import Alias
-from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeline
+from sentier_importers.matching.matchers import Alias, Candidate
+from sentier_importers.matching.pipeline import Match, MatchPipeline, Unmatched, default_pipeline
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
     AIR_UNSPEC,
+    LAND_OCC,
     RES_WATER,
     WATER_FRESH,
     WATER_UNSPEC,
@@ -51,6 +52,14 @@ CF = [
     # same identity, one CAS, one none: the source CAS names neither -- still not silent
     cf_row("mo-soil-ion", "molybdenum", SOIL_INDUSTRIAL, value=1.0),
     cf_row("mo-soil-dup", "molybdenum", SOIL_INDUSTRIAL, value=1.0),
+    cf_row("industrial-area", "industrial area", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+    cf_row(
+        "traffic-rail",
+        "traffic area, rail network",
+        LAND_OCC,
+        method="ef-3.1:land-use",
+        value=1.0,
+    ),
 ]
 VOCAB = [
     vocab_row("zn-fresh", "Zinc", cas="7440-66-6"),
@@ -76,6 +85,8 @@ VOCAB = [
     vocab_row("dup-b", "Dupenium", cas="99-99-9"),
     vocab_row("mo-soil-ion", "Molybdenum", cas="16065-87-5"),
     vocab_row("mo-soil-dup", "Molybdenum"),
+    vocab_row("industrial-area", "Industrial Area"),
+    vocab_row("traffic-rail", "Traffic Area, Rail Network"),
 ]
 ALIASES = {
     "particulates, < 10 um": Alias("Particles (PM10)", "PM10 includes the fine fraction"),
@@ -308,3 +319,44 @@ def test_unknown_bafu_subcategory_is_reported_not_silently_empty(pipeline):
 def test_resource_flow_in_unspecified_sub_compartment_is_absent_not_fallback(pipeline):
     got = pipeline.match(BafuFlow("Water, river", "resources", "unspecified", "m3"), None)
     assert got.reason == "sub_compartment_absent"
+
+
+class _StubOverrideMatcher:
+    """A stub matcher carrying a fixed ``subcategory_override`` on every candidate."""
+
+    tier = "stub"
+
+    def __init__(self, override):
+        self._override = override
+
+    def candidates(self, flow, cas, index):
+        return [
+            Candidate(f, tier=self.tier, subcategory_override=self._override)
+            for f in index.by_name("Industrial Area", "resource")
+        ]
+
+
+def test_subcategory_override_changes_where_a_candidate_places(index):
+    flow = BafuFlow("Occupation, industrial area", "resources", "unspecified", "m2a")
+    with_override = MatchPipeline([_StubOverrideMatcher("land")], index)
+    got = with_override.match(flow, None)
+    assert got.code == "industrial-area" and got.placement == "exact"
+
+    without_override = MatchPipeline([_StubOverrideMatcher(None)], index)
+    got = without_override.match(flow, None)
+    assert got.reason == "sub_compartment_absent"
+
+
+def test_land_use_matcher_runs_inside_region_strip(pipeline):
+    # "Occupation, traffic area, rail network" is filed by BAFU under the "land"
+    # sub-compartment, but the region token "CH" trails the name -- RegionStripMatcher
+    # strips it and re-applies LandUseMatcher (part of its own ``named`` list) to the
+    # clean stem, which then matches directly.
+    got = pipeline.match(
+        BafuFlow("Occupation, traffic area, rail network, CH", "resources", "land", "m2a"), None
+    )
+    assert got.code == "traffic-rail"
+    assert got.tier == "region/landuse"
+    assert got.location == "CH"
+    assert got.placement == "exact"
+    assert got.caveats == ()

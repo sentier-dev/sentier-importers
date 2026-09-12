@@ -32,17 +32,51 @@ _QUALIFIER_RE = re.compile(
     r"^(?P<stem>.+), (?P<q>biogenic|fossil|non-fossil|land transformation)$", re.IGNORECASE
 )
 _QUALIFIER_EF = {"non-fossil": "biogenic", "land transformation": "land use change"}
+#: BAFU land-occupation/transformation names: ``Occupation, <class>``,
+#: ``Transformation, from <class>`` or ``Transformation, to <class>``; the keyword is
+#: matched case-insensitively (``re.IGNORECASE`` covers the whole pattern, but only
+#: the keyword varies in case in practice -- BAFU's class spelling is consistent).
+_LAND_RE = re.compile(
+    r"^(?:occupation, (?P<occ_cls>.+)"
+    r"|transformation, from (?P<from_cls>.+)"
+    r"|transformation, to (?P<to_cls>.+))$",
+    re.IGNORECASE,
+)
+#: BAFU land-class spellings that differ from EF's, applied to each comma segment of
+#: the class independently (e.g. ``annual crop, irrigated`` -> ``arable, irrigated``).
+_LAND_CLASS_SYNONYMS = {
+    "annual crop": "arable",
+    "unknown": "unspecified",
+    "natural (non-use)": "natural",
+    "non-use": "natural",
+}
+
+
+def _normalise_land_class(raw: str) -> str:
+    segments = [seg.strip() for seg in raw.strip().lower().split(",")]
+    return ", ".join(_LAND_CLASS_SYNONYMS.get(seg, seg) for seg in segments)
 
 
 @dataclass(frozen=True)
 class Candidate:
-    """One EF flow a matcher proposes, tagged with provenance and any carried caveat."""
+    """One EF flow a matcher proposes, tagged with provenance and any carried caveat.
+
+    ``subcategory_override``, when set, overrides ``flow.subcategory`` for placement
+    (``MatchPipeline.match``) instead of the source's own sub-compartment -- for a
+    matcher that knows a flow's true compartment from its NAME rather than from the
+    source's sub-compartment column (currently: land use, whose BAFU name encodes
+    ``Occupation``/``Transformation`` even when the flow is filed under an unrelated
+    resource sub-compartment). Such a matcher must always explain the override with a
+    caveat, except when the source's own sub-compartment already agrees with the
+    override -- there is nothing to explain in that case.
+    """
 
     flow: EfFlow
     location: str | None = None  # ISO-2 code carried from the source name
     region: str | None = None  # non-ISO region token carried from the source name
     tier: str | None = None  # the matcher (tier) that produced this candidate
     caveat: str | None = None  # a known caveat about this match, if any
+    subcategory_override: str | None = None  # placement override; see class docstring
 
 
 @dataclass(frozen=True)
@@ -127,6 +161,91 @@ class QualifierMatcher:
         qualifier = match.group("q").lower()
         qualifier = _QUALIFIER_EF.get(qualifier, qualifier)
         return _lookup(index.by_name(f"{stem} ({qualifier})", _bucket(flow)), self.tier)
+
+
+class LandUseMatcher:
+    """Matches a BAFU land-occupation/transformation name onto its EF 3.1 land class.
+
+    Applies only to resource-bucket flows named ``Occupation, <class>``,
+    ``Transformation, from <class>`` or ``Transformation, to <class>``. BAFU spells
+    some classes differently from EF (``annual crop`` for EF's ``arable``, ``unknown``
+    for EF's ``unspecified``, ...; see ``_LAND_CLASS_SYNONYMS``) and files 30 of its
+    43 land flows under a resource sub-compartment other than ``land`` (most often
+    ``unspecified`` or ``in ground``). Every candidate this matcher returns carries
+    ``subcategory_override="land"`` so the pipeline places it on the EF land-use
+    context regardless of the BAFU sub-compartment, plus a caveat whenever that
+    filing disagrees with ``land`` (see ``Candidate.subcategory_override``).
+
+    When EF has no flow for the exact class, one parent level is dropped (the last
+    comma segment) and the lookup retried, with a caveat naming the collapse -- e.g.
+    ``Occupation, dump site, benthos`` collapses onto EF's ``Dump Site``. Candidates
+    are filtered to the matching EF leaf family too: an ``Occupation`` name is only
+    ever satisfied from the ``land occupation`` leaf, a ``from``/``to`` name only
+    from ``land transformation`` -- a same-named flow in the other leaf is never
+    returned.
+
+    A name that still carries an unstripped trailing region token (``, CH``,
+    ``, RER``, ...) is refused outright (``[]``): the one-level-collapse fallback
+    above would otherwise mistake the region token for a droppable sub-class segment
+    (``Occupation, traffic area, rail network, CH`` would wrongly "collapse" onto
+    ``Traffic Area, Rail Network`` before ``RegionStripMatcher`` ever gets a chance to
+    strip ``CH`` properly and record it as a location instead). Region-stripping is
+    ``RegionStripMatcher``'s job; this matcher only ever sees a clean stem when it
+    runs as one of its ``inner`` matchers.
+    """
+
+    tier = "landuse"
+
+    def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
+        """Return EF land-use flows matching ``flow``'s occupation/transformation class."""
+        if _bucket(flow) != "resource":
+            return []
+        name = flow.name.strip()
+        if _REGION_RE.search(name):
+            return []
+        match = _LAND_RE.match(name)
+        if match is None:
+            return []
+        if match.group("occ_cls") is not None:
+            kind, raw_cls, leaf = "occupation", match.group("occ_cls"), "land occupation"
+        elif match.group("from_cls") is not None:
+            kind, raw_cls, leaf = "from", match.group("from_cls"), "land transformation"
+        else:
+            kind, raw_cls, leaf = "to", match.group("to_cls"), "land transformation"
+
+        cls = _normalise_land_class(raw_cls)
+        found = self._by_class(index, kind, cls, leaf)
+        collapse_caveat = None
+        if not found and "," in cls:
+            parent = cls.rsplit(",", 1)[0].strip()
+            parent_found = self._by_class(index, kind, parent, leaf)
+            if parent_found:
+                found = parent_found
+                collapse_caveat = (
+                    f"sub-class {cls!r} collapsed onto EF class {found[0].name!r}; "
+                    "EF has no flow for the sub-class"
+                )
+        if not found:
+            return []
+
+        filing_caveat = None
+        if flow.subcategory != "land":
+            filing_caveat = (
+                f"BAFU files this land flow under resources / {flow.subcategory}; "
+                "placed on EF land use"
+            )
+        caveats = [c for c in (filing_caveat, collapse_caveat) if c]
+        caveat = "; ".join(caveats) if caveats else None
+
+        return [
+            Candidate(f, tier=self.tier, subcategory_override="land", caveat=caveat)
+            for f in sorted(found, key=lambda f: f.code)
+        ]
+
+    @staticmethod
+    def _by_class(index: EfFlowIndex, kind: str, cls: str, leaf: str) -> list[EfFlow]:
+        ef_name = cls if kind == "occupation" else f"{kind} {cls}"
+        return [f for f in index.by_name(ef_name, "resource") if f.leaf == leaf]
 
 
 class AliasMatcher:

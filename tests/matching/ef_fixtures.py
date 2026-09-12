@@ -14,6 +14,7 @@ WATER_UNSPEC = "Emissions / Emissions to water / Emissions to water, unspecified
 RES_WATER = "Resources / Resources from water / Renewable material resources from water"
 RES_GROUND = "Resources / Resources from ground / Non-renewable element resources from ground"
 LAND_OCC = "Land use / Land occupation"
+LAND_TRANS = "Land use / Land transformation"
 
 CF_SCHEMA = pa.schema(
     [

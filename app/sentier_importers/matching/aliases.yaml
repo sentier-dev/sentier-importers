@@ -34,3 +34,20 @@ aliases:
   water, process, unspecified natural origin/m3: Water
   # surface water is river/lake water, not EF's unspecified-origin "Water"
   water, process, surface: River water
+  # fossil/biotic energy resources (MJ) -> EF resource-use-fossils flows (megajoule)
+  energy, from coal: Hard Coal
+  energy, from coal, brown: Brown Coal
+  # "Energy, from oil" is filed under resources / unspecified; still withheld there
+  # as sub_compartment_absent (EF has no unspecified energy-resource leaf) -- expected.
+  energy, from oil: Crude Oil
+  energy, from peat: Peat
+  energy, from uranium: Uranium
+  benzo(a)anthracene: benzo[a]anthracene
+  butane, perfluorocyclo-, pfc-318: PFC-318
+  ethane, 1,1,2-trifluoro-, hfc-143: HFC-143
+  octene (mixture of isomers): Octene
+  nitrogen:
+    target: Nitrogen, Total (excluding N2)
+    caveat: >-
+      BAFU 'Nitrogen' emitted to water taken as total nitrogen (EF marine
+      eutrophication flow)

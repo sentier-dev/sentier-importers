@@ -21,6 +21,7 @@ from sentier_importers.sources.eaternity.bridge import BafuFlow
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
     AIR_UNSPEC,
+    LAND_OCC,
     RES_GROUND,
     RES_WATER,
     cf_row,
@@ -30,13 +31,14 @@ from tests.matching.ef_fixtures import (
 from tests.sources.bafu_fixture import fixture_zip
 
 _SCHEMA = Path(__file__).parent / "fixtures" / "randonneur-package.schema.json"
-# fixture zip biosphere flows: Carbon dioxide, fossil | emissions to air | unspecified | kg
+# fixture zip biosphere flows: Carbon dioxide, fossil       | emissions to air | unspecified | kg
 #                                                                              (CAS 124-38-9)
-#                              Water, river           | resources        | in water    | m3
-#                              Radon-222              | emissions to air | low. pop.   | Bq
+#                              Water, river                 | resources        | in water    | m3
+#                              Radon-222                    | emissions to air | low. pop.   | Bq
 #                                                                              (CAS 14859-67-7)
-#                              Gas, natural/m3        | resources        | in ground   | m3
-#                              Peat                   | resources        | in ground   | kg
+#                              Gas, natural/m3               | resources        | in ground   | m3
+#                              Peat                          | resources        | in ground   | kg
+#                              Occupation, industrial area   | resources        | unspecified | m2a
 CF = [
     cf_row(
         "co2-fos", "carbon dioxide (fossil)", AIR_UNSPEC, method="ef-3.1:climate-change", value=1.0
@@ -49,17 +51,20 @@ CF = [
         method="ef-3.1:ionising-radiation-human-health",
         value=2.1e-8,
     ),
+    cf_row("industrial-area", "industrial area", LAND_OCC, method="ef-3.1:land-use", value=1.0),
 ]
 VOCAB = [
     vocab_row("co2-fos", "Carbon dioxide (fossil)", cas="124-38-9"),
     vocab_row("river", "River water", cas="7732-18-5"),
     vocab_row("rn222", "Radon-222", cas="14859-67-7"),
+    vocab_row("industrial-area", "Industrial Area"),
 ]
 CO2 = flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified", "kg")
 WATER = flow_id("Water, river", "resources", "in water", "m3")
 RADON = flow_id("Radon-222", "emissions to air", "low. pop.", "Bq")
 GAS = flow_id("Gas, natural/m3", "resources", "in ground", "m3")
 PEAT = flow_id("Peat", "resources", "in ground", "kg")
+LAND = flow_id("Occupation, industrial area", "resources", "unspecified", "m2a")
 #: _decide never touches its ``index`` argument for a pure Unmatched-in/Unmatched-out
 #: call (the freshwater check and _refine_unmatched are both index-free); an empty
 #: index documents that rather than passing None.
@@ -118,7 +123,7 @@ def _run(source, tmp_path):
 def test_emits_entries_with_flow_ids_ef_units_and_no_comment_for_clean_matches(tmp_path):
     rows = _run(BafuEfMatchedSource(_config(_stage(tmp_path))), tmp_path)
     by_code = {r["source"]["code"]: r for r in rows}
-    assert set(by_code) == {CO2, WATER, RADON}
+    assert set(by_code) == {CO2, WATER, RADON, LAND}
     co2 = by_code[CO2]
     assert co2["source"] == {
         "name": "Carbon dioxide, fossil",
@@ -136,6 +141,21 @@ def test_emits_entries_with_flow_ids_ef_units_and_no_comment_for_clean_matches(t
     water = by_code[WATER]
     assert water["target"]["code"] == "river" and water["target"]["unit"] == "cubic meter"
     assert "conversion_factor" not in water and "location" not in water["target"]
+
+
+def test_land_use_flow_emits_with_m2_star_a_unit_and_a_placement_comment(tmp_path):
+    rows = _run(BafuEfMatchedSource(_config(_stage(tmp_path))), tmp_path)
+    land = next(r for r in rows if r["source"]["code"] == LAND)
+    assert land["source"] == {
+        "name": "Occupation, industrial area",
+        "code": LAND,
+        "unit": "m2a",
+        "context": ["resources", "unspecified"],
+    }
+    assert land["target"]["code"] == "industrial-area"
+    assert land["target"]["unit"] == "m2*a"
+    assert "conversion_factor" not in land
+    assert "placed on EF land use" in land["comment"]
 
 
 def test_becquerel_sources_land_on_kilobecquerel_with_a_conversion(tmp_path):
@@ -177,7 +197,7 @@ def test_flows_already_in_rank_3_or_6_are_skipped(tmp_path):
     rows = _run(
         BafuEfMatchedSource(_config(_stage(tmp_path, rank3=[CO2], rank6=[RADON]))), tmp_path
     )
-    assert [r["source"]["code"] for r in rows] == [WATER]
+    assert {r["source"]["code"] for r in rows} == {WATER, LAND}
 
 
 def test_location_and_caveats_are_carried(tmp_path):
@@ -334,12 +354,13 @@ def test_outcomes_returns_one_tuple_per_non_excluded_fixture_flow(tmp_path):
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
     )
     outcomes = source.outcomes(records)
-    assert {flow.code for flow, _ in outcomes} == {WATER, RADON, GAS, PEAT}
+    assert {flow.code for flow, _ in outcomes} == {WATER, RADON, GAS, PEAT, LAND}
     assert all(isinstance(o, (Match, Unmatched)) for _, o in outcomes)
     # Gas and Peat have no matching EF flow in the default fixture CF/VOCAB at all
     by_code = {flow.code: outcome for flow, outcome in outcomes}
     assert by_code[GAS].reason == "no_ef_flow"
     assert by_code[PEAT].reason == "no_ef_flow"
+    assert isinstance(by_code[LAND], Match) and by_code[LAND].tier == "landuse"
 
 
 def test_substance_cas_is_per_name_and_drops_conflicts():

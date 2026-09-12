@@ -65,6 +65,11 @@ _ELEC = """<?xml version='1.0' encoding='UTF-8'?>
         uncertaintyType="0" unit="kg">
         <inputGroup>4</inputGroup>
       </exchange>
+      <exchange category="resources" subCategory="unspecified"
+        meanValue="0.05" name="Occupation, industrial area" number="206"
+        uncertaintyType="0" unit="m2a">
+        <inputGroup>4</inputGroup>
+      </exchange>
     </flowData>
   </dataset>
 </ecoSpold>

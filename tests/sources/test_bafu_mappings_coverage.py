@@ -13,6 +13,7 @@ from tests.sources.test_bafu_mappings_matched import (
     CF,
     CO2,
     GAS,
+    LAND,
     PEAT,
     RADON,
     VOCAB,
@@ -38,9 +39,11 @@ def _source(root):
 def test_every_universe_flow_has_exactly_one_row(tmp_path):
     root = _stage(tmp_path, rank3=[CO2], rank6=[RADON])
     rows = _run(_source(root), tmp_path)
-    assert len(rows) == 5
+    assert len(rows) == 6
     by_code = {r["source"]["code"]: r for r in rows}
-    assert set(by_code) == {CO2, WATER, RADON, GAS, PEAT}
+    assert set(by_code) == {CO2, WATER, RADON, GAS, PEAT, LAND}
+    assert by_code[LAND]["status"] == "mapped" and by_code[LAND]["bridge"] == 7
+    assert by_code[LAND]["tier"] == "landuse"
     assert by_code[CO2] == {
         "source": {
             "name": "Carbon dioxide, fossil",
@@ -167,7 +170,7 @@ def test_assembled_package_uses_the_coverage_verb(tmp_path):
     )
     package = _assemble(_run(BafuEfCoverageSource(config), tmp_path), config)
     assert set(package) == {"name", "version", "coverage"}
-    assert len(package["coverage"]) == 5
+    assert len(package["coverage"]) == 6
     json.dumps(package)  # JSON-serialisable (no sets, no tuples that matter)
 
 

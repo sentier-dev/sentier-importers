@@ -7,6 +7,7 @@ from sentier_importers.matching.matchers import (
     Candidate,
     CasMatcher,
     ExactNameMatcher,
+    LandUseMatcher,
     QualifierMatcher,
     RegionStripMatcher,
     SynonymMatcher,
@@ -17,6 +18,8 @@ from sentier_importers.sources.eaternity.bridge import BafuFlow
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
     AIR_UNSPEC,
+    LAND_OCC,
+    LAND_TRANS,
     RES_WATER,
     WATER_FRESH,
     cf_row,
@@ -56,6 +59,56 @@ def index(tmp_path_factory):
 
 def _air(name, sub="low. pop."):
     return BafuFlow(name, "emissions to air", sub, "kg")
+
+
+LAND_CF = [
+    cf_row("industrial-area", "industrial area", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+    cf_row(
+        "to-industrial-area", "to industrial area", LAND_TRANS, method="ef-3.1:land-use", value=1.0
+    ),
+    cf_row("arable-irrigated", "arable, irrigated", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+    cf_row(
+        "from-unspecified", "from unspecified", LAND_TRANS, method="ef-3.1:land-use", value=1.0
+    ),
+    cf_row("dump-site", "dump site", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+    cf_row(
+        "traffic-rail",
+        "traffic area, rail network",
+        LAND_OCC,
+        method="ef-3.1:land-use",
+        value=1.0,
+    ),
+    cf_row(
+        "unspecified-natural",
+        "unspecified, natural",
+        LAND_OCC,
+        method="ef-3.1:land-use",
+        value=1.0,
+    ),
+    cf_row("natural-cls", "natural", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+]
+LAND_VOCAB = [
+    vocab_row("industrial-area", "Industrial Area"),
+    vocab_row("to-industrial-area", "To Industrial Area"),
+    vocab_row("arable-irrigated", "Arable, Irrigated"),
+    vocab_row("from-unspecified", "From Unspecified"),
+    vocab_row("dump-site", "Dump Site"),
+    vocab_row("traffic-rail", "Traffic Area, Rail Network"),
+    vocab_row("unspecified-natural", "Unspecified, Natural"),
+    vocab_row("natural-cls", "Natural"),
+]
+
+
+@pytest.fixture(scope="module")
+def land_index(tmp_path_factory):
+    """A tiny EF land-use index (occupation + transformation leafs) for LandUseMatcher."""
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("land"), LAND_CF, LAND_VOCAB)
+    )
+
+
+def _resource(name, sub="unspecified", unit="m2a"):
+    return BafuFlow(name, "resources", sub, unit)
 
 
 def test_exact_name_matcher(index):
@@ -243,3 +296,119 @@ def test_region_strip_matcher_yields_nothing_when_no_inner_matcher_hits(index):
     m = RegionStripMatcher([ExactNameMatcher()])
     flow = BafuFlow("Water, KR", "emissions to air", "unspecified", "kg")
     assert m.candidates(flow, None, index) == []
+
+
+def test_land_use_matcher_tier():
+    assert LandUseMatcher.tier == "landuse"
+
+
+def test_land_use_matcher_occupation_carries_filing_caveat(land_index):
+    got = LandUseMatcher().candidates(_resource("Occupation, industrial area"), None, land_index)
+    assert [c.flow.code for c in got] == ["industrial-area"]
+    assert got[0].tier == "landuse"
+    assert got[0].subcategory_override == "land"
+    assert got[0].caveat == (
+        "BAFU files this land flow under resources / unspecified; placed on EF land use"
+    )
+
+
+def test_land_use_matcher_keyword_is_case_insensitive(land_index):
+    got = LandUseMatcher().candidates(_resource("occupation, industrial area"), None, land_index)
+    assert [c.flow.code for c in got] == ["industrial-area"]
+
+
+def test_land_use_matcher_no_filing_caveat_when_already_filed_under_land(land_index):
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, dump site", sub="land"), None, land_index
+    )
+    assert [c.flow.code for c in got] == ["dump-site"]
+    assert got[0].caveat is None
+
+
+def test_land_use_matcher_collapses_a_missing_sub_class(land_index):
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, industrial area, built up"), None, land_index
+    )
+    assert [c.flow.code for c in got] == ["industrial-area"]
+    assert got[0].caveat == (
+        "BAFU files this land flow under resources / unspecified; placed on EF land use; "
+        "sub-class 'industrial area, built up' collapsed onto EF class 'Industrial Area'; "
+        "EF has no flow for the sub-class"
+    )
+
+
+def test_land_use_matcher_collapse_caveat_only_when_already_under_land(land_index):
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, dump site, hazardous", sub="land"), None, land_index
+    )
+    assert [c.flow.code for c in got] == ["dump-site"]
+    assert got[0].caveat == (
+        "sub-class 'dump site, hazardous' collapsed onto EF class 'Dump Site'; "
+        "EF has no flow for the sub-class"
+    )
+
+
+def test_land_use_matcher_transformation_to(land_index):
+    got = LandUseMatcher().candidates(
+        _resource("Transformation, to industrial area"), None, land_index
+    )
+    assert [c.flow.code for c in got] == ["to-industrial-area"]
+
+
+def test_land_use_matcher_class_synonym_annual_crop(land_index):
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, annual crop, irrigated"), None, land_index
+    )
+    assert [c.flow.code for c in got] == ["arable-irrigated"]
+
+
+def test_land_use_matcher_class_synonym_unknown(land_index):
+    got = LandUseMatcher().candidates(_resource("Transformation, from unknown"), None, land_index)
+    assert [c.flow.code for c in got] == ["from-unspecified"]
+
+
+def test_land_use_matcher_class_synonym_natural_non_use(land_index):
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, unspecified, natural (non-use)"), None, land_index
+    )
+    assert [c.flow.code for c in got] == ["unspecified-natural"]
+
+
+def test_land_use_matcher_class_synonym_bare_non_use(land_index):
+    got = LandUseMatcher().candidates(_resource("Occupation, non-use"), None, land_index)
+    assert [c.flow.code for c in got] == ["natural-cls"]
+
+
+def test_land_use_matcher_no_class_and_no_parent_is_empty(land_index):
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, water bodies, artificial"), None, land_index
+    )
+    assert got == []
+
+
+def test_land_use_matcher_only_applies_to_the_resource_bucket(land_index):
+    flow = BafuFlow("Occupation, industrial area", "emissions to air", "unspecified", "m2a")
+    assert LandUseMatcher().candidates(flow, None, land_index) == []
+
+
+def test_land_use_matcher_ignores_non_land_names(land_index):
+    assert LandUseMatcher().candidates(_resource("Zinc"), None, land_index) == []
+
+
+def test_land_use_matcher_enforces_the_leaf_family(land_index):
+    # "To Industrial Area" exists only on the transformation leaf; an occupation-shaped
+    # name must not match it even though a bare by_name lookup would find it.
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, to industrial area"), None, land_index
+    )
+    assert got == []
+
+
+def test_land_use_matcher_refuses_a_name_with_an_unstripped_region_token(land_index):
+    # the one-level collapse would otherwise mistake "CH" for a droppable sub-class
+    # segment and match "Traffic Area, Rail Network" without ever recording a location;
+    # region-stripping is RegionStripMatcher's job, so this matcher refuses outright.
+    got = LandUseMatcher().candidates(
+        _resource("Occupation, traffic area, rail network, CH", sub="land"), None, land_index
+    )
+    assert got == []

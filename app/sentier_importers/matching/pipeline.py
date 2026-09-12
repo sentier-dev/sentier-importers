@@ -29,6 +29,7 @@ from sentier_importers.matching.matchers import (
     Candidate,
     CasMatcher,
     ExactNameMatcher,
+    LandUseMatcher,
     Matcher,
     QualifierMatcher,
     RegionStripMatcher,
@@ -117,7 +118,14 @@ class MatchPipeline:
             # Candidate is a frozen dataclass, so distinct-but-equal candidates could
             # otherwise collapse and silently drop a duplicate.
             placed = [
-                (c, place(flow.category, flow.subcategory, c.flow.context_path))
+                (
+                    c,
+                    place(
+                        flow.category,
+                        c.subcategory_override or flow.subcategory,
+                        c.flow.context_path,
+                    ),
+                )
                 for c in candidates
             ]
             exact = [c for c, p in placed if p is Placement.EXACT]
@@ -298,6 +306,7 @@ def default_pipeline(
         ExactNameMatcher(),
         SynonymMatcher(),
         QualifierMatcher(),
+        LandUseMatcher(),
         AliasMatcher(aliases),
     ]
     return MatchPipeline(
