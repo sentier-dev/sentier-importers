@@ -16,6 +16,7 @@ from tests.matching.ef_fixtures import (
 )
 
 LT = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
+SOIL_INDUSTRIAL = "Emissions / Emissions to soil / Emissions to non-agricultural soil"
 CF = [
     cf_row("zn-fresh", "zinc", WATER_FRESH, value=1.0),
     cf_row("zn-unspec", "zinc", WATER_UNSPEC, value=1.0),
@@ -47,6 +48,9 @@ CF = [
     # same identity, same name, same CAS: a pure code tie-break, no caveat
     cf_row("dup-a", "dupenium", WATER_FRESH, value=9.0),
     cf_row("dup-b", "dupenium", WATER_FRESH, value=9.0),
+    # same identity, one CAS, one none: the source CAS names neither -- still not silent
+    cf_row("mo-soil-ion", "molybdenum", SOIL_INDUSTRIAL, value=1.0),
+    cf_row("mo-soil-dup", "molybdenum", SOIL_INDUSTRIAL, value=1.0),
 ]
 VOCAB = [
     vocab_row("zn-fresh", "Zinc", cas="7440-66-6"),
@@ -70,6 +74,8 @@ VOCAB = [
     vocab_row("riv-b", "River water"),
     vocab_row("dup-a", "Dupenium", cas="99-99-9"),
     vocab_row("dup-b", "Dupenium", cas="99-99-9"),
+    vocab_row("mo-soil-ion", "Molybdenum", cas="16065-87-5"),
+    vocab_row("mo-soil-dup", "Molybdenum"),
 ]
 ALIASES = {
     "particulates, < 10 um": Alias("Particles (PM10)", "PM10 includes the fine fraction"),
@@ -190,6 +196,21 @@ def test_identity_tie_prefers_source_cas_with_a_caveat(pipeline):
     assert got.caveats == (
         "2 EF flows with identical factors; chose Molybdenum (CAS 7439-98-7) over "
         "Molybdenum (CAS 16065-87-5)",
+    )
+
+
+def test_identity_tie_source_cas_matching_none_still_gets_a_caveat(pipeline):
+    # mo-soil-ion/mo-soil-dup are the same substance (identical factor); the source
+    # CAS "7439-98-7" names neither, but mo-soil-ion still carries a different CAS,
+    # so the free choice between them still needs the "never silent" treatment --
+    # this also covers the cas_pool-empty branch of the free-choice code path.
+    got = pipeline.match(
+        BafuFlow("Molybdenum", "emissions to soil", "industrial", "kg"), "7439-98-7"
+    )
+    assert got.code == "mo-soil-dup"  # ties break by code once the CAS pool is empty
+    assert got.caveats == (
+        "2 EF flows with identical factors; source CAS 7439-98-7 matches none, chose "
+        "Molybdenum (CAS none) over Molybdenum (CAS 16065-87-5)",
     )
 
 

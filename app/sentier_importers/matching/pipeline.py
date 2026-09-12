@@ -161,8 +161,10 @@ class MatchPipeline:
            actually names, as long as that still leaves at least one; among what's
            left, take whichever candidate's name is textually closest to the source,
            then break any remaining tie by code. If the full candidate set carried
-           more than one distinct CAS, the choice is never silent: it gets a caveat
-           naming what was picked and what it was picked over;
+           more than one distinct CAS, or the source CAS is known but no candidate
+           carries it while at least one candidate carries a different CAS, the choice
+           is never silent: it gets a caveat naming what was picked and what it was
+           picked over (and, in the latter case, that the source CAS matched none);
         2. identities disagree, but the source carries a CAS number that singles out
            exactly one candidate by ``flow.cas`` -- pick that one (no extra caveat: a
            matching CAS is positive evidence, not a guess);
@@ -206,18 +208,34 @@ class MatchPipeline:
                     ),
                 )
                 distinct_cas = {c.flow.cas for c in candidates if c.flow.cas is not None}
-                if len(distinct_cas) > 1:
+                # the source CAS is known but names none of the tied candidates, while
+                # at least one of them carries a different (non-None) CAS: the free
+                # choice above is still silently arbitrary among them and needs the
+                # same "never silent" treatment as the multi-CAS case below.
+                cas_names_none = bool(
+                    distinct_cas
+                    and normalised_cas is not None
+                    and normalised_cas not in distinct_cas
+                )
+                if len(distinct_cas) > 1 or cas_names_none:
                     winner = chosen[0]
                     others = sorted(
                         f"{c.flow.name} (CAS {c.flow.cas or 'none'})"
                         for c in candidates
                         if c is not winner
                     )
-                    identity_caveat = (
-                        f"{len(candidates)} EF flows with identical factors; chose "
-                        f"{winner.flow.name} (CAS {winner.flow.cas or 'none'}) over "
-                        + ", ".join(others),
-                    )
+                    if cas_names_none:
+                        identity_caveat = (
+                            f"{len(candidates)} EF flows with identical factors; source CAS "
+                            f"{normalised_cas} matches none, chose {winner.flow.name} "
+                            f"(CAS {winner.flow.cas or 'none'}) over " + ", ".join(others),
+                        )
+                    else:
+                        identity_caveat = (
+                            f"{len(candidates)} EF flows with identical factors; chose "
+                            f"{winner.flow.name} (CAS {winner.flow.cas or 'none'}) over "
+                            + ", ".join(others),
+                        )
         pick = chosen[0]
         extra: tuple[str, ...] = identity_caveat
         if pick.caveat:
