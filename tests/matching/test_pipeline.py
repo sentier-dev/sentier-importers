@@ -38,6 +38,15 @@ CF = [
         method="ef-3.1:photochemical-ozone-formation-human-health",
         value=0.236,
     ),
+    # same identity (same factor), distinct CAS: the source CAS should single one out
+    cf_row("mo-a", "molybdenum", WATER_FRESH, value=1.0),
+    cf_row("mo-b", "molybdenum", WATER_FRESH, value=1.0),
+    # same name, different factors, no CAS on either flow: ambiguous under a region wrap
+    cf_row("riv-a", "river water", WATER_FRESH, value=1.0),
+    cf_row("riv-b", "river water", WATER_FRESH, value=5.0),
+    # same identity, same name, same CAS: a pure code tie-break, no caveat
+    cf_row("dup-a", "dupenium", WATER_FRESH, value=9.0),
+    cf_row("dup-b", "dupenium", WATER_FRESH, value=9.0),
 ]
 VOCAB = [
     vocab_row("zn-fresh", "Zinc", cas="7440-66-6"),
@@ -55,6 +64,12 @@ VOCAB = [
     vocab_row("water-em", "Water", cas="7732-18-5"),
     vocab_row("meoh-a", "Methanol", cas="636-21-5"),
     vocab_row("meoh-b", "Methanol", cas="67-56-1"),
+    vocab_row("mo-a", "Molybdenum", cas="16065-87-5"),
+    vocab_row("mo-b", "Molybdenum", cas="7439-98-7"),
+    vocab_row("riv-a", "River water"),
+    vocab_row("riv-b", "River water"),
+    vocab_row("dup-a", "Dupenium", cas="99-99-9"),
+    vocab_row("dup-b", "Dupenium", cas="99-99-9"),
 ]
 ALIASES = {
     "particulates, < 10 um": Alias("Particles (PM10)", "PM10 includes the fine fraction"),
@@ -167,12 +182,62 @@ def test_same_name_different_factors_with_foreign_cas_is_ambiguous(pipeline):
     assert got.reason == "ambiguous_substances"
 
 
+def test_identity_tie_prefers_source_cas_with_a_caveat(pipeline):
+    # mo-a/mo-b are the same substance (identical factor) under two different CAS
+    # numbers; the source CAS singles one out, but the choice is never silent.
+    got = pipeline.match(water("Molybdenum", "river"), "7439-98-7")
+    assert got.code == "mo-b"
+    assert got.caveats == (
+        "2 EF flows with identical factors; chose Molybdenum (CAS 7439-98-7) over "
+        "Molybdenum (CAS 16065-87-5)",
+    )
+
+
+def test_identity_tie_without_cas_falls_back_to_code_with_a_caveat(pipeline):
+    got = pipeline.match(water("Molybdenum", "river"), None)
+    assert got.code == "mo-a"
+    assert got.caveats != ()
+
+
+def test_identity_tie_with_one_shared_cas_has_no_caveat(pipeline):
+    # ccl4/cfc10 already share a single CAS between them: confirms the caveat is
+    # genuinely conditioned on more than one distinct CAS among the tied candidates
+    got = pipeline.match(air("Methane, tetrachloro-, CFC-10"), "56-23-5")
+    assert got.code == "cfc10" and got.caveats == ()
+
+
+def test_identical_name_and_cas_ties_break_by_code(pipeline):
+    got = pipeline.match(water("Dupenium", "river"), None)
+    assert got.code == "dup-a" and got.caveats == ()
+
+
+def test_ambiguity_under_region_wrap_uses_the_inner_tier(pipeline):
+    got = pipeline.match(water("River water, KR", "river", "m3"), None)
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="region/name match finds 2 EF flows with different factors for "
+        "river water; no source CAS",
+    )
+
+
+def test_sub_compartment_absent_lists_every_distinct_name(index):
+    # unspecified_fallback=False turns an UNSPECIFIED-only candidate set (both ccl4
+    # and cfc10 exist only on the bucket-level unspecified leaf) into a
+    # sub_compartment_absent naming every distinct candidate name and just that leaf.
+    pipe = default_pipeline(index, ALIASES, unspecified_fallback=False)
+    got = pipe.match(air("Methane, tetrachloro-, CFC-10", "indoor"), "56-23-5")
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has carbon tetrachloride, cfc-10 only in: emissions to air, unspecified",
+    )
+
+
 def test_elemental_cas_does_not_collapse_speciation(pipeline):
     got = pipeline.match(water("Chromium", "river"), "7440-47-3")
     assert got == Unmatched(
         reason="no_ef_flow",
-        detail="no EF 3.1 flow with a factor matches by name, synonym, CAS, qualifier or alias "
-        "in the water compartment",
+        detail="no EF 3.1 flow with a factor matches by name, synonym, qualifier, alias, "
+        "region-stripped name or CAS in the water compartment",
     )
 
 

@@ -3,10 +3,11 @@ disambiguation. Anything that cannot be asserted comes back as ``Unmatched`` wit
 reason a reviewer can act on.
 
 Tier order: exact name, synonym, qualifier spelling, curated alias, the same four
-tiers again applied to the region-stripped name, then CAS last. The first matcher that
-yields any candidate in the flow's compartment decides the outcome: a later tier never
-rescues a placement failure of an earlier one, because "the exact-name EF flow exists
-but only in another sub-compartment" is information, not a miss.
+tiers again applied to the region-stripped name (``RegionStripMatcher`` applies that
+same first-hit rule among its own inner matchers), then CAS last. The first matcher
+that yields any candidate in the flow's compartment decides the outcome: a later tier
+never rescues a placement failure of an earlier one, because "the exact-name EF flow
+exists but only in another sub-compartment" is information, not a miss.
 """
 
 from __future__ import annotations
@@ -19,13 +20,13 @@ from sentier_importers.matching.compartments import (
     KNOWN_SUBCATEGORIES,
     Placement,
     bucket_of_bafu_category,
-    leaf_of,
     place,
 )
 from sentier_importers.matching.ef_index import EfFlowIndex, normalise_cas
 from sentier_importers.matching.matchers import (
     Alias,
     AliasMatcher,
+    Candidate,
     CasMatcher,
     ExactNameMatcher,
     Matcher,
@@ -36,9 +37,10 @@ from sentier_importers.matching.matchers import (
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
 #: BAFU sub-compartment -> how EF would have named it, for the fallback caveat.
-#: "groundwater, long-term" is deliberately absent: its own leaf family already
-#: includes the bucket-level long-term-unspecified leaf (see compartments.py), so
-#: ``place`` returns EXACT for it directly and this fallback branch never fires.
+#: Absent here: ``unspecified`` (already exact on its own bucket-level leaf) and
+#: every ``*, long-term`` subcategory, whose family already owns the bucket-level
+#: long-term-unspecified leaf too (see compartments.py) -- neither ever reaches this
+#: fallback branch, so neither needs a translation.
 _LEAF_HUMAN = {
     "groundwater": "ground water",
     "river": "fresh water",
@@ -54,8 +56,8 @@ _LEAF_HUMAN = {
     "indoor": "indoor air",
 }
 _NO_MATCH = (
-    "no EF 3.1 flow with a factor matches by name, synonym, CAS, qualifier or alias "
-    "in the {bucket} compartment"
+    "no EF 3.1 flow with a factor matches by name, synonym, qualifier, alias, "
+    "region-stripped name or CAS in the {bucket} compartment"
 )
 
 
@@ -67,7 +69,7 @@ class Match:
     tier: str
     placement: str
     location: str | None
-    candidates: int
+    candidates: int  #: size of the winning placement group, before disambiguation
     caveats: tuple[str, ...]
 
 
@@ -130,14 +132,23 @@ class MatchPipeline:
                 return self._pick(
                     fallback, flow, cas, matcher.tier, Placement.UNSPECIFIED, (caveat,)
                 )
-            leafs = sorted({leaf_of(c.flow.context_path) for c in candidates})
-            name = sorted({c.flow.name.lower() for c in candidates})[0]
+            leafs = sorted({c.flow.leaf for c in candidates})
+            names = sorted({c.flow.name.lower() for c in candidates})
             return Unmatched(
-                "sub_compartment_absent", f"EF has {name} only in: " + ", ".join(leafs)
+                "sub_compartment_absent",
+                f"EF has {', '.join(names)} only in: " + ", ".join(leafs),
             )
         return Unmatched("no_ef_flow", _NO_MATCH.format(bucket=bucket))
 
-    def _pick(self, candidates, flow, cas, tier, placement, caveats) -> Match | Unmatched:
+    def _pick(
+        self,
+        candidates: list[Candidate],
+        flow: BafuFlow,
+        cas: str | None,
+        tier: str,
+        placement: Placement,
+        caveats: tuple[str, ...],
+    ) -> Match | Unmatched:
         """Choose one candidate, or report why several cannot be told apart.
 
         Runs whenever there is more than one candidate, whether or not their names
@@ -146,32 +157,46 @@ class MatchPipeline:
 
         1. every candidate's CF identity (``EfFlowIndex.identity``, which deliberately
            excludes location-specific factors -- regionalised differences are never
-           compared) agrees -- the choice is free, so take whichever candidate's name
-           is textually closest to the source name;
+           compared) agrees -- the choice is free. Prefer a candidate the source CAS
+           actually names, as long as that still leaves at least one; among what's
+           left, take whichever candidate's name is textually closest to the source,
+           then break any remaining tie by code. If the full candidate set carried
+           more than one distinct CAS, the choice is never silent: it gets a caveat
+           naming what was picked and what it was picked over;
         2. identities disagree, but the source carries a CAS number that singles out
            exactly one candidate by ``flow.cas`` -- pick that one (no extra caveat: a
            matching CAS is positive evidence, not a guess);
         3. otherwise, report ``Unmatched("ambiguous_substances", ...)``.
         """
         chosen = sorted(candidates, key=lambda c: c.flow.code)
+        identity_caveat: tuple[str, ...] = ()
         if len(candidates) > 1:
+            # () -- every factor is location-specific -- would compare equal here too;
+            # no EF 3.1 flow has one today, but the comparison would still be correct.
             identities = {self._index.identity(c.flow.code) for c in candidates}
+            normalised_cas = normalise_cas(cas)
             if len(identities) > 1:
-                normalised_cas = normalise_cas(cas)
-                cas_matches = [c for c in candidates if c.flow.cas == normalised_cas]
-                if normalised_cas is not None and len(cas_matches) == 1:
-                    chosen = cas_matches
-                else:
+                if normalised_cas is None:
                     return self._ambiguous(candidates, cas, tier)
+                cas_matches = [c for c in candidates if c.flow.cas == normalised_cas]
+                if len(cas_matches) != 1:
+                    return self._ambiguous(candidates, cas, tier)
+                chosen = cas_matches
             else:
-                # identical factors: the choice is free, take the name closest to the
-                # source. BAFU often bakes several comma-separated synonyms into one
-                # flow name (e.g. "Methane, tetrachloro-, CFC-10"); score each
-                # candidate against whichever segment lines up best, not the whole
-                # name at once.
+                # identical factors: the choice is free. Prefer a candidate the
+                # source CAS actually names (if any does); among what's left, take
+                # the name closest to the source. BAFU often bakes several
+                # comma-separated synonyms into one flow name (e.g. "Methane,
+                # tetrachloro-, CFC-10"); score each candidate against whichever
+                # segment lines up best, not the whole name at once.
+                pool = candidates
+                if normalised_cas is not None:
+                    cas_pool = [c for c in candidates if c.flow.cas == normalised_cas]
+                    if cas_pool:
+                        pool = cas_pool
                 segments = [s.strip() for s in flow.name.lower().split(",")]
                 chosen = sorted(
-                    candidates,
+                    pool,
                     key=lambda c: (
                         -max(
                             difflib.SequenceMatcher(None, seg, c.flow.name.lower()).ratio()
@@ -180,8 +205,21 @@ class MatchPipeline:
                         c.flow.code,
                     ),
                 )
+                distinct_cas = {c.flow.cas for c in candidates if c.flow.cas is not None}
+                if len(distinct_cas) > 1:
+                    winner = chosen[0]
+                    others = sorted(
+                        f"{c.flow.name} (CAS {c.flow.cas or 'none'})"
+                        for c in candidates
+                        if c is not winner
+                    )
+                    identity_caveat = (
+                        f"{len(candidates)} EF flows with identical factors; chose "
+                        f"{winner.flow.name} (CAS {winner.flow.cas or 'none'}) over "
+                        + ", ".join(others),
+                    )
         pick = chosen[0]
-        extra: tuple[str, ...] = ()
+        extra: tuple[str, ...] = identity_caveat
         if pick.caveat:
             extra += (pick.caveat,)
         if pick.region:
@@ -198,7 +236,7 @@ class MatchPipeline:
             caveats=caveats + extra,
         )
 
-    def _ambiguous(self, candidates, cas, tier) -> Unmatched:
+    def _ambiguous(self, candidates: list[Candidate], cas: str | None, tier: str) -> Unmatched:
         """Report several candidates with different factors that no CAS singles out.
 
         Uses the first candidate's own tier when set (e.g. ``region/name``) rather
@@ -211,7 +249,7 @@ class MatchPipeline:
         names = ", ".join(sorted({c.flow.name.lower() for c in candidates}))
         source = (
             "no source CAS"
-            if cas is None
+            if normalised_cas is None
             else f"the source CAS {normalised_cas} does not single one out"
         )
         return Unmatched(
