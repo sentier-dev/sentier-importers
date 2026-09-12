@@ -238,14 +238,19 @@ class LandUseMatcher:
         caveat = "; ".join(caveats) if caveats else None
 
         return [
-            Candidate(f, tier=self.tier, subcategory_override="land", caveat=caveat)
-            for f in sorted(found, key=lambda f: f.code)
+            Candidate(f, tier=self.tier, subcategory_override="land", caveat=caveat) for f in found
         ]
 
     @staticmethod
     def _by_class(index: EfFlowIndex, kind: str, cls: str, leaf: str) -> list[EfFlow]:
+        """EF flows named ``cls`` (prefixed ``from``/``to`` outside ``occupation``),
+        restricted to ``leaf`` and code-sorted -- the same order the returned
+        candidates end up in, so ``found[0]`` (used for the collapse caveat) is
+        always the same flow the first returned ``Candidate`` wraps.
+        """
         ef_name = cls if kind == "occupation" else f"{kind} {cls}"
-        return [f for f in index.by_name(ef_name, "resource") if f.leaf == leaf]
+        found = [f for f in index.by_name(ef_name, "resource") if f.leaf == leaf]
+        return sorted(found, key=lambda f: f.code)
 
 
 class AliasMatcher:
@@ -285,9 +290,11 @@ class RegionStripMatcher:
     as ``location`` (ISO-2) or ``region`` (anything else) and a ``tier`` of
     ``"region/<inner tier>"``. No token, no match: ``[]``.
 
-    ``inner`` must be name-keyed matchers only (``ExactNameMatcher``, ``SynonymMatcher``,
-    ``QualifierMatcher``, ``AliasMatcher``): a ``CasMatcher`` inside would ignore the
-    stripped stem and match on ``cas`` again, defeating the point of stripping.
+    ``inner`` must be name-keyed matchers only (``ExactNameMatcher``, ``LandUseMatcher``,
+    ``SynonymMatcher``, ``QualifierMatcher``, ``AliasMatcher``): a ``CasMatcher`` inside
+    would ignore the stripped stem and match on ``cas`` again, defeating the point of
+    stripping. ``LandUseMatcher`` is still name-keyed despite its own internal class
+    lookup -- it only ever reads ``flow.name``, never ``cas``.
     """
 
     tier = "region"

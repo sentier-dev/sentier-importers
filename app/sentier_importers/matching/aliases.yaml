@@ -42,12 +42,14 @@ aliases:
   energy, from oil: Crude Oil
   energy, from peat: Peat
   energy, from uranium: Uranium
+  # yields no entry today: EF has this flow only under emissions to water,
+  # unspecified (long-term), and BAFU never files it there. Still worth keeping --
+  # it upgrades two rows (water/ocean, water/river) from no_ef_flow to the more
+  # informative sub_compartment_absent.
   benzo(a)anthracene: benzo[a]anthracene
   butane, perfluorocyclo-, pfc-318: PFC-318
   ethane, 1,1,2-trifluoro-, hfc-143: HFC-143
   octene (mixture of isomers): Octene
-  nitrogen:
-    target: Nitrogen, Total (excluding N2)
-    caveat: >-
-      BAFU 'Nitrogen' emitted to water taken as total nitrogen (EF marine
-      eutrophication flow)
+  # "nitrogen" withdrawn: EF's "Nitrogen, Total (excluding N2)" asserts a chemical
+  # identity (total N), not a spelling difference -- open question for Laurenz,
+  # not a curated alias.

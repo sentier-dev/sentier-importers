@@ -268,8 +268,8 @@ def test_elemental_cas_does_not_collapse_speciation(pipeline):
     got = pipeline.match(water("Chromium", "river"), "7440-47-3")
     assert got == Unmatched(
         reason="no_ef_flow",
-        detail="no EF 3.1 flow with a factor matches by name, synonym, qualifier, alias, "
-        "region-stripped name or CAS in the water compartment",
+        detail="no EF 3.1 flow with a factor matches by name, synonym, qualifier, "
+        "land-use class, alias, region-stripped name or CAS in the water compartment",
     )
 
 

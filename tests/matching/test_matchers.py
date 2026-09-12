@@ -11,8 +11,10 @@ from sentier_importers.matching.matchers import (
     QualifierMatcher,
     RegionStripMatcher,
     SynonymMatcher,
+    _normalise_land_class,
     load_aliases,
 )
+from sentier_importers.matching.pipeline import Match, default_pipeline
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
 from tests.matching.ef_fixtures import (
@@ -20,6 +22,7 @@ from tests.matching.ef_fixtures import (
     AIR_UNSPEC,
     LAND_OCC,
     LAND_TRANS,
+    RES_GROUND,
     RES_WATER,
     WATER_FRESH,
     cf_row,
@@ -412,3 +415,105 @@ def test_land_use_matcher_refuses_a_name_with_an_unstripped_region_token(land_in
         _resource("Occupation, traffic area, rail network, CH", sub="land"), None, land_index
     )
     assert got == []
+
+
+# --- _normalise_land_class -------------------------------------------------------
+
+
+def test_normalise_land_class_maps_each_synonym_individually():
+    assert _normalise_land_class("annual crop") == "arable"
+    assert _normalise_land_class("unknown") == "unspecified"
+    assert _normalise_land_class("natural (non-use)") == "natural"
+    assert _normalise_land_class("non-use") == "natural"
+
+
+def test_normalise_land_class_applies_synonyms_per_comma_segment():
+    assert _normalise_land_class("annual crop, irrigated") == "arable, irrigated"
+    assert _normalise_land_class("unspecified, natural (non-use)") == "unspecified, natural"
+
+
+def test_normalise_land_class_leaves_non_synonym_segments_untouched():
+    assert _normalise_land_class("industrial area, built up") == "industrial area, built up"
+
+
+def test_normalise_land_class_strips_whitespace_and_lowercases():
+    assert _normalise_land_class(" Industrial Area , Built Up ") == "industrial area, built up"
+
+
+# --- LandUseMatcher._by_class -----------------------------------------------------
+
+
+def test_by_class_occupation_looks_up_the_bare_class_name(land_index):
+    found = LandUseMatcher._by_class(
+        land_index, "occupation", "industrial area", "land occupation"
+    )
+    assert [f.code for f in found] == ["industrial-area"]
+
+
+def test_by_class_from_and_to_prefix_the_class_name(land_index):
+    found_from = LandUseMatcher._by_class(land_index, "from", "unspecified", "land transformation")
+    assert [f.code for f in found_from] == ["from-unspecified"]
+    found_to = LandUseMatcher._by_class(land_index, "to", "industrial area", "land transformation")
+    assert [f.code for f in found_to] == ["to-industrial-area"]
+
+
+def test_by_class_filters_out_the_wrong_leaf(land_index):
+    # "To Industrial Area" exists only on the transformation leaf; asking for it on
+    # the occupation leaf must come back empty even though the name itself resolves.
+    assert (
+        LandUseMatcher._by_class(land_index, "occupation", "to industrial area", "land occupation")
+        == []
+    )
+
+
+def test_by_class_returns_a_code_sorted_list(land_index):
+    # "Industrial Area" and "Arable, Irrigated" both exist; sortedness only really
+    # matters once more than one flow shares a class, but the contract (see the
+    # method's own docstring) is that _by_class always hands back a code-sorted list.
+    found = LandUseMatcher._by_class(
+        land_index, "occupation", "industrial area", "land occupation"
+    )
+    assert found == sorted(found, key=lambda f: f.code)
+
+
+# --- tier-ordering invariant: land names never resolve via name/synonym/cas ------
+
+
+def test_land_names_in_the_fixture_index_never_resolve_outside_the_land_tier(land_index):
+    """Every land EF flow in ``land_index``, reconstructed back into its BAFU
+    ``Occupation``/``Transformation`` name, must resolve through ``landuse`` or
+    ``region/landuse`` (or fail outright) -- never through ``name``, ``synonym`` or
+    ``cas``, which would silently place it without ever going through the land-use
+    placement-override/collapse/leaf-filter rules.
+    """
+    pipeline = default_pipeline(land_index, {})
+    land_flows = [f for f in land_index if f.leaf in ("land occupation", "land transformation")]
+    assert land_flows  # sanity: the fixture actually carries land flows
+    for f in land_flows:
+        name = (
+            f"Occupation, {f.name}" if f.leaf == "land occupation" else f"Transformation, {f.name}"
+        )
+        got = pipeline.match(BafuFlow(name, "resources", "unspecified", "m2a"), None)
+        if isinstance(got, Match):
+            assert got.tier in ("landuse", "region/landuse"), (name, got.tier)
+
+
+def test_synonym_matcher_does_not_steal_a_land_use_name(tmp_path_factory):
+    # a hypothetical EF resource flow whose alt_label happens to collide with a BAFU
+    # land-use name ("Occupation, dump site"): SynonymMatcher must not resolve it
+    # before LandUseMatcher gets a chance. LandUseMatcher is ordered right after
+    # ExactNameMatcher (before SynonymMatcher) in default_pipeline's ``named`` list
+    # for exactly this reason.
+    cf = [
+        cf_row("dump-site", "dump site", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+        cf_row("hijack", "hijack resource", RES_GROUND, method="ef-3.1:resource-use-fossils"),
+    ]
+    vocab = [
+        vocab_row("dump-site", "Dump Site"),
+        vocab_row("hijack", "Hijack Resource", alt=["Occupation, dump site"]),
+    ]
+    idx = EfFlowIndex.from_files(*write_ef_inputs(tmp_path_factory.mktemp("hijack"), cf, vocab))
+    pipeline = default_pipeline(idx, {})
+    got = pipeline.match(BafuFlow("Occupation, dump site", "resources", "land", "m2a"), None)
+    assert isinstance(got, Match)
+    assert got.tier == "landuse" and got.code == "dump-site"

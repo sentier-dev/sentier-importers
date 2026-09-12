@@ -2,12 +2,13 @@
 disambiguation. Anything that cannot be asserted comes back as ``Unmatched`` with a
 reason a reviewer can act on.
 
-Tier order: exact name, synonym, qualifier spelling, curated alias, the same four
-tiers again applied to the region-stripped name (``RegionStripMatcher`` applies that
-same first-hit rule among its own inner matchers), then CAS last. The first matcher
-that yields any candidate in the flow's compartment decides the outcome: a later tier
-never rescues a placement failure of an earlier one, because "the exact-name EF flow
-exists but only in another sub-compartment" is information, not a miss.
+Tier order: exact name, land-use class, synonym, qualifier spelling, curated alias,
+the same five tiers again applied to the region-stripped name (``RegionStripMatcher``
+applies that same first-hit rule among its own inner matchers), then CAS last. The
+first matcher that yields any candidate in the flow's compartment decides the
+outcome: a later tier never rescues a placement failure of an earlier one, because
+"the exact-name EF flow exists but only in another sub-compartment" is information,
+not a miss.
 """
 
 from __future__ import annotations
@@ -57,8 +58,8 @@ _LEAF_HUMAN = {
     "indoor": "indoor air",
 }
 _NO_MATCH = (
-    "no EF 3.1 flow with a factor matches by name, synonym, qualifier, alias, "
-    "region-stripped name or CAS in the {bucket} compartment"
+    "no EF 3.1 flow with a factor matches by name, synonym, qualifier, land-use "
+    "class, alias, region-stripped name or CAS in the {bucket} compartment"
 )
 
 
@@ -283,11 +284,21 @@ class MatchPipeline:
 def default_pipeline(
     index: EfFlowIndex, aliases: Mapping[str, str | Alias], *, unspecified_fallback: bool = True
 ) -> MatchPipeline:
-    """Build the standard pipeline: name, synonym, qualifier, alias, region-stripped, CAS.
+    """Build the standard pipeline: name, land-use class, synonym, qualifier, alias,
+    region-stripped, CAS.
 
     ``aliases`` is the curated BAFU-name -> EF-preferred-label table (see
     ``matchers.load_aliases``). ``unspecified_fallback`` is forwarded to
     ``MatchPipeline``.
+
+    ``LandUseMatcher`` runs second, right after ``ExactNameMatcher`` and before
+    ``SynonymMatcher``: an EF flow's ``alt_labels`` are free-form BAFU-side data, and a
+    synonym that happens to collide with a land-use name (``Occupation, dump site``,
+    say) must not be allowed to steal the match away from the land-use rules -- once a
+    matcher yields any candidate, ``MatchPipeline.match`` commits to it and never tries
+    a later tier (see the module docstring). ``ExactNameMatcher`` is left ahead of it
+    because an EF preferred label never looks like a BAFU ``Occupation``/
+    ``Transformation`` name in practice, so there is nothing for it to steal.
 
     CAS runs last, after every name-keyed tier including the region-stripped ones, not
     third: a shared CAS number (the biogenic/fossil/land-use-change carbon dioxide
@@ -304,9 +315,9 @@ def default_pipeline(
     """
     named: list[Matcher] = [
         ExactNameMatcher(),
+        LandUseMatcher(),
         SynonymMatcher(),
         QualifierMatcher(),
-        LandUseMatcher(),
         AliasMatcher(aliases),
     ]
     return MatchPipeline(
