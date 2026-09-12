@@ -1084,3 +1084,55 @@ sources:
       version: 0.2.0
       verb: replace
     enabled: false
+
+  # sentier-mappings rank 6: bafu-2026-v1 → EF 3.1 CF keys INFERRED from Eaternity's
+  # rank-4 pair family (ecoinvent-biosphere3 → eaternity-bafu-ext, PR #7). Each Eaternity
+  # target is placed at BAFU sub-compartment level via the retained biosphere3 context
+  # (sources/eaternity/bridge.py, strict, never a fallback), and its biosphere3 partner
+  # is resolved to the EF flow carrying the identical CF vector (cf_identity.py, same
+  # de-bridging argument as rank 3). Only flows the rank-3 payload lacks are emitted, so
+  # rank 3 keeps precedence by construction. Regenerate-locally: every input is a local
+  # path (the method_cfs input is a DIRECTORY read outside the fetch cache). Run with a
+  # fresh --cache-dir: file:// inputs are cached by URL and go stale when upstream moves.
+  - name: eaternity-inferred-bafu-ef-biosphere   # emits biosphere.json
+    module: sentier_importers.sources.eaternity.mappings_biosphere
+    target: sentier_mappings
+    category: 06-bafu-2026-v1__ef-3.1
+    emit_filename: biosphere
+    fetch:
+      url: "file:///home/laurenz/dds/sentier-mappings/data/04-ecoinvent-biosphere3__eaternity-bafu-ext/biosphere.json"
+      format: json
+    inputs:
+      rank3: "file:///home/laurenz/dds/sentier-mappings/data/03-bafu-2026-v1__ef-3.1/biosphere.json"
+      ecospold: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      ef_flows: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      method_cfs: "file:///home/laurenz/dds/dds-carbonminds-data/registry/method_cfs"
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere-inferred
+      version: 0.1.0
+      verb: replace
+    enabled: false
+
+  # Same computation, emits the withheld pairs as the non-normative inference_review.json
+  # sidecar (verb `review`, the shape of the other *_review.json sidecars; invisible to
+  # the sentier-mappings CI validator by design).
+  - name: eaternity-inferred-bafu-ef-review      # emits inference_review.json
+    module: sentier_importers.sources.eaternity.inference_review
+    target: sentier_mappings
+    category: 06-bafu-2026-v1__ef-3.1
+    emit_filename: inference_review
+    fetch:
+      url: "file:///home/laurenz/dds/sentier-mappings/data/04-ecoinvent-biosphere3__eaternity-bafu-ext/biosphere.json"
+      format: json
+    inputs:
+      rank3: "file:///home/laurenz/dds/sentier-mappings/data/03-bafu-2026-v1__ef-3.1/biosphere.json"
+      ecospold: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      ef_flows: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      method_cfs: "file:///home/laurenz/dds/dds-carbonminds-data/registry/method_cfs"
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-inference-review
+      version: 0.1.0
+      verb: review
+    enabled: false

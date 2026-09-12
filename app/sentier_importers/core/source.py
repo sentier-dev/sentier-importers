@@ -7,7 +7,7 @@ framework supplies validate → emit → deliver via the pipeline driver.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core import parse as parse_mod
@@ -45,6 +45,10 @@ class SourceConfig:
     package_name: str | None = None
     package_version: str | None = None
     package_verb: str | None = None  # replace | update | delete | create
+    # Named secondary inputs (``{name: url}``) a source joins against — bridges that
+    # compose several upstream artifacts. Fetched through the same cache as
+    # ``fetch_url`` and exposed as ``Source.inputs[name]``.
+    inputs: dict[str, str] = field(default_factory=dict)
 
 
 class Source(ABC):
@@ -56,9 +60,16 @@ class Source(ABC):
 
     def __init__(self, config: SourceConfig) -> None:
         self.config = config
+        #: ``config.inputs`` resolved to bytes by :meth:`fetch`, keyed by input name.
+        self.inputs: dict[str, RawData] = {}
 
     def fetch(self, ctx: RunContext) -> RawData:
-        """Retrieve raw data (default: cached fetch of ``config.fetch_url``)."""
+        """Retrieve raw data (default: cached fetch of ``config.fetch_url``).
+
+        Named ``config.inputs`` are fetched the same way and stored on
+        :attr:`inputs` for ``parse``/``transform`` to join against.
+        """
+        self.inputs = {name: fetch_mod.fetch(url, ctx) for name, url in self.config.inputs.items()}
         return fetch_mod.fetch(self.config.fetch_url, ctx)
 
     def parse(self, raw: RawData) -> Records:
