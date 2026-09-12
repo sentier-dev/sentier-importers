@@ -148,3 +148,15 @@ def test_registry_declares_full_bafu_family():
     assert provenance.emit_filename == "bafu-2026"
     # delivered payload files are content-named, never source-named
     assert all("bafu" not in c.emit_filename for c in vocab if c.category != "sources")
+
+
+def test_coverage_sidecar_describes_the_same_computation_as_the_matched_payload():
+    # the coverage sidecar must never drift from what bafu-ef-biosphere-matched actually
+    # ran: same primary fetch, same named inputs, so a reader can trust coverage.json as
+    # an account of that payload rather than of some other run.
+    bafu = {c.name: c for c in load_registry() if c.name.startswith("bafu")}
+    matched = bafu["bafu-ef-biosphere-matched"]
+    coverage = bafu["bafu-ef-coverage"]
+    assert coverage.fetch_url == matched.fetch_url
+    assert coverage.fetch_format == matched.fetch_format
+    assert coverage.inputs == matched.inputs

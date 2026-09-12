@@ -83,16 +83,28 @@ _SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoul
 class ParsedInputs:
     """Everything ``BafuEfMatchedSource.parse`` builds once, for ``outcomes``/``transform``
     to reuse: the BAFU flow universe, the per-substance CAS table (and its conflicts,
-    for the sibling coverage source to report), the rank-3/rank-6 exclusion set, the
-    EF flow index and the matching pipeline built over it.
+    for the sibling coverage source to report), the rank-3 and rank-6 source-code sets
+    (kept separate so the coverage sidecar can tell which bridge mapped a flow; see
+    ``excluded``), the EF flow index and the matching pipeline built over it.
     """
 
     bafu: BafuFlowIndex
     cas: Mapping[str, str]
     cas_conflicts: Mapping[str, tuple[str, ...]]
-    excluded: frozenset[str]
+    rank3_codes: frozenset[str]
+    rank6_codes: frozenset[str]
     index: EfFlowIndex
     pipeline: MatchPipeline
+
+    @property
+    def excluded(self) -> frozenset[str]:
+        """Every source code rank 3 or rank 6 already maps -- this source's exclusion set.
+
+        A derived union rather than a stored field: ``rank3_codes``/``rank6_codes`` are
+        the single source of truth (the coverage sidecar needs them apart), and this
+        property keeps ``outcomes`` (which only needs the union) unchanged.
+        """
+        return self.rank3_codes | self.rank6_codes
 
 
 def codes_of(package: dict) -> set[str]:
@@ -103,6 +115,31 @@ def codes_of(package: dict) -> set[str]:
         for e in package.get(verb, [])
         if e.get("source", {}).get("code")
     }
+
+
+def flow_sort_key(flow: BafuFlow) -> tuple[str, str, str, str]:
+    """The stable order every BAFU flow listing (``outcomes``, the coverage sidecar) is
+    sorted by: name first, then category/subcategory/unit to break ties between flows
+    sharing a name (e.g. ``Zinc`` to different sub-compartments).
+    """
+    return (flow.name, flow.category, flow.subcategory, flow.unit)
+
+
+def _base_source(flow: BafuFlow) -> Record:
+    """The two fields every ``source`` sub-record carries unconditionally."""
+    return {"name": flow.name, "code": flow.code}
+
+
+def source_record(flow: BafuFlow) -> Record:
+    """The ``source`` sub-record shape the coverage sidecar carries for every flow:
+    name, code, unit and context unconditionally (unit may be ``""`` for a unitless
+    flow; the key is kept regardless). Contrast ``entry_for``, whose own ``source``
+    omits a falsy unit/context -- the randonneur payload convention.
+    """
+    record = _base_source(flow)
+    record["unit"] = flow.unit
+    record["context"] = flow.context
+    return record
 
 
 def substance_cas(records: Records) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
@@ -272,7 +309,8 @@ class BafuEfMatchedSource(Source):
             bafu=BafuFlowIndex.from_ecospold(records),
             cas=cas,
             cas_conflicts=conflicts,
-            excluded=frozenset(codes_of(rank3) | codes_of(rank6)),
+            rank3_codes=frozenset(codes_of(rank3)),
+            rank6_codes=frozenset(codes_of(rank6)),
             index=index,
             pipeline=default_pipeline(index, load_aliases()),
         )
@@ -289,7 +327,7 @@ class BafuEfMatchedSource(Source):
         can only fire on a direct call with a mismatched (flow, match) pair.
         """
         ef_flow = index.get(match.code)
-        source: Record = {"name": flow.name, "code": flow.code}
+        source: Record = _base_source(flow)
         if flow.unit:
             source["unit"] = flow.unit
         if flow.context:
@@ -328,7 +366,7 @@ class BafuEfMatchedSource(Source):
         """
         (record,) = records
         inputs: ParsedInputs = record["inputs"]
-        flows = sorted(inputs.bafu, key=lambda f: (f.name, f.category, f.subcategory, f.unit))
+        flows = sorted(inputs.bafu, key=flow_sort_key)
         result: list[tuple[BafuFlow, Match | Unmatched]] = []
         for flow in flows:
             if flow.code in inputs.excluded:

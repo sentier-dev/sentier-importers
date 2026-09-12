@@ -26,6 +26,7 @@ from sentier_importers.core.context import RunContext
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Records, Rows
 from sentier_importers.sources.bafu.ecospold import parse_ecospold_zip
+from sentier_importers.sources.bafu.mappings_biosphere_matched import codes_of
 from sentier_importers.sources.eaternity.bridge import BafuFlowIndex
 from sentier_importers.sources.eaternity.cf_identity import CfVectors, EfLabels
 from sentier_importers.sources.eaternity.inference import Inference, Inputs, infer
@@ -65,12 +66,7 @@ class EaternityInferredBafuEfSource(Source):
         ).to_pylist()
         inputs = Inputs(
             rank4=orjson.loads(raw.content),
-            rank3_codes=frozenset(
-                e["source"]["code"]
-                for verb in ("replace", "update")
-                for e in rank3.get(verb, [])
-                if e.get("source", {}).get("code")
-            ),
+            rank3_codes=frozenset(codes_of(rank3)),
             bafu=BafuFlowIndex.from_ecospold(parse_ecospold_zip(self.inputs["ecospold"])),
             vectors=CfVectors.from_directory(
                 fetch_mod.local_path(self.config.inputs.get(_METHOD_CFS), _METHOD_CFS)

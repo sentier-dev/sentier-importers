@@ -5,7 +5,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.pipeline import _assemble
-from sentier_importers.sources.bafu.ecospold import flow_id
 from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCoverageSource
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
@@ -13,6 +12,8 @@ from tests.matching.ef_fixtures import CF_SCHEMA, RES_GROUND, VOCAB_SCHEMA, cf_r
 from tests.sources.test_bafu_mappings_matched import (
     CF,
     CO2,
+    GAS,
+    PEAT,
     RADON,
     VOCAB,
     WATER,
@@ -20,9 +21,6 @@ from tests.sources.test_bafu_mappings_matched import (
     _run,
     _stage,
 )
-
-GAS = flow_id("Gas, natural/m3", "resources", "in ground", "m3")
-PEAT = flow_id("Peat", "resources", "in ground", "kg")
 
 
 def _source(root):
@@ -134,14 +132,14 @@ def test_unit_mismatch_is_reported_as_unmapped(tmp_path):
     assert "megajoule" in gas["detail"]
 
 
-def test_location_and_caveats_appear_only_when_present(tmp_path):
+def test_location_and_caveats_are_absent_outside_a_rank7_match(tmp_path):
+    # the fixture's own rank-7 match (WATER, via alias) carries neither key; the positive
+    # case (location and/or caveats present on a real rank-7 match) is pinned by
+    # ``test_rank7_match_location_and_caveats_are_reported_when_present`` below.
     root = _stage(tmp_path)
     rows = _run(_source(root), tmp_path)
     for r in rows:
-        if r["status"] == "mapped" and r["bridge"] == 7:
-            assert "location" not in r or r["location"]
-            assert "caveats" not in r or r["caveats"]
-        else:
+        if not (r["status"] == "mapped" and r["bridge"] == 7):
             assert "location" not in r and "caveats" not in r
 
 

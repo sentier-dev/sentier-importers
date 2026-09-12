@@ -3,32 +3,22 @@ for rank 7 which tier and placement) or unmapped (why). Same inputs and computat
 :mod:`mappings_biosphere_matched`; emitted as ``coverage.json`` with the package verb
 ``coverage`` (non-normative, ignored by sentier-mappings' validator by design).
 
-Rank-3 and rank-6 membership comes from the two source-code sets read straight off
-``rank3``/``rank6`` (rather than the sibling's ``excluded`` union, which cannot tell them
-apart); rank 7 and the withheld reasons come from :meth:`BafuEfMatchedSource.outcomes`.
+Rank-3 and rank-6 membership comes straight from ``ParsedInputs.rank3_codes``/
+``rank6_codes`` (kept apart there for exactly this reason -- the sibling's own
+``excluded`` is their union and cannot tell them apart); rank 7 and the withheld
+reasons come from :meth:`BafuEfMatchedSource.outcomes`.
 """
 
 from __future__ import annotations
 
-import orjson
 from sentier_importers.core.types import Record, Records, Rows
 from sentier_importers.matching.pipeline import Match
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     BafuEfMatchedSource,
     ParsedInputs,
-    codes_of,
+    flow_sort_key,
+    source_record,
 )
-from sentier_importers.sources.eaternity.bridge import BafuFlow
-
-
-def _source(flow: BafuFlow) -> Record:
-    """The ``source`` sub-record every coverage row carries."""
-    return {
-        "name": flow.name,
-        "code": flow.code,
-        "unit": flow.unit,
-        "context": flow.context,
-    }
 
 
 class BafuEfCoverageSource(BafuEfMatchedSource):
@@ -37,15 +27,13 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
     def transform(self, records: Records) -> Rows:
         (record,) = records
         inputs: ParsedInputs = record["inputs"]
-        rank3 = codes_of(orjson.loads(self.inputs["rank3"].content))
-        rank6 = codes_of(orjson.loads(self.inputs["rank6"].content))
         outcomes = {flow.code: outcome for flow, outcome in self.outcomes(records)}
         rows: Rows = []
-        for flow in sorted(inputs.bafu, key=lambda f: (f.name, f.category, f.subcategory, f.unit)):
-            row: Record = {"source": _source(flow)}
-            if flow.code in rank3 or flow.code in rank6:
+        for flow in sorted(inputs.bafu, key=flow_sort_key):
+            row: Record = {"source": source_record(flow)}
+            if flow.code in inputs.rank3_codes or flow.code in inputs.rank6_codes:
                 row["status"] = "mapped"
-                row["bridge"] = 3 if flow.code in rank3 else 6
+                row["bridge"] = 3 if flow.code in inputs.rank3_codes else 6
             else:
                 outcome = outcomes[flow.code]
                 if isinstance(outcome, Match):
