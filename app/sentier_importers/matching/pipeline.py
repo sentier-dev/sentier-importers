@@ -2,11 +2,11 @@
 disambiguation. Anything that cannot be asserted comes back as ``Unmatched`` with a
 reason a reviewer can act on.
 
-Tier order: exact name, synonym, CAS, qualifier spelling, curated alias, then the same
-five applied to the region-stripped name. The first matcher that yields any candidate
-in the flow's compartment decides the outcome: a later tier never rescues a placement
-failure of an earlier one, because "the exact-name EF flow exists but only in another
-sub-compartment" is information, not a miss.
+Tier order: exact name, synonym, qualifier spelling, curated alias, CAS, then the same
+four name-keyed tiers applied to the region-stripped name. The first matcher that
+yields any candidate in the flow's compartment decides the outcome: a later tier never
+rescues a placement failure of an earlier one, because "the exact-name EF flow exists
+but only in another sub-compartment" is information, not a miss.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from sentier_importers.matching.compartments import (
     leaf_of,
     place,
 )
-from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.ef_index import EfFlowIndex, normalise_cas
 from sentier_importers.matching.matchers import (
     Alias,
     AliasMatcher,
@@ -36,9 +36,11 @@ from sentier_importers.matching.matchers import (
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
 #: BAFU sub-compartment -> how EF would have named it, for the fallback caveat.
+#: "groundwater, long-term" is deliberately absent: its own leaf family already
+#: includes the bucket-level long-term-unspecified leaf (see compartments.py), so
+#: ``place`` returns EXACT for it directly and this fallback branch never fires.
 _LEAF_HUMAN = {
     "groundwater": "ground water",
-    "groundwater, long-term": "ground water, long-term",
     "river": "fresh water",
     "lake": "fresh water",
     "ocean": "sea water",
@@ -109,13 +111,17 @@ class MatchPipeline:
             candidates = matcher.candidates(flow, cas, self._index)
             if not candidates:
                 continue
-            placed = {
-                c: place(flow.category, flow.subcategory, c.flow.context_path) for c in candidates
-            }
-            exact = [c for c, p in placed.items() if p is Placement.EXACT]
+            # a list of (candidate, placement) pairs, not a dict keyed by candidate:
+            # Candidate is a frozen dataclass, so distinct-but-equal candidates could
+            # otherwise collapse and silently drop a duplicate.
+            placed = [
+                (c, place(flow.category, flow.subcategory, c.flow.context_path))
+                for c in candidates
+            ]
+            exact = [c for c, p in placed if p is Placement.EXACT]
             if exact:
                 return self._pick(exact, flow, cas, matcher.tier, Placement.EXACT, ())
-            fallback = [c for c, p in placed.items() if p is Placement.UNSPECIFIED]
+            fallback = [c for c, p in placed if p is Placement.UNSPECIFIED]
             if fallback and self._fallback:
                 human = _LEAF_HUMAN.get(flow.subcategory, flow.subcategory)
                 caveat = (
@@ -132,32 +138,48 @@ class MatchPipeline:
         return Unmatched("no_ef_flow", _NO_MATCH.format(bucket=bucket))
 
     def _pick(self, candidates, flow, cas, tier, placement, caveats) -> Match | Unmatched:
-        names = sorted({c.flow.name.lower() for c in candidates})
+        """Choose one candidate, or report why several cannot be told apart.
+
+        Runs whenever there is more than one candidate, whether or not their names
+        agree (two EF flows can share a name and still carry different factors, e.g.
+        two "Methanol" entries in different impact categories). In order:
+
+        1. every candidate's CF identity (``EfFlowIndex.identity``, which deliberately
+           excludes location-specific factors -- regionalised differences are never
+           compared) agrees -- the choice is free, so take whichever candidate's name
+           is textually closest to the source name;
+        2. identities disagree, but the source carries a CAS number that singles out
+           exactly one candidate by ``flow.cas`` -- pick that one (no extra caveat: a
+           matching CAS is positive evidence, not a guess);
+        3. otherwise, report ``Unmatched("ambiguous_substances", ...)``.
+        """
         chosen = sorted(candidates, key=lambda c: c.flow.code)
-        if len(names) > 1:
+        if len(candidates) > 1:
             identities = {self._index.identity(c.flow.code) for c in candidates}
             if len(identities) > 1:
-                key = f"CAS {cas}" if tier == "cas" else f"{tier} match"
-                return Unmatched(
-                    "ambiguous_substances",
-                    f"{key} names {len(names)} EF substances with different factors: "
-                    + ", ".join(names),
-                )
-            # identical factors: the choice is free, take the name closest to the source.
-            # BAFU often bakes several comma-separated synonyms into one flow name (e.g.
-            # "Methane, tetrachloro-, CFC-10"); score each candidate against whichever
-            # segment lines up best, not the whole name at once.
-            segments = [s.strip() for s in flow.name.lower().split(",")] or [flow.name.lower()]
-            chosen = sorted(
-                candidates,
-                key=lambda c: (
-                    -max(
-                        difflib.SequenceMatcher(None, seg, c.flow.name.lower()).ratio()
-                        for seg in segments
+                normalised_cas = normalise_cas(cas)
+                cas_matches = [c for c in candidates if c.flow.cas == normalised_cas]
+                if normalised_cas is not None and len(cas_matches) == 1:
+                    chosen = cas_matches
+                else:
+                    return self._ambiguous(candidates, cas, tier)
+            else:
+                # identical factors: the choice is free, take the name closest to the
+                # source. BAFU often bakes several comma-separated synonyms into one
+                # flow name (e.g. "Methane, tetrachloro-, CFC-10"); score each
+                # candidate against whichever segment lines up best, not the whole
+                # name at once.
+                segments = [s.strip() for s in flow.name.lower().split(",")]
+                chosen = sorted(
+                    candidates,
+                    key=lambda c: (
+                        -max(
+                            difflib.SequenceMatcher(None, seg, c.flow.name.lower()).ratio()
+                            for seg in segments
+                        ),
+                        c.flow.code,
                     ),
-                    c.flow.code,
-                ),
-            )
+                )
         pick = chosen[0]
         extra: tuple[str, ...] = ()
         if pick.caveat:
@@ -176,23 +198,52 @@ class MatchPipeline:
             caveats=caveats + extra,
         )
 
+    def _ambiguous(self, candidates, cas, tier) -> Unmatched:
+        """Report several candidates with different factors that no CAS singles out.
+
+        Uses the first candidate's own tier when set (e.g. ``region/name``) rather
+        than the matcher-level tier, so a region-wrapped ambiguity reads
+        ``region/name match`` instead of the less specific ``region match``.
+        """
+        effective_tier = candidates[0].tier or tier
+        normalised_cas = normalise_cas(cas)
+        key = f"CAS {normalised_cas}" if effective_tier == "cas" else f"{effective_tier} match"
+        names = ", ".join(sorted({c.flow.name.lower() for c in candidates}))
+        source = (
+            "no source CAS"
+            if cas is None
+            else f"the source CAS {normalised_cas} does not single one out"
+        )
+        return Unmatched(
+            "ambiguous_substances",
+            f"{key} finds {len(candidates)} EF flows with different factors for {names}; {source}",
+        )
+
 
 def default_pipeline(
     index: EfFlowIndex, aliases: Mapping[str, str | Alias], *, unspecified_fallback: bool = True
 ) -> MatchPipeline:
-    """Build the standard pipeline: name, synonym, CAS, qualifier, alias, then region-stripped.
+    """Build the standard pipeline: name, synonym, qualifier, alias, CAS, then region-stripped.
 
     ``aliases`` is the curated BAFU-name -> EF-preferred-label table (see
     ``matchers.load_aliases``). ``unspecified_fallback`` is forwarded to
     ``MatchPipeline``.
+
+    CAS runs last among the non-region tiers, not third: a shared CAS number (the
+    biogenic/fossil/land-use-change carbon dioxide family, the EF water-use flows,
+    ...) is ambiguous by construction, and an ambiguity stops the pipeline outright
+    (see ``MatchPipeline.match``). The qualifier and alias tiers exist precisely to
+    resolve those same names before CAS gets a chance to declare them ambiguous; with
+    CAS first, e.g. "Carbon dioxide, fossil" was reported unmatched in every air
+    sub-compartment instead of resolving through the qualifier spelling.
     """
-    base: list[Matcher] = [
+    named: list[Matcher] = [
         ExactNameMatcher(),
         SynonymMatcher(),
-        CasMatcher(),
         QualifierMatcher(),
         AliasMatcher(aliases),
     ]
+    base: list[Matcher] = [*named, CasMatcher()]
     return MatchPipeline(
-        [*base, RegionStripMatcher(base)], index, unspecified_fallback=unspecified_fallback
+        [*base, RegionStripMatcher(named)], index, unspecified_fallback=unspecified_fallback
     )

@@ -30,6 +30,14 @@ CF = [
     cf_row("water-res", "water", RES_WATER, method="ef-3.1:water-use", value=37.8),
     cf_row("river-res", "river water", RES_WATER, method="ef-3.1:water-use", value=42.95),
     cf_row("water-em", "water", WATER_FRESH, method="ef-3.1:water-use", value=-37.8),
+    cf_row("meoh-a", "methanol", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=2.29e-7),
+    cf_row(
+        "meoh-b",
+        "methanol",
+        AIR_UNSPEC,
+        method="ef-3.1:photochemical-ozone-formation-human-health",
+        value=0.236,
+    ),
 ]
 VOCAB = [
     vocab_row("zn-fresh", "Zinc", cas="7440-66-6"),
@@ -45,6 +53,8 @@ VOCAB = [
     vocab_row("water-res", "Water", cas="7732-18-5"),
     vocab_row("river-res", "River water", cas="7732-18-5"),
     vocab_row("water-em", "Water", cas="7732-18-5"),
+    vocab_row("meoh-a", "Methanol", cas="636-21-5"),
+    vocab_row("meoh-b", "Methanol", cas="67-56-1"),
 ]
 ALIASES = {
     "particulates, < 10 um": Alias("Particles (PM10)", "PM10 includes the fine fraction"),
@@ -110,9 +120,43 @@ def test_substances_with_different_factors_are_ambiguous(pipeline):
     got = pipeline.match(air("Carbon monoxide"), "630-08-0")
     assert got == Unmatched(
         reason="ambiguous_substances",
-        detail="CAS 630-08-0 names 2 EF substances with different factors: "
-        "carbon monoxide (biogenic), carbon monoxide (fossil)",
+        detail="CAS 630-08-0 finds 2 EF flows with different factors for "
+        "carbon monoxide (biogenic), carbon monoxide (fossil); "
+        "the source CAS 630-08-0 does not single one out",
     )
+
+
+def test_qualifier_beats_cas(pipeline):
+    # CAS 630-08-0 is shared by both carbon monoxide substances and would be
+    # ambiguous; the qualifier spelling built for exactly this case must run first.
+    got = pipeline.match(air("Carbon monoxide, fossil"), "630-08-0")
+    assert got.code == "co-fos" and got.tier == "qualifier"
+
+
+def test_alias_beats_cas(pipeline):
+    # "Water" shares CAS 7732-18-5 across several EF water flows; the curated alias
+    # for "water, river" must resolve it before CAS gets a chance to be ambiguous.
+    got = pipeline.match(BafuFlow("Water, river", "resources", "in water", "m3"), "7732-18-5")
+    assert got.code == "river-res" and got.tier == "alias"
+
+
+def test_same_name_different_factors_resolved_by_source_cas(pipeline):
+    got = pipeline.match(air("Methanol"), "000067-56-1")
+    assert got.code == "meoh-b" and got.tier == "name"
+    assert got.candidates == 2 and got.caveats == ()
+
+
+def test_same_name_different_factors_without_cas_is_ambiguous(pipeline):
+    got = pipeline.match(air("Methanol"), None)
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="name match finds 2 EF flows with different factors for methanol; no source CAS",
+    )
+
+
+def test_same_name_different_factors_with_foreign_cas_is_ambiguous(pipeline):
+    got = pipeline.match(air("Methanol"), "1-2-3")
+    assert got.reason == "ambiguous_substances"
 
 
 def test_elemental_cas_does_not_collapse_speciation(pipeline):
