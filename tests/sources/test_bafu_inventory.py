@@ -2,6 +2,7 @@
 
 import math
 
+from sentier_importers.core.registry import load_registry
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.sources.bafu import ecospold
 from sentier_importers.sources.bafu.inventory_exchanges import BafuInventoryExchangesSource
@@ -64,7 +65,7 @@ def test_processes_obsolete_sector_flags_comment():
 def test_exchanges_filters_to_sector_processes():
     rows = _exchanges()
     assert {r["process_id"] for r in rows} == {UUID_ELEC}
-    assert len(rows) == 5
+    assert len(rows) == 7
 
 
 def test_exchanges_flow_ids_and_types():
@@ -110,8 +111,6 @@ def test_exchanges_uncertainty_mapping():
 
 
 def test_registry_declares_full_bafu_family():
-    from sentier_importers.core.registry import load_registry
-
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
     # 11 sectors x 2 inventory tables + source record + 11 per-sector process
     # term files + 6 per-compartment flow term files + the EF crosswalk (rank 3)

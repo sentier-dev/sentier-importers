@@ -55,6 +55,16 @@ _ELEC = """<?xml version='1.0' encoding='UTF-8'?>
         uncertaintyType="0" unit="Bq">
         <outputGroup>4</outputGroup>
       </exchange>
+      <exchange category="resources" subCategory="in ground"
+        meanValue="1.0" name="Gas, natural/m3" number="204"
+        uncertaintyType="0" unit="m3">
+        <inputGroup>4</inputGroup>
+      </exchange>
+      <exchange category="resources" subCategory="in ground"
+        meanValue="0.2" name="Peat" number="205"
+        uncertaintyType="0" unit="kg">
+        <inputGroup>4</inputGroup>
+      </exchange>
     </flowData>
   </dataset>
 </ecoSpold>

@@ -7,10 +7,13 @@ from tests.matching.ef_fixtures import (
     AIR_UNSPEC,
     AIR_URBAN,
     LAND_OCC,
+    RES_WATER,
     cf_row,
     vocab_row,
     write_ef_inputs,
 )
+
+LAND_TRANS = "Land use / Land transformation"
 
 CF = [
     cf_row("cu-urban", "copper", AIR_URBAN, value=2.0),
@@ -33,6 +36,22 @@ CF = [
     cf_row("cfc10", "cfc-10", AIR_UNSPEC, value=3.0),
     cf_row("occ", "occupation, arable", LAND_OCC, method="ef-3.1:land-use", value=1.0),
     cf_row("nullctx", "ghost", None),
+    cf_row("gas-mj", "natural gas", AIR_UNSPEC, method="ef-3.1:resource-use-fossils", value=1.0),
+    cf_row(
+        "rn-test",
+        "radon-222",
+        AIR_UNSPEC,
+        method="ef-3.1:ionising-radiation-human-health",
+        value=1.0,
+    ),
+    cf_row("water-test", "water", RES_WATER, method="ef-3.1:water-use", value=1.0),
+    cf_row(
+        "land-trans",
+        "transformation, from arable",
+        LAND_TRANS,
+        method="ef-3.1:land-use",
+        value=1.0,
+    ),
 ]
 VOCAB = [
     vocab_row("cu-urban", "Copper", alt=["Cu"], cas="007440-50-8"),
@@ -115,7 +134,7 @@ def test_only_cf_bearing_ef_flows_are_indexed(tmp_path):
     assert index.get("bafu-x") is None  # a BAFU vocab row, not EF
     assert index.get("nocf") is None  # EF vocab row without any factor
     assert index.get("nullctx") is None  # a CF row with no context cannot be placed
-    assert len(index) == 6
+    assert len(index) == 10
     # a context-less flow must not leave an orphan vector/identity behind either
     assert index.vector("nullctx") == {}
     assert index.identity("nullctx") == ()
@@ -189,4 +208,31 @@ def test_from_files_reads_all_vocab_shards(tmp_path):
     index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB, shards=2))
     assert index.get("cu-urban").synonyms == ("Cu",)
     assert index.get("ccl4").cas == "56-23-5"
-    assert len(index) == 6
+    assert len(index) == 10
+
+
+def test_reference_unit_is_megajoule_for_resource_use_fossils(tmp_path):
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
+    assert index.reference_unit("gas-mj") == "megajoule"
+
+
+def test_reference_unit_is_kbq_for_ionising_radiation(tmp_path):
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
+    assert index.reference_unit("rn-test") == "kBq"
+
+
+def test_reference_unit_is_cubic_meter_for_water_use(tmp_path):
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
+    assert index.reference_unit("water-test") == "cubic meter"
+
+
+def test_reference_unit_is_area_or_area_time_for_land_use(tmp_path):
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
+    assert index.reference_unit("occ") == "m2*a"  # "occupation, arable"
+    assert index.reference_unit("land-trans") == "m2"  # "transformation, from arable"
+
+
+def test_reference_unit_defaults_to_kilogram(tmp_path):
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
+    assert index.reference_unit("cu-urban") == "kilogram"  # human-toxicity-cancer et al.
+    assert index.reference_unit("unknown-code") == "kilogram"  # no vector at all

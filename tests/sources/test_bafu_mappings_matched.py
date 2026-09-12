@@ -7,11 +7,13 @@ from sentier_importers.core.context import RunContext
 from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
-from sentier_importers.matching.pipeline import Unmatched
+from sentier_importers.matching.pipeline import Match, Unmatched
 from sentier_importers.sources.bafu.ecospold import flow_id
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     BafuEfMatchedSource,
+    _decide,
     classify_unmatched,
+    conversion,
     substance_cas,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow
@@ -19,6 +21,7 @@ from sentier_importers.sources.eaternity.bridge import BafuFlow
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
     AIR_UNSPEC,
+    RES_GROUND,
     RES_WATER,
     cf_row,
     vocab_row,
@@ -32,6 +35,8 @@ _SCHEMA = Path(__file__).parent / "fixtures" / "randonneur-package.schema.json"
 #                              Water, river           | resources        | in water    | m3
 #                              Radon-222              | emissions to air | low. pop.   | Bq
 #                                                                              (CAS 14859-67-7)
+#                              Gas, natural/m3        | resources        | in ground   | m3
+#                              Peat                   | resources        | in ground   | kg
 CF = [
     cf_row(
         "co2-fos", "carbon dioxide (fossil)", AIR_UNSPEC, method="ef-3.1:climate-change", value=1.0
@@ -53,6 +58,8 @@ VOCAB = [
 CO2 = flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified", "kg")
 WATER = flow_id("Water, river", "resources", "in water", "m3")
 RADON = flow_id("Radon-222", "emissions to air", "low. pop.", "Bq")
+GAS = flow_id("Gas, natural/m3", "resources", "in ground", "m3")
+PEAT = flow_id("Peat", "resources", "in ground", "kg")
 
 
 def _payload(codes):
@@ -196,6 +203,137 @@ def test_location_and_caveats_are_carried(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "bafu_unit,ef_unit,expected",
+    [
+        ("kg", "kilogram", 1.0),
+        ("kilogram", "kg", 1.0),
+        ("m3", "cubic meter", 1.0),
+        ("cubic meter", "m3", 1.0),
+        ("kBq", "kBq", 1.0),
+        ("m2", "m2", 1.0),
+        ("m2*a", "m2*a", 1.0),
+        ("m2a", "m2*a", 1.0),  # BAFU spells it without the asterisk; same area-time
+        ("MJ", "megajoule", 1.0),
+        ("Bq", "kBq", 0.001),
+        ("kWh", "megajoule", 3.6),
+        ("m3", "megajoule", None),  # volume vs energy: no fixed conversion
+        ("kg", "kBq", None),  # mass vs activity: no fixed conversion
+        ("Nm3", "kilogram", None),  # volume vs mass: no fixed conversion
+        ("m2", "m2*a", None),  # area vs area-time: no fixed conversion
+        ("kg", "unknown-unit", None),  # unit outside the dimension table at all
+    ],
+)
+def test_conversion_fixed_factors_and_cross_dimension_mismatches(bafu_unit, ef_unit, expected):
+    assert conversion(bafu_unit, ef_unit) == expected
+
+
+def test_natural_gas_volume_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_path):
+    # EF characterises fossil resources in megajoule (resource-use-fossils); a BAFU
+    # m3-denominated gas flow has no fixed volume -> energy conversion.
+    cf = CF + [
+        cf_row(
+            "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
+        )
+    ]
+    vocab = VOCAB + [vocab_row("gas-mj", "Natural gas", alt=["Gas, natural/m3"])]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == GAS)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
+    assert "m3" in outcome.detail and "megajoule" in outcome.detail
+    rows = source.transform(records)
+    assert GAS not in {r["source"]["code"] for r in rows}
+
+
+def test_peat_mass_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_path):
+    # same decision, the other cross-dimension direction: a BAFU kg-denominated peat
+    # flow has no fixed mass -> energy conversion onto EF's megajoule reference unit.
+    cf = CF + [cf_row("peat", "peat", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)]
+    vocab = VOCAB + [vocab_row("peat", "Peat")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == PEAT)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
+    rows = source.transform(records)
+    assert PEAT not in {r["source"]["code"] for r in rows}
+
+
+def test_uranium_mass_onto_an_ionising_radiation_flow_is_withheld_as_unit_mismatch(tmp_path):
+    # EF characterises ionising radiation in kBq; a BAFU kg-denominated Uranium flow
+    # has no fixed mass -> activity conversion, even though the pipeline itself matches.
+    cf = CF + [
+        cf_row(
+            "u238",
+            "uranium-238",
+            AIR_UNSPEC,
+            method="ef-3.1:ionising-radiation-human-health",
+            value=1.0,
+        )
+    ]
+    vocab = VOCAB + [vocab_row("u238", "Uranium-238", alt=["Uranium"])]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    (r,) = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    flow = BafuFlow("Uranium", "emissions to air", "unspecified", "kg")
+    match = r["pipeline"].match(flow, None)
+    assert isinstance(match, Match)  # sanity: the pipeline itself matches by synonym
+    outcome = _decide(flow, match, r["index"])
+    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
+    assert "kg" in outcome.detail and "kBq" in outcome.detail
+
+
+def test_ocean_discharge_does_not_take_the_water_use_unspecified_fallback(tmp_path):
+    cf = CF + [
+        cf_row(
+            "water-unspec",
+            "water",
+            "Emissions / Emissions to water / Emissions to water, unspecified",
+            method="ef-3.1:water-use",
+            value=-10.0,
+        )
+    ]
+    vocab = VOCAB + [vocab_row("water-unspec", "Water", cas="7732-18-5")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    (r,) = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    flow = BafuFlow("Water", "emissions to water", "ocean", "kg")
+    match = r["pipeline"].match(flow, None)
+    # sanity: the pipeline itself would take the unspecified fallback onto "Water"
+    assert isinstance(match, Match)
+    outcome = _decide(flow, match, r["index"])
+    assert outcome == Unmatched("no_ef_flow", "EF water use has no sea-water discharge flow")
+
+
+def test_outcomes_returns_one_tuple_per_non_excluded_fixture_flow(tmp_path):
+    root = _stage(tmp_path, rank3=[CO2])
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = source.outcomes(records)
+    assert {flow.code for flow, _ in outcomes} == {WATER, RADON, GAS, PEAT}
+    assert all(isinstance(o, (Match, Unmatched)) for _, o in outcomes)
+    # Gas and Peat have no matching EF flow in the default fixture CF/VOCAB at all
+    by_code = {flow.code: outcome for flow, outcome in outcomes}
+    assert by_code[GAS].reason == "no_ef_flow"
+    assert by_code[PEAT].reason == "no_ef_flow"
+
+
 def test_substance_cas_is_per_name_and_drops_conflicts():
     records = [
         {
@@ -214,6 +352,22 @@ def test_substance_cas_is_per_name_and_drops_conflicts():
                     "subcategory": "river",
                     "unit": "kg",
                     "cas": None,
+                    "group_code": 4,
+                },
+                {
+                    "name": "Methanol",
+                    "category": "emissions to soil",
+                    "subcategory": "industrial",
+                    "unit": "kg",
+                    "cas": "67-56-1",  # same substance, no leading zeros: must agree
+                    "group_code": 4,
+                },
+                {
+                    "name": "Methanol",
+                    "category": "emissions to soil",
+                    "subcategory": "agricultural",
+                    "unit": "kg",
+                    "cas": "",  # blank: ignored, not a third distinct value
                     "group_code": 4,
                 },
                 {
@@ -244,7 +398,7 @@ def test_substance_cas_is_per_name_and_drops_conflicts():
         }
     ]
     cas, conflicts = substance_cas(records)
-    assert cas == {"Methanol": "000067-56-1"}
+    assert cas == {"Methanol": "67-56-1"}
     assert conflicts == {"Mixed": {"1-1-1", "2-2-2"}}
 
 

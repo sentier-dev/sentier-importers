@@ -26,6 +26,14 @@ _CF_COLUMNS = ["method_id", "flow", "flow_name", "factor_value", "flow_context",
 _VOCAB_COLUMNS = ["iri", "pref_label", "alt_labels", "cas_number", "source"]
 _SIGNIFICANT_DIGITS = 12
 
+#: EF 3.1 / ILCD reference-unit convention, keyed by the one method that fixes a
+#: flow's unit; checked in this order because a flow may carry other methods too
+#: (e.g. a fossil resource also has a climate-change factor, still reported in MJ).
+_MJ_METHOD = "ef-3.1:resource-use-fossils"
+_KBQ_METHOD = "ef-3.1:ionising-radiation-human-health"
+_M3_METHOD = "ef-3.1:water-use"
+_LAND_METHOD = "ef-3.1:land-use"
+
 
 def normalise_cas(cas: str | None) -> str | None:
     """``007440-50-8`` -> ``7440-50-8``; blank -> None."""
@@ -158,6 +166,33 @@ class EfFlowIndex:
     def identity(self, code: str) -> tuple[tuple[str, float], ...]:
         """Hashable CF-identity key: the vector's ``(method_id, factor)`` pairs, sorted."""
         return tuple(sorted(self._vectors.get(code, {}).items()))
+
+    def reference_unit(self, code: str) -> str:
+        """The EF 3.1 reference unit for ``code``, inferred from method membership.
+
+        The CF table (``characterization-factors.parquet``) carries no flow-unit
+        column at all -- only a ``factor_value`` per ``(flow, method)`` -- so a
+        flow's physical unit is not data to look up but a convention to apply: EF
+        3.1 / ILCD fixes one reference unit per impact-category family, and every
+        flow that family characterises is reported in it. A resource-use-fossils
+        flow is in megajoule, an ionising-radiation-human-health flow in kBq, a
+        water-use flow in cubic meter, a land-use flow in m2 (or m2*a when the
+        flow is an "occupation", not a "transformation"); everything else -- the
+        overwhelming majority, all substance emissions and non-energy/water/land
+        resources -- is in kilogram.
+        """
+        methods = set(self.vector(code))
+        if _MJ_METHOD in methods:
+            return "megajoule"
+        if _KBQ_METHOD in methods:
+            return "kBq"
+        if _M3_METHOD in methods:
+            return "cubic meter"
+        if _LAND_METHOD in methods:
+            flow = self.get(code)
+            name = flow.name.lower() if flow is not None else ""
+            return "m2*a" if name.startswith("occupation") else "m2"
+        return "kilogram"
 
     def by_name(self, name: str, bucket: str | None) -> list[EfFlow]:
         """Flows in ``bucket`` whose label matches ``name`` (case- and whitespace-insensitive)."""

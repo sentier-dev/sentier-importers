@@ -20,12 +20,11 @@ from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
-from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.ef_index import EfFlowIndex, normalise_cas
 from sentier_importers.matching.matchers import load_aliases
 from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeline
 from sentier_importers.sources.bafu.ecospold import parse_ecospold_zip
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
-from sentier_importers.sources.eaternity.inference import EF_UNIT
 
 _VOCAB_DIR = "ef_vocab"
 _REQUIRED = ("rank3", "rank6", "ef_cfs")
@@ -47,6 +46,35 @@ _CARBON_OXIDES = {"Carbon dioxide", "Carbon monoxide"}
 #: pipeline finds a same-named candidate (that candidate is the freshwater flow).
 _NON_FRESHWATER = ("Water, salt", "Water, fossil")
 
+#: Physical dimension per unit spelling (BAFU and EF spellings both included), used by
+#: ``conversion`` to tell a safe same-dimension unit respelling from an unsafe
+#: cross-dimension pair. ``Nm3`` (normal cubic meter, some BAFU gas flows) is volume
+#: like ``m3``: still the wrong dimension for an energy or mass EF reference unit.
+_DIMENSION: dict[str, str] = {
+    "kg": "mass",
+    "kilogram": "mass",
+    "Bq": "activity",
+    "kBq": "activity",
+    "m3": "volume",
+    "Nm3": "volume",
+    "cubic meter": "volume",
+    "m2": "area",
+    "m2a": "area-time",
+    "m2*a": "area-time",
+    "MJ": "energy",
+    "megajoule": "energy",
+    "kWh": "energy",
+}
+
+#: The few same-dimension unit pairs whose physical scale actually differs: an SI
+#: activity prefix (BAFU sometimes reports becquerel where EF's reference unit is
+#: kilobecquerel) and the historical kWh/MJ energy pair. Every other same-dimension
+#: pair (kg/kilogram, m3/cubic meter, kBq/kBq, m2, m2*a, MJ/megajoule) is the same
+#: physical scale and needs no factor (1.0) -- see ``conversion``. The reverse
+#: direction, kBq -> Bq, never occurs: EF's reference unit for ionising radiation is
+#: always kBq (``EfFlowIndex.reference_unit``), never Bq.
+_SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoule"): 3.6}
+
 
 def _local_path(url: str | None) -> Path:
     if not url or not url.startswith("file://"):
@@ -65,26 +93,71 @@ def _codes(package: dict) -> set[str]:
 
 
 def substance_cas(records: Records) -> tuple[dict[str, str], dict[str, set[str]]]:
-    """CAS number per substance NAME over every biosphere exchange (group 4).
+    """Normalised CAS number per substance NAME over every biosphere exchange (group 4).
 
     A BAFU flow name is shared across sub-compartments (``Methanol`` to air and to
     water, say); its CAS number is a property of the substance, not the placement, so
-    it is collected per name rather than per (name, category, subcategory, unit). A
-    name whose exchanges disagree on CAS gets no CAS at all -- returned instead in the
-    second mapping, keyed by name, so a caller can see what was withheld and why.
+    it is collected per name rather than per (name, category, subcategory, unit).
+    Every value is compared after ``normalise_cas`` (leading-zero padding, e.g.
+    ``000067-56-1`` vs ``67-56-1``, must not read as two different substances), and a
+    blank or missing CAS is ignored rather than counted as a value. A name whose
+    exchanges disagree on (normalised) CAS gets no CAS at all -- returned instead in
+    the second mapping, keyed by name, so a caller can see what was withheld and why.
     """
     per_name: dict[str, set[str]] = {}
     for record in records:
         for exchange in record.get("exchanges", []):
             if exchange.get("group_code") != _BIOSPHERE_GROUP:
                 continue
-            cas = exchange.get("cas")
+            cas = normalise_cas(exchange.get("cas"))
             if cas is None:
                 continue
             per_name.setdefault(exchange["name"], set()).add(cas)
     cas = {name: next(iter(values)) for name, values in per_name.items() if len(values) == 1}
     conflicts = {name: values for name, values in per_name.items() if len(values) > 1}
     return cas, conflicts
+
+
+def conversion(bafu_unit: str, ef_unit: str) -> float | None:
+    """Fixed multiplier from ``bafu_unit`` onto EF's ``ef_unit``, or ``None`` when unsafe.
+
+    The same unit spelling is trivially 1.0. Otherwise a conversion is only ever safe
+    within one physical dimension (see ``_DIMENSION``): most BAFU/EF spelling pairs
+    within a dimension are the same physical scale and need no factor at all (1.0,
+    e.g. ``kg``/``kilogram``, ``m3``/``cubic meter``, ``m2*a``/``m2a``); the handful
+    that are not (an SI activity prefix, the historical kWh/MJ energy pair) have one
+    fixed factor in ``_SCALED``. A cross-dimension pair (e.g. a volume-denominated
+    BAFU flow onto an EF flow whose reference unit is energy or mass), or either unit
+    outside ``_DIMENSION`` entirely, returns ``None`` -- there is no general fixed
+    conversion between different physical quantities, so the caller must withhold the
+    flow rather than assert a fabricated factor.
+
+    The one true mass -> volume conversion this system asserts (a BAFU kilogram water
+    flow onto an EF water-use cubic-meter flow, using water's density) is deliberately
+    NOT handled here: it depends on the EF flow's characterisation method, which this
+    function -- unit strings only -- cannot see. It is applied as a special case at
+    the call site instead (see ``_unit_factor``).
+    """
+    if bafu_unit == ef_unit:
+        return 1.0
+    if (bafu_unit, ef_unit) in _SCALED:
+        return _SCALED[(bafu_unit, ef_unit)]
+    dimension = _DIMENSION.get(bafu_unit)
+    if dimension is None or dimension != _DIMENSION.get(ef_unit):
+        return None
+    return 1.0
+
+
+def _unit_factor(flow: BafuFlow, match: Match, index: EfFlowIndex) -> float | None:
+    """The multiplier from ``flow.unit`` onto ``match``'s EF reference unit, or
+    ``None`` when no fixed conversion exists and the flow must be withheld.
+    """
+    if flow.unit == "kg" and set(index.vector(match.code)) == {_WATER_USE}:
+        # water is the only substance with a fixed mass -> volume factor (density);
+        # this depends on the target's characterisation method, so it cannot live in
+        # the generic, method-blind ``conversion`` table above.
+        return 0.001
+    return conversion(flow.unit, index.reference_unit(match.code))
 
 
 def classify_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
@@ -116,19 +189,47 @@ def classify_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
     return outcome
 
 
-def _decide(flow: BafuFlow, outcome: Match | Unmatched) -> Match | Unmatched:
-    """Apply the plan's decisions to any pipeline outcome, ``Match`` included.
+def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> Match | Unmatched:
+    """Apply every plan decision to one pipeline outcome, ``Match`` included.
 
-    Decision 5 must override even a real ``Match``: a BAFU ``Water, salt`` or
-    ``Water, fossil`` flow can share a name with the freshwater flow the pipeline
-    would otherwise happily match, and that match would still assert the wrong factor.
-    Every other decision only ever refines an ``Unmatched`` (see ``classify_unmatched``).
+    Order:
+
+    1. freshwater-deprivation-only (decision 5) overrides even a real ``Match``: a
+       BAFU ``Water, salt`` or ``Water, fossil`` flow can share a name with the
+       freshwater flow the pipeline would otherwise happily match, and that match
+       would still assert the wrong factor;
+    2. a ``Match`` onto an ocean-discharge flow (``emissions to water`` / ``ocean``)
+       whose EF target is water-use-only is likewise never right (decision 3): EF's
+       water-use method characterises freshwater withdrawal and (return-flow) release,
+       never a sea-water discharge, so the same-named freshwater flow the unspecified
+       fallback would otherwise offer must not be taken here. This must run before the
+       unit check below: a kg-denominated ocean flow would otherwise pass the water
+       density special case and be wrongly emitted;
+    3. a real ``Match`` with no fixed unit conversion onto the EF flow's reference
+       unit (``EfFlowIndex.reference_unit``) is withheld as ``unit_mismatch`` (decision
+       1) rather than emitted with a fabricated factor;
+    4. everything else only ever refines an ``Unmatched`` (see ``classify_unmatched``).
     """
     if flow.name.startswith(_NON_FRESHWATER):
         return Unmatched("no_ef_flow", "EF water use characterises freshwater deprivation only")
-    if isinstance(outcome, Unmatched):
-        return classify_unmatched(flow, outcome)
-    return outcome
+    if isinstance(outcome, Match):
+        if (
+            flow.category == "emissions to water"
+            and flow.subcategory == "ocean"
+            and set(index.vector(outcome.code)) == {_WATER_USE}
+        ):
+            return Unmatched("no_ef_flow", "EF water use has no sea-water discharge flow")
+        if _unit_factor(flow, outcome, index) is None:
+            ef_flow = index.get(outcome.code)
+            name = ef_flow.name if ef_flow is not None else outcome.code
+            ef_unit = index.reference_unit(outcome.code)
+            return Unmatched(
+                "unit_mismatch",
+                f"BAFU unit {flow.unit} vs EF reference unit {ef_unit} for {name}; "
+                "no fixed conversion",
+            )
+        return outcome
+    return classify_unmatched(flow, outcome)
 
 
 class BafuEfMatchedSource(Source):
@@ -171,7 +272,12 @@ class BafuEfMatchedSource(Source):
         ]
 
     def entry_for(self, flow: BafuFlow, match: Match, index: EfFlowIndex) -> Record:
-        """One randonneur ``replace`` entry asserting ``flow`` resolves to ``match``."""
+        """One randonneur ``replace`` entry asserting ``flow`` resolves to ``match``.
+
+        The target unit is always the EF flow's own reference unit
+        (``EfFlowIndex.reference_unit``) -- never a respelling of the BAFU unit -- and
+        ``conversion_factor`` is set only when that factor is not 1.0.
+        """
         ef_flow = index.get(match.code)
         source: Record = {"name": flow.name, "code": flow.code}
         if flow.unit:
@@ -179,43 +285,54 @@ class BafuEfMatchedSource(Source):
         if flow.context:
             source["context"] = flow.context
 
-        unit = EF_UNIT.get(flow.unit, flow.unit)
-        conversion_factor: float | None = None
-        if flow.unit == "Bq":
-            conversion_factor = 0.001
-        elif flow.unit == "kg" and set(index.vector(match.code)) == {_WATER_USE}:
-            # the only factor this EF flow carries is water-use (volume-denominated);
-            # a kg-denominated BAFU source is water at (fresh water's) density.
-            unit = "cubic meter"
-            conversion_factor = 0.001
+        ef_unit = index.reference_unit(match.code)
+        # ``outcomes`` withholds a genuine mismatch before an entry is ever built for
+        # it; a ``None`` here only guards a direct call against a bad (match, index)
+        # pair and is never expected to fire on the emitted path.
+        factor = _unit_factor(flow, match, index)
+        if factor is None:
+            factor = 1.0
 
         target: Record = {"code": match.code}
         if ef_flow is not None and ef_flow.name:
             target["name"] = ef_flow.name
-        if unit:
-            target["unit"] = unit
+        target["unit"] = ef_unit
         if ef_flow is not None and ef_flow.context:
             target["context"] = list(ef_flow.context)
         if match.location:
             target["location"] = match.location
 
         entry: Record = {"source": source, "target": target}
-        if conversion_factor is not None:
-            entry["conversion_factor"] = conversion_factor
+        if factor != 1.0:
+            entry["conversion_factor"] = factor
         if match.caveats:
             entry["comment"] = "; ".join(match.caveats)
         return entry
 
-    def transform(self, records: Records) -> Rows:
-        """Emit one entry per BAFU flow the pipeline resolves, in deterministic order."""
+    def outcomes(self, records: Records) -> list[tuple[BafuFlow, Match | Unmatched]]:
+        """Every non-excluded BAFU flow with its final outcome, sorted for determinism.
+
+        A flow rank 3 or rank 6 already maps is skipped entirely -- not just its
+        entry withheld -- since those bridges keep precedence and this source's job
+        is only to fill the gap they leave.
+        """
         (record,) = records
-        rows: Rows = []
         flows = sorted(record["bafu"], key=lambda f: (f.name, f.category, f.subcategory, f.unit))
+        result: list[tuple[BafuFlow, Match | Unmatched]] = []
         for flow in flows:
             if flow.code in record["excluded"]:
                 continue
             cas = record["cas"].get(flow.name)
-            outcome = _decide(flow, record["pipeline"].match(flow, cas))
-            if isinstance(outcome, Match):
-                rows.append(self.entry_for(flow, outcome, record["index"]))
-        return rows
+            match = record["pipeline"].match(flow, cas)
+            result.append((flow, _decide(flow, match, record["index"])))
+        return result
+
+    def transform(self, records: Records) -> Rows:
+        """Emit one entry per BAFU flow ``outcomes`` resolves to a ``Match``."""
+        (record,) = records
+        index = record["index"]
+        return [
+            self.entry_for(flow, outcome, index)
+            for flow, outcome in self.outcomes(records)
+            if isinstance(outcome, Match)
+        ]
