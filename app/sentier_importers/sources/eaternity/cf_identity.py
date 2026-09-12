@@ -45,8 +45,10 @@ BAFU_BUCKET: dict[str, str] = {
     "resources": "resource",
 }
 
-#: BAFU ``subCategory`` -> token identifying the matching EF sub-compartment leaf.
-BAFU_SUB_TO_EF_LEAF: dict[str, str] = {
+#: BAFU ``subCategory`` -> whole EF leaf tail(s) it accepts, once the connective is
+#: removed (see ``_LEAF_CONNECTIVES``): a plain ``str`` for a single tail, or a ``tuple``
+#: of tails when more than one EF leaf counts as a match (e.g. both land-use leaves).
+BAFU_SUB_TO_EF_LEAF: dict[str, str | tuple[str, ...]] = {
     "unspecified": "unspecified",
     "high. pop.": "urban air close to ground",
     "low. pop.": "non-urban air or from high stacks",
@@ -66,9 +68,15 @@ BAFU_SUB_TO_EF_LEAF: dict[str, str] = {
     "in ground": "ground",
     "in water": "water",
     "in air": "air",
-    "land": "land",
+    "land": ("land occupation", "land transformation"),
     "biotic": "biotic",
 }
+
+#: Connective removed from the middle of an EF leaf before comparing it to a
+#: ``BAFU_SUB_TO_EF_LEAF`` tail. Deliberately not anchored to the start of the string:
+#: e.g. "non-renewable element resources from ground" -> "non-renewable element ground"
+#: strips a connective out of the middle of the leaf, not off its front.
+_LEAF_CONNECTIVES = ("emissions to ", "resources from ")
 
 Vector = dict[str, float]
 
@@ -205,14 +213,22 @@ class EfLabels:
         return ef_name == wanted or ef_name.split(" (")[0] == wanted
 
     def sub_matches(self, code: str, bafu_subcategory: str) -> bool:
-        token = BAFU_SUB_TO_EF_LEAF.get(bafu_subcategory)
+        """True when the EF leaf's tail equals a mapped token: the token must equal the
+        leaf tail or be preceded by a space, so a hyphen is not a boundary (this is what
+        rejects ``non-agricultural``), and the long-term qualifier is part of the tail
+        so it is self-enforcing."""
+        tokens = BAFU_SUB_TO_EF_LEAF.get(bafu_subcategory)
         context = self.context(code)
-        if token is None or not context:
+        if tokens is None or not context:
             return False
+        if isinstance(tokens, str):
+            tokens = (tokens,)
         leaf = context[-1].lower()
-        for prefix in ("emissions to ", "resources from ", "resources, "):
-            leaf = leaf.replace(prefix, "", 1)
-        return leaf == token or leaf.endswith(" " + token)
+        for connective in _LEAF_CONNECTIVES:
+            if connective in leaf:
+                leaf = leaf.replace(connective, "", 1)
+                break
+        return any(leaf == token or leaf.endswith(" " + token) for token in tokens)
 
 
 def _pick(codes: list[str], labels: EfLabels, bafu: BafuFlow) -> tuple[str, bool, bool]:
