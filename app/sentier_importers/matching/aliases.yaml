@@ -1,0 +1,27 @@
+# Curated BAFU-2026 v1 flow name -> EF 3.1 preferred label. Lowercase keys.
+# Only for spellings no generic rule recovers; a wrong alias is a wrong factor,
+# so every line is checked against sentier-vocab's EF pref_label by hand.
+aliases:
+  particulates, < 2.5 um: Particles (PM2.5)
+  particulates, > 2.5 um, and < 10um: Particles (PM10)
+  particulates, < 10 um: Particles (PM10)
+  nmvoc, non-methane volatile organic compounds, unspecified origin: Non-methane Volatile Organic Compounds
+  dioxin, 2,3,7,8 tetrachlorodibenzo-p-: 2,3,7,8-tetrachlorodibenzo-p-dioxin
+  ammonium, ion: Ammonium
+  curium alpha: Curium
+  plutonium-alpha: Plutonium
+  # water resources (m3) -> EF water-use resource flows
+  water, river: River water
+  water, lake: Lake water
+  water, well: Ground water
+  water, unspecified natural origin/m3: Water
+  water, unspecified natural origin: Water
+  water, cooling, unspecified natural origin/m3: Water to Cooling
+  water, cooling, unspecified natural origin: Water to Cooling
+  water, turbine use, unspecified natural origin: Water to turbine
+  water, process, unspecified natural origin/m3: Water
+  water, process, unspecified natural origin/kg: Water
+  water, process, surface: Water
+  water/m3: Water
+  # water emissions (kg or m3) -> EF water-use emission flow
+  water: Water
