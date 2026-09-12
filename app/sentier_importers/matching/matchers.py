@@ -8,7 +8,7 @@ by code. Placement and the choice among candidates are the pipeline's job.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
@@ -139,7 +139,7 @@ class AliasMatcher:
 
     tier = "alias"
 
-    def __init__(self, aliases: dict[str, str | Alias]) -> None:
+    def __init__(self, aliases: Mapping[str, str | Alias]) -> None:
         """Build the matcher from ``aliases`` (arbitrary case/whitespace keys)."""
         self._aliases = {
             k.strip().lower(): v if isinstance(v, Alias) else Alias(target=v)
@@ -200,6 +200,8 @@ def _parse_alias_value(key: object, value: object, path: Path) -> Alias:
     if isinstance(value, str) and value.strip():
         return Alias(target=value.strip())
     if isinstance(value, dict):
+        if set(value) - {"target", "caveat"}:
+            raise ParseError(f"{path}: alias {key!r} has unknown keys {sorted(value)!r}")
         target = value.get("target")
         caveat = value.get("caveat")
         if (

@@ -181,6 +181,16 @@ def test_load_aliases_raises_on_non_string_value(tmp_path):
         load_aliases(path)
 
 
+def test_load_aliases_raises_on_unknown_mapping_key(tmp_path):
+    # a typo like "cavaet:" must not be silently dropped
+    path = tmp_path / "aliases.yaml"
+    path.write_text(
+        "aliases:\n  water, well:\n    target: Water\n    cavaet: typo\n", encoding="utf-8"
+    )
+    with pytest.raises(ParseError):
+        load_aliases(path)
+
+
 def test_load_aliases_happy_path_with_string_and_mapping_values(tmp_path):
     path = tmp_path / "aliases.yaml"
     path.write_text(
@@ -193,7 +203,7 @@ def test_load_aliases_happy_path_with_string_and_mapping_values(tmp_path):
 
 
 def test_region_strip_matcher_records_the_iso_location(index):
-    inner = [ExactNameMatcher(), AliasMatcher({"water, river": "River water"})]
+    inner = [ExactNameMatcher(), AliasMatcher({"water, river": Alias("River water", "note")})]
     m = RegionStripMatcher(inner)
     got = m.candidates(BafuFlow("Water, KR", "emissions to water", "river", "m3"), None, index)
     assert [(c.flow.code, c.location, c.region, c.tier) for c in got] == [
@@ -203,6 +213,8 @@ def test_region_strip_matcher_records_the_iso_location(index):
     assert [(c.flow.code, c.location, c.region, c.tier) for c in got] == [
         ("river-res", "CH", None, "region/alias")
     ]
+    # a caveated inner alias hit keeps its caveat after the region wrap
+    assert [c.caveat for c in got] == ["note"]
     got = m.candidates(BafuFlow("Water, Europe", "emissions to water", "river", "m3"), None, index)
     assert [(c.flow.code, c.location, c.region) for c in got] == [("water-em", None, "Europe")]
     got = m.candidates(BafuFlow("Water, RER", "emissions to water", "river", "m3"), None, index)
