@@ -140,6 +140,14 @@ def test_alias_beats_cas(pipeline):
     assert got.code == "river-res" and got.tier == "alias"
 
 
+def test_region_beats_cas(pipeline):
+    # a region-stripped name is still name evidence; it must run before CAS, which
+    # would otherwise resolve (or, in the real EF water families, find ambiguous)
+    # "Water, KR" by its shared CAS before the region token is ever stripped.
+    got = pipeline.match(water("Water, KR", "river", "m3"), "7732-18-5")
+    assert got.code == "water-em" and got.tier == "region/name" and got.location == "KR"
+
+
 def test_same_name_different_factors_resolved_by_source_cas(pipeline):
     got = pipeline.match(air("Methanol"), "000067-56-1")
     assert got.code == "meoh-b" and got.tier == "name"

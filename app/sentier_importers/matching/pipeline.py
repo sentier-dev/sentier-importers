@@ -2,8 +2,8 @@
 disambiguation. Anything that cannot be asserted comes back as ``Unmatched`` with a
 reason a reviewer can act on.
 
-Tier order: exact name, synonym, qualifier spelling, curated alias, CAS, then the same
-four name-keyed tiers applied to the region-stripped name. The first matcher that
+Tier order: exact name, synonym, qualifier spelling, curated alias, the same four
+tiers again applied to the region-stripped name, then CAS last. The first matcher that
 yields any candidate in the flow's compartment decides the outcome: a later tier never
 rescues a placement failure of an earlier one, because "the exact-name EF flow exists
 but only in another sub-compartment" is information, not a miss.
@@ -223,19 +223,24 @@ class MatchPipeline:
 def default_pipeline(
     index: EfFlowIndex, aliases: Mapping[str, str | Alias], *, unspecified_fallback: bool = True
 ) -> MatchPipeline:
-    """Build the standard pipeline: name, synonym, qualifier, alias, CAS, then region-stripped.
+    """Build the standard pipeline: name, synonym, qualifier, alias, region-stripped, CAS.
 
     ``aliases`` is the curated BAFU-name -> EF-preferred-label table (see
     ``matchers.load_aliases``). ``unspecified_fallback`` is forwarded to
     ``MatchPipeline``.
 
-    CAS runs last among the non-region tiers, not third: a shared CAS number (the
-    biogenic/fossil/land-use-change carbon dioxide family, the EF water-use flows,
-    ...) is ambiguous by construction, and an ambiguity stops the pipeline outright
-    (see ``MatchPipeline.match``). The qualifier and alias tiers exist precisely to
-    resolve those same names before CAS gets a chance to declare them ambiguous; with
-    CAS first, e.g. "Carbon dioxide, fossil" was reported unmatched in every air
-    sub-compartment instead of resolving through the qualifier spelling.
+    CAS runs last, after every name-keyed tier including the region-stripped ones, not
+    third: a shared CAS number (the biogenic/fossil/land-use-change carbon dioxide
+    family, the EF water-use flows, ...) is ambiguous by construction, and an
+    ambiguity stops the pipeline outright (see ``MatchPipeline.match``). The
+    qualifier, alias and region-strip tiers exist precisely to resolve those same
+    names before CAS gets a chance to declare them ambiguous -- a region-stripped name
+    (``"Water, KR"`` -> ``"Water"``) is still name evidence, not weaker than CAS, so it
+    must run before CAS too. With CAS first, "Carbon dioxide, fossil" was reported
+    unmatched in every air sub-compartment instead of resolving through the qualifier
+    spelling, and "Water, KR" resolved to (or, for the real EF water families,
+    remained ambiguous by) a bare CAS lookup instead of the more specific
+    region-stripped name match.
     """
     named: list[Matcher] = [
         ExactNameMatcher(),
@@ -243,7 +248,8 @@ def default_pipeline(
         QualifierMatcher(),
         AliasMatcher(aliases),
     ]
-    base: list[Matcher] = [*named, CasMatcher()]
     return MatchPipeline(
-        [*base, RegionStripMatcher(named)], index, unspecified_fallback=unspecified_fallback
+        [*named, RegionStripMatcher(named), CasMatcher()],
+        index,
+        unspecified_fallback=unspecified_fallback,
     )
