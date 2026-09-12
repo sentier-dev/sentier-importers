@@ -53,22 +53,31 @@ def cf_row(code, name, context, method="ef-3.1:human-toxicity-cancer", value=1.0
 
 
 def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE):
+    # alt=None models the ~4,051 real EF vocab rows whose alt_labels is null,
+    # as distinct from alt=() (an explicit empty list).
     return {
         "iri": IRI + code,
         "pref_label": label,
-        "alt_labels": list(alt),
+        "alt_labels": list(alt) if alt is not None else None,
         "cas_number": cas,
         "source": source,
     }
 
 
-def write_ef_inputs(root: Path, cf_rows, vocab_rows) -> tuple[Path, Path]:
-    """Write one CF parquet and one vocab shard; return (cf_path, vocab_dir)."""
+def write_ef_inputs(root: Path, cf_rows, vocab_rows, shards: int = 1) -> tuple[Path, Path]:
+    """Write one CF parquet and split ``vocab_rows`` round-robin across ``shards`` vocab
+    parquet files (``air-01.parquet``, ``air-02.parquet``, ...); return (cf_path, vocab_dir).
+    """
     cf = root / "characterization-factors.parquet"
     pq.write_table(pa.Table.from_pylist(cf_rows, schema=CF_SCHEMA), cf)
     vocab_dir = root / "elementary-flows"
     vocab_dir.mkdir(exist_ok=True)
-    pq.write_table(
-        pa.Table.from_pylist(vocab_rows, schema=VOCAB_SCHEMA), vocab_dir / "air-01.parquet"
-    )
+    rows = list(vocab_rows)
+    groups: list[list[dict]] = [[] for _ in range(shards)]
+    for i, row in enumerate(rows):
+        groups[i % shards].append(row)
+    for i, group in enumerate(groups, start=1):
+        pq.write_table(
+            pa.Table.from_pylist(group, schema=VOCAB_SCHEMA), vocab_dir / f"air-{i:02d}.parquet"
+        )
     return cf, vocab_dir

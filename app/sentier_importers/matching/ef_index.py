@@ -13,11 +13,12 @@ rows (land use, water use, some regionalised categories) are not part of flow id
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pyarrow.parquet as pq
+from sentier_importers.core.errors import ParseError
 from sentier_importers.matching.compartments import bucket_of_ef_context, leaf_of
 
 EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
@@ -45,7 +46,7 @@ class EfFlow:
     code: str
     name: str
     context: tuple[str, ...]
-    synonyms: tuple[str, ...] = field(default=())
+    synonyms: tuple[str, ...] = ()
     cas: str | None = None
 
     @property
@@ -62,22 +63,34 @@ class EfFlow:
 
 
 class EfFlowIndex:
+    """Lookup index over the EF 3.1 flows that carry at least one characterization factor.
+
+    Every lookup's ``bucket`` argument must be a value produced by
+    ``compartments.bucket_of_bafu_category`` or ``compartments.bucket_of_ef_context``
+    (``"resource"``, not ``"resources"``); a bucket these functions would not produce
+    simply matches nothing (``[]``), it is never an error. Every lookup returns a
+    fresh, code-sorted list or tuple, so callers may hold onto or mutate the result
+    without affecting the index.
+    """
+
     def __init__(self, flows: Iterable[EfFlow], vectors: dict[str, dict[str, float]]) -> None:
         self._flows: dict[str, EfFlow] = {}
-        self._vectors: dict[str, dict[str, float]] = dict(vectors)
+        self._vectors: dict[str, dict[str, float]] = {code: dict(v) for code, v in vectors.items()}
         by_name: dict[tuple[str, str | None], list[EfFlow]] = {}
         by_synonym: dict[tuple[str, str | None], list[EfFlow]] = {}
         by_cas: dict[tuple[str, str | None], list[EfFlow]] = {}
         for flow in flows:
             self._flows[flow.code] = flow
             bucket = flow.bucket
-            by_name.setdefault((flow.name.lower(), bucket), []).append(flow)
+            by_name.setdefault((flow.name.strip().lower(), bucket), []).append(flow)
             for synonym in flow.synonyms:
-                by_synonym.setdefault((synonym.lower(), bucket), []).append(flow)
+                by_synonym.setdefault((synonym.strip().lower(), bucket), []).append(flow)
             if flow.cas is not None:
                 by_cas.setdefault((flow.cas, bucket), []).append(flow)
 
-        def _sorted(index: dict[tuple[str, str | None], list[EfFlow]]) -> dict:
+        def _sorted(
+            index: dict[tuple[str, str | None], list[EfFlow]],
+        ) -> dict[tuple[str, str | None], list[EfFlow]]:
             return {key: sorted(items, key=lambda f: f.code) for key, items in index.items()}
 
         self._by_name = _sorted(by_name)
@@ -86,20 +99,27 @@ class EfFlowIndex:
 
     @classmethod
     def from_tables(cls, cf_rows: Iterable[dict], vocab_rows: Iterable[dict]) -> "EfFlowIndex":
+        """Build an index from CF table rows and vocab shard rows already loaded in memory."""
         labels = {_code(r["iri"]): r for r in vocab_rows if (r.get("source") or "") == EF_SOURCE}
         contexts: dict[str, tuple[str, str]] = {}
         vectors: dict[str, dict[str, float]] = {}
         for r in cf_rows:
-            code = _code(r["flow"])
-            context = str(r.get("flow_context") or "")
-            if not context:
-                continue  # a factor with no context cannot be placed
-            contexts.setdefault(code, (str(r.get("flow_name") or ""), context))
-            if r.get("location"):
-                continue  # location-specific factor: not identity
-            vectors.setdefault(code, {})[r["method_id"]] = float(
-                "%.*g" % (_SIGNIFICANT_DIGITS, float(r["factor_value"]))
-            )
+            try:
+                code = _code(r["flow"])
+                context = str(r.get("flow_context") or "")
+                if context:
+                    # the CF table carries one context and one location-less factor
+                    # per (flow, method); the first context seen for a flow wins.
+                    contexts.setdefault(code, (str(r.get("flow_name") or ""), context))
+                if r.get("location"):
+                    continue  # location-specific factor: not part of flow identity
+                # factors are rounded so CF vectors compare equal across the parquet
+                # round trip; this rounding is what CF-identity disambiguation relies on
+                vectors.setdefault(code, {})[r["method_id"]] = float(
+                    "%.*g" % (_SIGNIFICANT_DIGITS, float(r["factor_value"]))
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ParseError(f"CF row for flow {r.get('flow')!r}: {exc}") from exc
         flows = [
             EfFlow(
                 code=code,
@@ -114,6 +134,7 @@ class EfFlowIndex:
 
     @classmethod
     def from_files(cls, cf_parquet: Path, vocab_dir: Path) -> "EfFlowIndex":
+        """Build an index by reading the CF parquet file and every vocab shard parquet file."""
         cf_rows = pq.read_table(cf_parquet, columns=_CF_COLUMNS).to_pylist()
         vocab_rows = []
         for path in sorted(Path(vocab_dir).glob("*.parquet")):
@@ -121,18 +142,27 @@ class EfFlowIndex:
         return cls.from_tables(cf_rows, vocab_rows)
 
     def get(self, code: str) -> EfFlow | None:
+        """Return the flow for ``code``, or ``None`` if it is not indexed."""
         return self._flows.get(code)
 
     def vector(self, code: str) -> dict[str, float]:
+        """Return a copy of the CF vector (``method_id`` -> factor) for ``code``, or ``{}``."""
         return dict(self._vectors.get(code, {}))
 
+    def identity(self, code: str) -> tuple[tuple[str, float], ...]:
+        """Hashable CF-identity key: the vector's ``(method_id, factor)`` pairs, sorted."""
+        return tuple(sorted(self._vectors.get(code, {}).items()))
+
     def by_name(self, name: str, bucket: str | None) -> list[EfFlow]:
-        return list(self._by_name.get((name.lower(), bucket), []))
+        """Flows in ``bucket`` whose label matches ``name`` (case- and whitespace-insensitive)."""
+        return list(self._by_name.get((name.strip().lower(), bucket), []))
 
     def by_synonym(self, name: str, bucket: str | None) -> list[EfFlow]:
-        return list(self._by_synonym.get((name.lower(), bucket), []))
+        """Flows in ``bucket`` whose synonym matches ``name`` (case/whitespace-insensitive)."""
+        return list(self._by_synonym.get((name.strip().lower(), bucket), []))
 
     def by_cas(self, cas: str | None, bucket: str | None) -> list[EfFlow]:
+        """Flows in ``bucket`` whose CAS matches ``cas``, normalised; ``[]`` for ``None``."""
         normalised = normalise_cas(cas)
         if normalised is None:
             return []
@@ -140,3 +170,7 @@ class EfFlowIndex:
 
     def __len__(self) -> int:
         return len(self._flows)
+
+    def __iter__(self) -> Iterator[EfFlow]:
+        """Iterate all indexed flows, sorted by code."""
+        return iter(sorted(self._flows.values(), key=lambda f: f.code))
