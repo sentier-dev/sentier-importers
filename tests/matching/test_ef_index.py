@@ -116,6 +116,9 @@ def test_only_cf_bearing_ef_flows_are_indexed(tmp_path):
     assert index.get("nocf") is None  # EF vocab row without any factor
     assert index.get("nullctx") is None  # a CF row with no context cannot be placed
     assert len(index) == 6
+    # a context-less flow must not leave an orphan vector/identity behind either
+    assert index.vector("nullctx") == {}
+    assert index.identity("nullctx") == ()
 
 
 def test_lookups_are_case_insensitive_and_bucket_scoped(tmp_path):
@@ -146,7 +149,7 @@ def test_land_context_is_a_resource(tmp_path):
 
 def test_flow_without_vocab_row_keeps_the_cf_table_name(tmp_path):
     index = EfFlowIndex.from_files(
-        *write_ef_inputs(tmp_path, [cf_row("lonely", "ozone", AIR_UNSPEC)], [])
+        *write_ef_inputs(tmp_path, [cf_row("lonely", "ozone\xa0", AIR_UNSPEC)], [])
     )
     assert index.get("lonely").name == "ozone"
     assert index.by_name("Ozone", "air")[0].code == "lonely"

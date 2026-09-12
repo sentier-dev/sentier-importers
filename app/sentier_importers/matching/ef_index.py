@@ -68,9 +68,10 @@ class EfFlowIndex:
     Every lookup's ``bucket`` argument must be a value produced by
     ``compartments.bucket_of_bafu_category`` or ``compartments.bucket_of_ef_context``
     (``"resource"``, not ``"resources"``); a bucket these functions would not produce
-    simply matches nothing (``[]``), it is never an error. Every lookup returns a
-    fresh, code-sorted list or tuple, so callers may hold onto or mutate the result
-    without affecting the index.
+    simply matches nothing (``[]``), it is never an error. ``by_name``, ``by_synonym``
+    and ``by_cas`` each return a fresh, code-sorted list; ``vector`` returns a fresh
+    dict; ``identity`` returns a tuple sorted by ``method_id``. Callers may hold onto
+    or mutate any of these results without affecting the index.
     """
 
     def __init__(self, flows: Iterable[EfFlow], vectors: dict[str, dict[str, float]]) -> None:
@@ -96,6 +97,9 @@ class EfFlowIndex:
         self._by_name = _sorted(by_name)
         self._by_synonym = _sorted(by_synonym)
         self._by_cas = _sorted(by_cas)
+        self._sorted_flows: tuple[EfFlow, ...] = tuple(
+            sorted(self._flows.values(), key=lambda f: f.code)
+        )
 
     @classmethod
     def from_tables(cls, cf_rows: Iterable[dict], vocab_rows: Iterable[dict]) -> "EfFlowIndex":
@@ -123,14 +127,16 @@ class EfFlowIndex:
         flows = [
             EfFlow(
                 code=code,
-                name=(labels.get(code) or {}).get("pref_label") or cf_name,
+                name=((labels.get(code) or {}).get("pref_label") or cf_name).strip(),
                 context=tuple(p.strip() for p in context.split("/") if p.strip()),
                 synonyms=tuple(str(s) for s in ((labels.get(code) or {}).get("alt_labels") or [])),
                 cas=normalise_cas((labels.get(code) or {}).get("cas_number")),
             )
             for code, (cf_name, context) in contexts.items()
         ]
-        return cls(flows, vectors)
+        # a flow only exists once it has a context; drop any vector accumulated for a
+        # context-less CF row so it cannot outlive the flow it would have belonged to
+        return cls(flows, {code: v for code, v in vectors.items() if code in contexts})
 
     @classmethod
     def from_files(cls, cf_parquet: Path, vocab_dir: Path) -> "EfFlowIndex":
@@ -173,4 +179,4 @@ class EfFlowIndex:
 
     def __iter__(self) -> Iterator[EfFlow]:
         """Iterate all indexed flows, sorted by code."""
-        return iter(sorted(self._flows.values(), key=lambda f: f.code))
+        return iter(self._sorted_flows)
