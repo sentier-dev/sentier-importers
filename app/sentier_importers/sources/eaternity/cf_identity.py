@@ -63,9 +63,9 @@ BAFU_SUB_TO_EF_LEAF: dict[str, str] = {
     "agricultural": "agricultural soil",
     "industrial": "non-agricultural soil",
     "forestry": "non-agricultural soil",
-    "in ground": "from ground",
-    "in water": "from water",
-    "in air": "from air",
+    "in ground": "ground",
+    "in water": "water",
+    "in air": "air",
     "land": "land",
     "biotic": "biotic",
 }
@@ -210,7 +210,9 @@ class EfLabels:
         if token is None or not context:
             return False
         leaf = context[-1].lower()
-        return token in leaf and (("long-term" in leaf) == ("long-term" in bafu_subcategory))
+        for prefix in ("emissions to ", "resources from ", "resources, "):
+            leaf = leaf.replace(prefix, "", 1)
+        return leaf == token or leaf.endswith(" " + token)
 
 
 def _pick(codes: list[str], labels: EfLabels, bafu: BafuFlow) -> tuple[str, bool, bool]:

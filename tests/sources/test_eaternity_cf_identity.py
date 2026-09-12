@@ -179,3 +179,34 @@ def test_superset_candidates_adding_different_methods_are_withheld():
         BafuFlow("Lead", "emissions to air", "high. pop.", "kg"),
     )
     assert got.reason == "superset_candidates_disagree"
+
+
+def test_agricultural_does_not_match_non_agricultural_soil():
+    labels = EfLabels.from_rows(
+        [
+            {
+                "flow": "ef-agri",
+                "flow_name": "iron",
+                "flow_context": "Emissions / Emissions to soil / Emissions to agricultural soil",
+            },
+            {
+                "flow": "ef-non",
+                "flow_name": "iron",
+                "flow_context": (
+                    "Emissions / Emissions to soil / Emissions to non-agricultural soil"
+                ),
+            },
+            {
+                "flow": "ef-ground",
+                "flow_name": "iron",
+                "flow_context": (
+                    "Resources / Resources from ground / "
+                    "Non-renewable element resources from ground"
+                ),
+            },
+        ]
+    )
+    assert labels.sub_matches("ef-agri", "agricultural") is True
+    assert labels.sub_matches("ef-non", "agricultural") is False
+    assert labels.sub_matches("ef-non", "industrial") is True
+    assert labels.sub_matches("ef-ground", "in ground") is True
