@@ -5,7 +5,6 @@
 # must be removed, not kept.
 aliases:
   particulates, < 2.5 um: Particles (PM2.5)
-  particulates, > 2.5 um, and < 10um: Particles (PM10)
   particulates, < 10 um:
     target: Particles (PM10)
     caveat: >-
@@ -17,7 +16,6 @@ aliases:
       BAFU PM10 includes the fine fraction; characterised at EF's PM10 factor
       (4.35x lower than PM2.5)
   nmvoc, non-methane volatile organic compounds, unspecified origin: Non-methane Volatile Organic Compounds
-  nmvoc, non-methane volatile organic compounds: Non-methane Volatile Organic Compounds
   dioxin, 2,3,7,8 tetrachlorodibenzo-p-: 2,3,7,8-tetrachlorodibenzo-p-dioxin
   ammonium, ion: Ammonium
   curium alpha: Curium

@@ -1,9 +1,10 @@
 """bafu-2026-v1 -> EF 3.1 CF keys by public matching (rank 7).
 
 For every BAFU-2026 v1 elementary flow that neither the rank-3 nor the rank-6 bridge
-maps, run ``matching.pipeline.default_pipeline`` (name, synonym, qualifier, alias,
-region-stripped name, CAS) against the public EF flow index and emit one ``replace``
-entry per match. Withheld flows are emitted by the sibling coverage source.
+maps, run ``matching.pipeline.default_pipeline`` (name, land-use class, synonym,
+qualifier, alias, region-stripped name, CAS) against the public EF flow index and emit
+one ``replace`` entry per match. Withheld flows are emitted by the sibling coverage
+source.
 
 Inputs: the ecoSpold zip (primary), ``rank3`` and ``rank6`` payloads (exclusion) and
 ``ef_cfs`` (sentier-methods CF table) all go through the content-addressed fetch
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 import orjson
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.context import RunContext
+from sentier_importers.core.randonneur import codes_of
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
 from sentier_importers.matching.ef_index import EfFlowIndex, normalise_cas
@@ -39,6 +41,19 @@ _WATER_USE = "ef-3.1:water-use"
 #: does not carry per-species factors for these; collapsing them onto the element
 #: would silently assert a factor for the wrong chemical species.
 _ION = re.compile(r"(,\s?ion$|\sion$|\s(II|III|IV|V|VI)$|\+$)")
+
+#: Species markers EF itself uses in an *EF* flow name (a bracketed roman numeral
+#: oxidation state, a bracketed charge like ``(6+)``/``(2+)``/``(2-)``, or the bare
+#: word ``ion``): when the EF target already names a specific species this way, a
+#: same-shaped BAFU ion name is not a species-collapsing guess, it is the right match.
+_EF_SPECIES = re.compile(
+    r"\((?:i{1,3}|iv|v|vi)\)|\(\d\+\)|\bion\b|\d\+\)|\(\d[+-]\)", re.IGNORECASE
+)
+
+#: Match tiers considered curated (a human checked the BAFU name against the EF
+#: preferred label by hand -- see ``matching/aliases.yaml``); the speciation guard
+#: (Decision 4) defers to that judgement rather than second-guessing it.
+_CURATED_TIERS = {"alias", "region/alias"}
 
 #: EF characterises carbon oxides only with a qualifier (fossil/biogenic/land use
 #: change); a bare BAFU name with none can never resolve, no matter the sub-compartment.
@@ -105,16 +120,6 @@ class ParsedInputs:
         property keeps ``outcomes`` (which only needs the union) unchanged.
         """
         return self.rank3_codes | self.rank6_codes
-
-
-def codes_of(package: dict) -> set[str]:
-    """Source codes named by every ``replace``/``update`` entry in a mapping package."""
-    return {
-        e["source"]["code"]
-        for verb in ("replace", "update")
-        for e in package.get(verb, [])
-        if e.get("source", {}).get("code")
-    }
 
 
 def flow_sort_key(flow: BafuFlow) -> tuple[str, str, str, str]:
@@ -241,21 +246,31 @@ def _refine_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
 def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> Match | Unmatched:
     """The single ordered decision chain applied to every pipeline outcome.
 
-    1. non-freshwater water (decision 5): a BAFU ``Water, salt``/``Water, fossil``
+    1. non-freshwater water (Decision 5): a BAFU ``Water, salt``/``Water, fossil``
        flow is never characterised by EF's water-use method, whether the pipeline
        found a real ``Match`` (it would be the freshwater flow of the same name) or
        came back ``Unmatched`` -- the reason is distinct (``non_freshwater``) so the
        coverage source can single these flows out;
-    2. ocean-discharge water (decision 3): a ``Match`` onto a water-use-only EF
-       target for an ``emissions to water`` / ``ocean`` flow is likewise never
-       right -- EF's water-use method never characterises sea-water discharge. Must
-       run before the unit check below: a kg-denominated ocean flow would otherwise
-       pass the water-density special case and be wrongly emitted;
-    3. unit_mismatch (decision 1): a real ``Match`` with no fixed unit conversion
-       (``conversion_for``) onto the EF flow's reference unit is withheld rather
-       than emitted with a fabricated factor;
-    4. everything else: a ``Match`` is returned as-is; an ``Unmatched`` is refined
-       by ``_refine_unmatched`` (speciation / qualifier_missing).
+    2. ocean-discharge water (Task 6 correction (3)): a ``Match`` onto a
+       water-use-only EF target for an ``emissions to water`` / ``ocean`` flow is
+       likewise never right -- EF's water-use method never characterises sea-water
+       discharge. Must run before the unit check below: a kg-denominated ocean flow
+       would otherwise pass the water-density special case and be wrongly emitted;
+    3. speciation (Decision 4): a ``Match`` for an ion/oxidation-state-shaped BAFU
+       name (``_ION``) is withheld -- EF 3.1 does not carry per-species factors, so
+       collapsing e.g. ``Copper ion`` onto plain ``Copper`` would silently assert a
+       factor for the wrong chemical species. Two escapes: a curated tier
+       (``alias``/``region/alias``, see ``_CURATED_TIERS``) means a human already
+       checked this exact pairing by hand; an EF target name that itself carries a
+       species marker (``_EF_SPECIES``, e.g. ``Chromium(6+)``, ``Copper (II)``) means
+       the match is onto the right species, not a collapse onto the bare element;
+    4. unit_mismatch (Task 6 correction (1)): a real ``Match`` with no fixed unit
+       conversion (``conversion_for``) onto the EF flow's reference unit is withheld
+       rather than emitted with a fabricated factor;
+    5. everything else: a ``Match`` is returned as-is; an ``Unmatched`` is refined by
+       ``_refine_unmatched`` into ``speciation`` (Decision 4, the ``no_ef_flow`` twin
+       of step 3 above) or ``qualifier_missing`` (Decision 3, unqualified carbon
+       oxides).
     """
     if flow.name.startswith(_NON_FRESHWATER):
         return Unmatched(
@@ -268,6 +283,14 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
             and set(index.vector(outcome.code)) == {_WATER_USE}
         ):
             return Unmatched("no_ef_flow", "EF water use has no sea-water discharge flow")
+        if outcome.tier not in _CURATED_TIERS and _ION.search(flow.name):
+            ef_name = index.get(outcome.code).name
+            if not _EF_SPECIES.search(ef_name):
+                return Unmatched(
+                    "speciation",
+                    f"{flow.name!r} names an ion or oxidation state; "
+                    f"EF target {ef_name!r} does not",
+                )
         if conversion_for(flow, outcome, index) is None:
             ef_unit = index.reference_unit(outcome.code)
             return Unmatched(

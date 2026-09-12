@@ -23,10 +23,10 @@ import orjson
 import pyarrow.parquet as pq
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.context import RunContext
+from sentier_importers.core.randonneur import codes_of
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Records, Rows
 from sentier_importers.sources.bafu.ecospold import parse_ecospold_zip
-from sentier_importers.sources.bafu.mappings_biosphere_matched import codes_of
 from sentier_importers.sources.eaternity.bridge import BafuFlowIndex
 from sentier_importers.sources.eaternity.cf_identity import CfVectors, EfLabels
 from sentier_importers.sources.eaternity.inference import Inference, Inputs, infer

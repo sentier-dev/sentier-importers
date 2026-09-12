@@ -24,6 +24,7 @@ from tests.matching.ef_fixtures import (
     LAND_OCC,
     RES_GROUND,
     RES_WATER,
+    WATER_FRESH,
     cf_row,
     vocab_row,
     write_ef_inputs,
@@ -510,6 +511,53 @@ def test_decide_reports_non_freshwater_for_both_match_and_unmatched_inputs(tmp_p
     assert outcome == Unmatched(
         "non_freshwater", "EF water use characterises freshwater deprivation only"
     )
+
+
+def test_decide_withholds_a_cas_match_for_an_ion_name_onto_a_bare_element():
+    # "Copper ion" matched by CAS onto plain "Copper": EF carries no per-species
+    # factor for copper ions, so the CAS match must be withheld, not silently emitted.
+    cf = [cf_row("cu", "copper", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=1.0)]
+    vocab = [vocab_row("cu", "Copper", cas="7440-50-8")]
+    index = EfFlowIndex.from_tables(cf, vocab)
+    pipeline = default_pipeline(index, {})
+    flow = BafuFlow("Copper ion", "emissions to air", "unspecified", "kg")
+    match = pipeline.match(flow, "7440-50-8")
+    assert isinstance(match, Match) and match.tier == "cas"  # sanity: the pipeline itself matches
+    outcome = _decide(flow, match, index)
+    assert outcome == Unmatched(
+        "speciation", "'Copper ion' names an ion or oxidation state; EF target 'Copper' does not"
+    )
+
+
+def test_decide_keeps_a_match_onto_an_ef_target_that_itself_names_the_species():
+    # "Chromium VI" matched by synonym onto "Chromium(6+)": the EF target name itself
+    # carries the oxidation state, so this is the right species, not a collapse.
+    cf = [
+        cf_row("cr6", "chromium vi", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=1.0)
+    ]
+    vocab = [vocab_row("cr6", "Chromium(6+)", alt=["Chromium VI"], cas="18540-29-9")]
+    index = EfFlowIndex.from_tables(cf, vocab)
+    pipeline = default_pipeline(index, {})
+    flow = BafuFlow("Chromium VI", "emissions to air", "unspecified", "kg")
+    match = pipeline.match(flow, None)
+    assert isinstance(match, Match) and match.tier == "synonym"  # sanity: not a curated tier
+    outcome = _decide(flow, match, index)
+    assert outcome == match
+
+
+def test_decide_keeps_a_curated_alias_match_for_an_ion_shaped_name():
+    # "Ammonium, ion" -> "Ammonium" via a curated alias: a human already checked this
+    # exact pairing, so the speciation guard defers to it even though EF's own
+    # "Ammonium" label carries no species marker of its own.
+    cf = [cf_row("nh4", "ammonium", WATER_FRESH, method="ef-3.1:eutrophication-marine", value=1.0)]
+    vocab = [vocab_row("nh4", "Ammonium", cas="14798-03-9")]
+    index = EfFlowIndex.from_tables(cf, vocab)
+    pipeline = default_pipeline(index, {"ammonium, ion": "Ammonium"})
+    flow = BafuFlow("Ammonium, ion", "emissions to water", "river", "kg")
+    match = pipeline.match(flow, None)
+    assert isinstance(match, Match) and match.tier == "alias"  # sanity: curated tier
+    outcome = _decide(flow, match, index)
+    assert outcome == match
 
 
 def test_entry_for_raises_when_no_fixed_conversion_exists(tmp_path):

@@ -1137,11 +1137,12 @@ sources:
       verb: review
     enabled: false
 
-  # sentier-mappings rank 7: bafu-2026-v1 → EF 3.1 by PUBLIC matching (name, synonym, qualifier
-  # spelling, curated alias, region-stripped name, CAS last) against sentier-methods' CF table +
-  # sentier-vocab's EF shards, for flows neither rank 3 nor rank 6 maps. Strict sub-compartment
-  # placement with an explicit, commented `unspecified` fallback. Plan: dds wiki
-  # 2026-09-12-bafu-ef-remaining-flows. Regenerate-locally with a fresh --cache-dir.
+  # sentier-mappings rank 7: bafu-2026-v1 → EF 3.1 by PUBLIC matching (name, land-use class,
+  # synonym, qualifier spelling, curated alias, the same on the region-stripped name, CAS last)
+  # against sentier-methods' CF table + sentier-vocab's EF shards, for flows neither rank 3 nor
+  # rank 6 maps. Strict sub-compartment placement with an explicit, commented `unspecified`
+  # fallback. Plan: dds wiki 2026-09-12-bafu-ef-remaining-flows. Regenerate-locally with a fresh
+  # --cache-dir.
   - name: bafu-ef-biosphere-matched            # emits biosphere.json
     module: sentier_importers.sources.bafu.mappings_biosphere_matched
     target: sentier_mappings
@@ -1163,9 +1164,11 @@ sources:
     enabled: false
 
   # Same inputs and computation, emits the non-normative coverage.json sidecar: one row per
-  # bafu-2026-v1 flow, mapped (bridge 3/6/7, tier, placement) or unmapped (reason, detail);
-  # rows of substances with conflicting source CAS values carry `cas_conflict`. Verb `coverage`
-  # (the shape of the other *_review.json sidecars; invisible to sentier-mappings CI by design).
+  # bafu-2026-v1 flow, mapped (bridge 3/6/7, tier -- name, land-use class, synonym, qualifier
+  # spelling, curated alias, the same on the region-stripped name, CAS last -- and placement)
+  # or unmapped (reason, detail); rows of substances with conflicting source CAS values carry
+  # `cas_conflict`. Verb `coverage` (the shape of the other *_review.json sidecars; invisible
+  # to sentier-mappings CI by design).
   - name: bafu-ef-coverage                     # emits coverage.json
     module: sentier_importers.sources.bafu.mappings_biosphere_coverage
     target: sentier_mappings
