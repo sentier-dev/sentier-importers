@@ -95,7 +95,7 @@ class ParsedInputs:
     pipeline: MatchPipeline
 
 
-def _codes(package: dict) -> set[str]:
+def codes_of(package: dict) -> set[str]:
     """Source codes named by every ``replace``/``update`` entry in a mapping package."""
     return {
         e["source"]["code"]
@@ -272,7 +272,7 @@ class BafuEfMatchedSource(Source):
             bafu=BafuFlowIndex.from_ecospold(records),
             cas=cas,
             cas_conflicts=conflicts,
-            excluded=frozenset(_codes(rank3) | _codes(rank6)),
+            excluded=frozenset(codes_of(rank3) | codes_of(rank6)),
             index=index,
             pipeline=default_pipeline(index, load_aliases()),
         )

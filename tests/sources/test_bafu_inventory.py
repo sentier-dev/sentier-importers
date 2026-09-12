@@ -114,14 +114,18 @@ def test_registry_declares_full_bafu_family():
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
     # 11 sectors x 2 inventory tables + source record + 11 per-sector process
     # term files + 6 per-compartment flow term files + the EF crosswalk (rank 3)
-    # + the EF public-matching crosswalk (rank 7)
-    assert len(bafu) == 42
+    # + the EF public-matching crosswalk (rank 7) + the coverage sidecar
+    assert len(bafu) == 43
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
-    assert [c.name for c in mappings] == ["bafu-ef-biosphere", "bafu-ef-biosphere-matched"]
+    assert [c.name for c in mappings] == [
+        "bafu-ef-biosphere",
+        "bafu-ef-biosphere-matched",
+        "bafu-ef-coverage",
+    ]
     # the bridge folder contract names the file, not the source
-    assert {m.emit_filename for m in mappings} == {"biosphere"}
+    assert {m.emit_filename for m in mappings} == {"biosphere", "coverage"}
 
     inventory = [c for c in bafu if c.target == "sentier_inventory"]
     assert len(inventory) == 22
