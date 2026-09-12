@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
 import yaml
+from sentier_importers.core.errors import ParseError
 from sentier_importers.matching.compartments import bucket_of_bafu_category
 from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.sources.eaternity.bridge import BafuFlow
@@ -35,11 +36,21 @@ _QUALIFIER_EF = {"non-fossil": "biogenic", "land transformation": "land use chan
 
 @dataclass(frozen=True)
 class Candidate:
-    """One EF flow a matcher proposes, plus any region token carried from the source name."""
+    """One EF flow a matcher proposes, tagged with provenance and any carried caveat."""
 
     flow: EfFlow
     location: str | None = None  # ISO-2 code carried from the source name
     region: str | None = None  # non-ISO region token carried from the source name
+    tier: str | None = None  # the matcher (tier) that produced this candidate
+    caveat: str | None = None  # a known caveat about this match, if any
+
+
+@dataclass(frozen=True)
+class Alias:
+    """One curated alias table entry: the EF preferred label to match, plus an optional caveat."""
+
+    target: str
+    caveat: str | None = None
 
 
 class Matcher(Protocol):
@@ -52,8 +63,12 @@ class Matcher(Protocol):
         ...
 
 
-def _wrap(flows: Sequence[EfFlow]) -> list[Candidate]:
-    return [Candidate(f) for f in sorted(flows, key=lambda f: f.code)]
+def _bucket(flow: BafuFlow) -> str | None:
+    return bucket_of_bafu_category(flow.category)
+
+
+def _lookup(flows: Sequence[EfFlow], tier: str) -> list[Candidate]:
+    return [Candidate(f, tier=tier) for f in sorted(flows, key=lambda f: f.code)]
 
 
 class ExactNameMatcher:
@@ -63,8 +78,7 @@ class ExactNameMatcher:
 
     def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
         """Return EF flows whose preferred label equals ``flow.name`` in ``flow``'s bucket."""
-        bucket = bucket_of_bafu_category(flow.category)
-        return _wrap(index.by_name(flow.name, bucket))
+        return _lookup(index.by_name(flow.name, _bucket(flow)), self.tier)
 
 
 class SynonymMatcher:
@@ -74,8 +88,7 @@ class SynonymMatcher:
 
     def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
         """Return EF flows whose synonym equals ``flow.name`` in ``flow``'s bucket."""
-        bucket = bucket_of_bafu_category(flow.category)
-        return _wrap(index.by_synonym(flow.name, bucket))
+        return _lookup(index.by_synonym(flow.name, _bucket(flow)), self.tier)
 
 
 class CasMatcher:
@@ -92,8 +105,7 @@ class CasMatcher:
         """Return every EF flow in ``flow``'s bucket whose CAS number matches ``cas``."""
         if cas is None:
             return []
-        bucket = bucket_of_bafu_category(flow.category)
-        return _wrap(index.by_cas(cas, bucket))
+        return _lookup(index.by_cas(cas, _bucket(flow)), self.tier)
 
 
 class QualifierMatcher:
@@ -108,32 +120,39 @@ class QualifierMatcher:
 
     def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
         """Return EF flows whose label is ``flow.name`` rewritten to EF qualifier spelling."""
-        match = _QUALIFIER_RE.match(flow.name)
+        match = _QUALIFIER_RE.match(flow.name.strip())
         if match is None:
             return []
         stem = match.group("stem")
         qualifier = match.group("q").lower()
         qualifier = _QUALIFIER_EF.get(qualifier, qualifier)
-        bucket = bucket_of_bafu_category(flow.category)
-        return _wrap(index.by_name(f"{stem} ({qualifier})", bucket))
+        return _lookup(index.by_name(f"{stem} ({qualifier})", _bucket(flow)), self.tier)
 
 
 class AliasMatcher:
-    """Matches on a curated BAFU-name -> EF-preferred-label table, bucket-scoped."""
+    """Matches on a curated BAFU-name -> EF-preferred-label table, bucket-scoped.
+
+    Accepts either plain ``str`` targets or ``Alias`` values; a plain string is wrapped
+    into a target-only ``Alias``. When the matched alias carries a caveat, every
+    candidate it produces carries that caveat too.
+    """
 
     tier = "alias"
 
-    def __init__(self, aliases: dict[str, str]) -> None:
-        """Build the matcher from ``aliases`` (arbitrary case/whitespace keys and values)."""
-        self._aliases = {k.strip().lower(): v for k, v in aliases.items()}
+    def __init__(self, aliases: dict[str, str | Alias]) -> None:
+        """Build the matcher from ``aliases`` (arbitrary case/whitespace keys)."""
+        self._aliases = {
+            k.strip().lower(): v if isinstance(v, Alias) else Alias(target=v)
+            for k, v in aliases.items()
+        }
 
     def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
         """Return EF flows whose label equals the alias table's target for ``flow.name``."""
-        target = self._aliases.get(flow.name.strip().lower())
-        if target is None:
+        alias = self._aliases.get(flow.name.strip().lower())
+        if alias is None:
             return []
-        bucket = bucket_of_bafu_category(flow.category)
-        return _wrap(index.by_name(target, bucket))
+        found = _lookup(index.by_name(alias.target, _bucket(flow)), self.tier)
+        return [replace(c, caveat=alias.caveat) for c in found]
 
 
 class RegionStripMatcher:
@@ -144,13 +163,18 @@ class RegionStripMatcher:
     token (an ISO-3166-1 alpha-2 code, or a small set of named non-ISO regions such as
     ``Europe``/``RER``/``GLO``), strips it, runs ``inner`` matchers in turn against the
     stem name, and re-wraps the first non-empty result with the stripped token recorded
-    as ``location`` (ISO-2) or ``region`` (anything else). No token, no match: ``[]``.
+    as ``location`` (ISO-2) or ``region`` (anything else) and a ``tier`` of
+    ``"region/<inner tier>"``. No token, no match: ``[]``.
+
+    ``inner`` must be name-keyed matchers only (``ExactNameMatcher``, ``SynonymMatcher``,
+    ``QualifierMatcher``, ``AliasMatcher``): a ``CasMatcher`` inside would ignore the
+    stripped stem and match on ``cas`` again, defeating the point of stripping.
     """
 
     tier = "region"
 
     def __init__(self, inner: Sequence[Matcher]) -> None:
-        """Build the matcher from an ordered sequence of inner matchers to retry with."""
+        """Build the matcher from an ordered sequence of name-keyed inner matchers."""
         self._inner = list(inner)
 
     def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
@@ -167,11 +191,40 @@ class RegionStripMatcher:
         for matcher in self._inner:
             found = matcher.candidates(stem_flow, cas, index)
             if found:
-                return [Candidate(c.flow, location=location, region=region) for c in found]
+                tier = f"region/{matcher.tier}"
+                return [replace(c, location=location, region=region, tier=tier) for c in found]
         return []
 
 
-def load_aliases(path: Path = ALIASES_PATH) -> dict[str, str]:
-    """Load the curated alias table, keyed by lowercase, stripped BAFU flow name."""
-    data = yaml.safe_load(path.read_text())
-    return {str(k).strip().lower(): str(v) for k, v in data["aliases"].items()}
+def _parse_alias_value(key: object, value: object, path: Path) -> Alias:
+    if isinstance(value, str) and value.strip():
+        return Alias(target=value.strip())
+    if isinstance(value, dict):
+        target = value.get("target")
+        caveat = value.get("caveat")
+        if (
+            isinstance(target, str)
+            and target.strip()
+            and (caveat is None or (isinstance(caveat, str) and caveat.strip()))
+        ):
+            return Alias(target=target.strip(), caveat=caveat.strip() if caveat else None)
+    raise ParseError(f"{path}: alias {key!r} has an invalid value {value!r}")
+
+
+def load_aliases(path: Path = ALIASES_PATH) -> dict[str, Alias]:
+    """Load the curated alias table, keyed by lowercase, stripped BAFU flow name.
+
+    A YAML value is either a bare string (becomes a target-only ``Alias``) or a
+    ``{target, caveat}`` mapping. Raises ``ParseError``, naming ``path``, when the
+    top-level ``aliases`` key is missing, ``None``, or not a mapping, or when an
+    entry's value is neither a non-empty string nor a well-formed ``{target, caveat}``
+    mapping (a key with no value at all -- YAML ``null`` -- is exactly such a case).
+    """
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    aliases = data.get("aliases") if isinstance(data, dict) else None
+    if not isinstance(aliases, dict):
+        raise ParseError(f"{path}: missing or malformed top-level 'aliases' mapping")
+    return {
+        str(key).strip().lower(): _parse_alias_value(key, value, path)
+        for key, value in aliases.items()
+    }
