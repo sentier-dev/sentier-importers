@@ -69,7 +69,7 @@ where = ["app"]
 version = { attr = "sentier_importers.__version__" }
 
 [tool.pytest.ini_options]
-addopts = "--cov sentier_importers.core --cov-report term-missing --verbose"
+addopts = "--cov sentier_importers.core --cov sentier_importers.matching --cov-report term-missing --verbose"
 norecursedirs = ["dist", "build", ".tox"]
 testpaths = ["tests"]
 
