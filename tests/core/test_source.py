@@ -54,3 +54,31 @@ def _config_stub():
         fetch_format="csv",
         output_format="json",
     )
+
+
+def test_named_inputs_are_fetched_alongside_the_primary(tmp_path):
+    """``config.inputs`` are secondary URLs a source joins against; fetched with the same
+    cache and exposed as ``source.inputs[name]``."""
+    side = tmp_path / "side.json"
+    side.write_text('{"k": 1}')
+    config = SourceConfig(
+        name="demo",
+        module="x.y",
+        target="sentier_inventory",
+        category="demo",
+        fetch_url=_config(tmp_path).fetch_url,
+        fetch_format="csv",
+        output_format="json",
+        inputs={"side": f"file://{side}"},
+    )
+    ctx = RunContext(cache_dir=tmp_path / "c", output_dir=tmp_path / "o")
+    source = _Demo(config)
+    assert source.inputs == {}
+    raw = source.fetch(ctx)
+    assert raw.content == b"id,name\n1,alpha\n"
+    assert source.inputs["side"].content == b'{"k": 1}'
+    assert source.inputs["side"].source_url == f"file://{side}"
+
+
+def test_inputs_default_to_empty(tmp_path):
+    assert _config(tmp_path).inputs == {}
