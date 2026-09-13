@@ -1,4 +1,5 @@
 import pytest
+from sentier_importers.matching.compartments import Placement
 from sentier_importers.matching.ef_index import EfFlowIndex
 from sentier_importers.matching.matchers import Alias, Candidate
 from sentier_importers.matching.pipeline import Match, MatchPipeline, Unmatched, default_pipeline
@@ -7,6 +8,7 @@ from sentier_importers.sources.eaternity.bridge import BafuFlow
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
     AIR_UNSPEC,
+    AIR_URBAN,
     LAND_OCC,
     RES_GROUND,
     RES_WATER,
@@ -150,13 +152,27 @@ def test_cf_identical_duplicates_are_harmless_pick_closest_name(pipeline):
 
 
 def test_substances_with_different_factors_are_ambiguous(pipeline):
-    got = pipeline.match(air("Carbon monoxide"), "630-08-0")
+    # a name that reaches CasMatcher unresolved (no exact/synonym/qualifier/carbon-
+    # oxide/ion route of its own) still hits CAS 630-08-0's genuine ambiguity between
+    # the biogenic/fossil carbon monoxide pair -- unlike the BARE "Carbon monoxide"
+    # name itself, which decision (e), 2026-09-13 now resolves before CAS is ever
+    # consulted (see test_carbon_oxide_matcher_beats_cas below).
+    got = pipeline.match(air("Carbon monoxide, unspecified isomer"), "630-08-0")
     assert got == Unmatched(
         reason="ambiguous_substances",
         detail="CAS 630-08-0 finds 2 EF flows with different factors for "
         "carbon monoxide (biogenic), carbon monoxide (fossil); "
         "the source CAS 630-08-0 does not single one out",
     )
+
+
+def test_carbon_oxide_matcher_beats_cas(pipeline):
+    # decision (e), 2026-09-13: a bare "Carbon monoxide" resolves onto EF's fossil
+    # spelling before CasMatcher ever runs, so the CAS 630-08-0 collision between the
+    # biogenic/fossil pair (test above, pre-decision-(e) behaviour) never surfaces.
+    got = pipeline.match(air("Carbon monoxide"), "630-08-0")
+    assert got.code == "co-fos" and got.tier == "carbon-oxide" and got.placement == "exact"
+    assert got.caveats == ("unqualified carbon oxide taken as fossil (decision 2026-09-13)",)
 
 
 def test_qualifier_beats_cas(pipeline):
@@ -270,8 +286,8 @@ def test_elemental_cas_does_not_collapse_speciation(pipeline):
     assert got == Unmatched(
         reason="no_ef_flow",
         detail="no EF 3.1 flow with a factor matches by name, synonym, qualifier, "
-        "land-use class, ore composite, alias, region-stripped name or CAS in the "
-        "water compartment",
+        "carbon-oxide, ion-strip, land-use class, ore composite, alias, "
+        "region-stripped name or CAS in the water compartment",
     )
 
 
@@ -287,8 +303,8 @@ def test_no_ef_flow_detail_says_with_or_without_a_factor_for_an_inclusive_index(
     assert got == Unmatched(
         reason="no_ef_flow",
         detail="no EF 3.1 flow, with or without a factor, matches by name, synonym, "
-        "qualifier, land-use class, ore composite, alias, region-stripped name or CAS "
-        "in the water compartment",
+        "qualifier, carbon-oxide, ion-strip, land-use class, ore composite, alias, "
+        "region-stripped name or CAS in the water compartment",
     )
 
 
@@ -536,3 +552,150 @@ def test_emissions_unspecified_fallback_is_unaffected_by_resource_fallback(pipel
     # UNSPECIFIED fallback still behaves exactly as it always has.
     got = pipeline.match(water("Zinc", "groundwater"), None)
     assert got.placement == "unspecified_fallback"
+
+
+# --- rank-8-only relaxed nomenclature placement (decision (f)(1), 2026-09-13) ------
+
+_WIDGET_UNCHAR_VOCAB = [
+    # bw="envi-air-hist15me" -> "Emissions to non-urban air or from high stacks"
+    vocab_row("widget-a", "Widget", bw="envi-air-hist15me"),
+]
+
+
+def test_relaxed_placement_uses_the_sole_leaf_when_only_one_exists(tmp_path):
+    # "indoor" is not "non-urban air or from high stacks", and neither EXACT,
+    # UNSPECIFIED nor the resource-branch fallback apply (this is the "air" bucket) --
+    # the single uncharacterised candidate's own leaf is used, with a caveat
+    # disclosing the relaxed placement carries no factor.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], _WIDGET_UNCHAR_VOCAB, shards=1),
+        include_uncharacterised=True,
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(BafuFlow("Widget", "emissions to air", "indoor", "kg"), None)
+    assert got == Match(
+        code="widget-a",
+        tier="name",
+        placement=Placement.NOMENCLATURE.value,
+        location=None,
+        candidates=1,
+        caveats=(
+            "EF has this name only in emissions to non-urban air or from high "
+            "stacks; placed there for nomenclature alignment (no factor)",
+        ),
+    )
+
+
+_TWO_LEAF_UNCHAR_VOCAB = [
+    # bw="envi-air-unkn" -> "Emissions to air, unspecified"
+    vocab_row("widget2-a", "Widget2", bw="envi-air-unkn"),
+    # bw="envi-air-indr-unkn" -> "Emissions to air, indoor"
+    vocab_row("widget2-b", "Widget2", bw="envi-air-indr-unkn"),
+]
+
+
+def test_relaxed_placement_prefers_the_unspecified_leaf_among_several(tmp_path):
+    # two uncharacterised candidates on different leafs; "high. pop." itself matches
+    # neither leaf's own family, but one candidate's leaf happens to be exactly the
+    # bucket-level "air, unspecified" leaf -- with unspecified_fallback disabled (so
+    # the ordinary UNSPECIFIED branch never intercepts it first), the relaxed
+    # placement still prefers that leaf over the alphabetically-first one. Since more
+    # than one leaf exists, the caveat lists every leaf found and names which one was
+    # picked, rather than falsely claiming the name exists "only" on that one leaf.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], _TWO_LEAF_UNCHAR_VOCAB, shards=1),
+        include_uncharacterised=True,
+    )
+    pipe = default_pipeline(index, {}, unspecified_fallback=False)
+    got = pipe.match(BafuFlow("Widget2", "emissions to air", "high. pop.", "kg"), None)
+    assert got.code == "widget2-a"  # the "air, unspecified" leaf, not "air, indoor"
+    assert got.placement == Placement.NOMENCLATURE.value
+    assert got.caveats == (
+        "EF has this name only in 'emissions to air, indoor', 'emissions to air, "
+        "unspecified'; placed on 'emissions to air, unspecified' for nomenclature "
+        "alignment (no factor)",
+    )
+
+
+def test_relaxed_placement_prefers_the_non_long_term_unspecified_leaf_too(tmp_path):
+    # a "*, long-term" source whose candidates do NOT include the long-term
+    # unspecified leaf, but DO include the plain (non-long-term) one: the plain
+    # unspecified leaf must still be preferred over the alphabetically-first leaf --
+    # the long-term unspecified leaf almost never actually holds an uncharacterised
+    # candidate in practice, so falling through only to alphabetical order here would
+    # be wrong far more often than the "prefer the long-term leaf first" rule helps.
+    # This is the real BAFU-2026 shape: Sulfate/Potassium/Scandium/... to
+    # "groundwater, long-term" candidate onto fresh water / sea water / water
+    # unspecified -- must land on "water, unspecified", not "fresh water"
+    # (alphabetically first).
+    vocab = [
+        vocab_row("water-fresh", "Widget5", bw="envi-wate-suwa"),  # fresh water
+        vocab_row("water-sea", "Widget5", bw="envi-wate-ocea"),  # sea water
+        vocab_row("water-unspec", "Widget5", bw="envi-wate-unkn"),  # water, unspecified
+    ]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab, shards=1), include_uncharacterised=True
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(
+        BafuFlow("Widget5", "emissions to water", "groundwater, long-term", "kg"), None
+    )
+    assert got.code == "water-unspec"
+    assert got.placement == Placement.NOMENCLATURE.value
+    assert got.caveats == (
+        "EF has this name only in 'emissions to fresh water', 'emissions to sea water', "
+        "'emissions to water, unspecified'; placed on 'emissions to water, unspecified' "
+        "for nomenclature alignment (no factor)",
+    )
+
+
+_THREE_LEAF_NO_UNSPECIFIED_VOCAB = [
+    # neither leaf here is a bucket-level "unspecified" leaf at all
+    vocab_row("widget3-a", "Widget3", bw="envi-air-indr-unkn"),  # air, indoor
+    vocab_row("widget3-b", "Widget3", bw="envi-air-hist15me"),  # non-urban air/high stacks
+]
+
+
+def test_relaxed_placement_falls_back_to_the_alphabetically_first_leaf(tmp_path):
+    # two candidates on leafs, neither of which is a bucket-level "unspecified" leaf
+    # (long-term or not) -- the preference list never matches either, so the
+    # alphabetically first leaf ("air, indoor" sorts before "non-urban air or from
+    # high stacks") wins.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], _THREE_LEAF_NO_UNSPECIFIED_VOCAB, shards=1),
+        include_uncharacterised=True,
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(BafuFlow("Widget3", "emissions to air", "low. pop., long-term", "kg"), None)
+    assert got.code == "widget3-a"  # "air, indoor" -- alphabetically first
+    assert got.placement == Placement.NOMENCLATURE.value
+    assert got.caveats == (
+        "EF has this name only in 'emissions to air, indoor', 'emissions to "
+        "non-urban air or from high stacks'; placed on 'emissions to air, indoor' "
+        "for nomenclature alignment (no factor)",
+    )
+
+
+def test_relaxed_placement_never_fires_on_the_characterised_only_index(tmp_path):
+    # a real gate, not a vacuous one: two CHARACTERISED candidates spread over two
+    # leafs that satisfy neither EXACT (subcategory "indoor" matches neither leaf's
+    # family) nor UNSPECIFIED (disabled here, and neither leaf is the bucket-level
+    # unspecified leaf anyway) nor the resource-branch fallback (bucket is "air", not
+    # "resource"). On the inclusive index this exact shape would qualify for the
+    # relaxed nomenclature placement -- but ``index.includes_uncharacterised`` is
+    # False here (a plain characterised-only, rank-7-shaped index), so the pipeline
+    # must still report ``sub_compartment_absent``, never Placement.NOMENCLATURE.
+    cf = [
+        cf_row("widget-c-urban", "widget6", AIR_URBAN, value=1.0),
+        cf_row("widget-c-rural", "widget6", AIR_RURAL, value=1.0),
+    ]
+    vocab = [vocab_row("widget-c-urban", "Widget6"), vocab_row("widget-c-rural", "Widget6")]
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, cf, vocab))
+    assert index.includes_uncharacterised is False
+    pipe = default_pipeline(index, {}, unspecified_fallback=False)
+    got = pipe.match(BafuFlow("Widget6", "emissions to air", "indoor", "kg"), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has widget6 only in: emissions to non-urban air or from high "
+        "stacks, emissions to urban air close to ground",
+    )

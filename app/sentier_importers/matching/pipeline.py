@@ -3,12 +3,12 @@ disambiguation. Anything that cannot be asserted comes back as ``Unmatched`` wit
 reason a reviewer can act on.
 
 Tier order: exact name, land-use class, ore composite, synonym, qualifier spelling,
-curated alias, the same six tiers again applied to the region-stripped name
-(``RegionStripMatcher`` applies that same first-hit rule among its own inner
-matchers), then CAS last. The first matcher that yields any candidate in the flow's
-compartment decides the outcome: a later tier never rescues a placement failure of
-an earlier one, because "the exact-name EF flow exists but only in another
-sub-compartment" is information, not a miss.
+carbon-oxide rewrite, ion-strip, curated alias, the same eight tiers again applied to
+the region-stripped name (``RegionStripMatcher`` applies that same first-hit rule
+among its own inner matchers), then CAS last. The first matcher that yields any
+candidate in the flow's compartment decides the outcome: a later tier never rescues a
+placement failure of an earlier one, because "the exact-name EF flow exists but only
+in another sub-compartment" is information, not a miss.
 
 After a matcher's candidates fail both EXACT and UNSPECIFIED placement, one more
 placement is tried before giving up: the resource-branch fallback (decision (b),
@@ -18,6 +18,25 @@ on the one EF resource branch that holds the substance, provided every candidate
 matcher found lands on the very same EF leaf -- if the candidates spread over more
 than one leaf, there is nothing to choose between and the flow stays
 ``sub_compartment_absent``.
+
+Rank 8 only (decision (f)(1), 2026-09-13): when every remaining candidate is
+uncharacterised (``not Candidate.flow.characterised``) and the index was built with
+``include_uncharacterised=True``, one more placement -- ``Placement.NOMENCLATURE`` --
+is tried before ``sub_compartment_absent``: the candidates carry no factor in any
+case, so relaxing which sub-compartment they are asserted on is a nomenclature
+statement only, never a factor claim. When the candidates share one EF leaf that
+leaf is used outright; when they spread over several, the preferred leaf is the
+bucket-level unspecified leaf for THIS source's own long-term-ness (``unspecified_leaf``
+with ``long_term`` read off the BAFU sub-compartment), falling back to the plain
+(non-long-term) unspecified leaf, then the alphabetically first leaf -- the two-step
+fallback matters because the long-term leaf never actually holds an uncharacterised
+candidate in practice, so a ``*, long-term`` source still lands on the ordinary
+unspecified leaf when that is what the candidates offer, rather than skipping straight
+to an arbitrary alphabetical pick. The caveat names every leaf the name was found in
+when there is more than one, and which one was picked, so it never overstates
+"only" when several exist. This never fires for rank 7's characterised-only index:
+that index carries no uncharacterised flow at all, so the ``not characterised``
+condition can never hold for it.
 """
 
 from __future__ import annotations
@@ -32,14 +51,17 @@ from sentier_importers.matching.compartments import (
     bucket_of_bafu_category,
     is_uninformative_resource_sub,
     place,
+    unspecified_leaf,
 )
 from sentier_importers.matching.ef_index import EfFlowIndex, normalise_cas
 from sentier_importers.matching.matchers import (
     Alias,
     AliasMatcher,
     Candidate,
+    CarbonOxideMatcher,
     CasMatcher,
     ExactNameMatcher,
+    IonStripMatcher,
     LandUseMatcher,
     Matcher,
     OreCompositeMatcher,
@@ -73,13 +95,14 @@ _LEAF_HUMAN = {
 #: so it is honest to say so; the inclusive index (rank 8) searched uncharacterised
 #: flows too, so the detail must not imply otherwise.
 _NO_MATCH_CHARACTERISED = (
-    "no EF 3.1 flow with a factor matches by name, synonym, qualifier, land-use "
-    "class, ore composite, alias, region-stripped name or CAS in the {bucket} compartment"
+    "no EF 3.1 flow with a factor matches by name, synonym, qualifier, carbon-oxide, "
+    "ion-strip, land-use class, ore composite, alias, region-stripped name or CAS in "
+    "the {bucket} compartment"
 )
 _NO_MATCH_INCLUSIVE = (
     "no EF 3.1 flow, with or without a factor, matches by name, synonym, qualifier, "
-    "land-use class, ore composite, alias, region-stripped name or CAS in the "
-    "{bucket} compartment"
+    "carbon-oxide, ion-strip, land-use class, ore composite, alias, region-stripped "
+    "name or CAS in the {bucket} compartment"
 )
 
 
@@ -177,9 +200,12 @@ class MatchPipeline:
         ``compartments.is_uninformative_resource_sub`` says the sub-compartment is
         uninformative and every candidate lands on the same EF leaf -- disambiguation
         can still turn this into ``ambiguous_substances`` when those candidates
-        differ in identity and no CAS singles one out); otherwise
-        ``sub_compartment_absent``, naming every distinct candidate name and leaf so a
-        reviewer can see what EF actually offers.
+        differ in identity and no CAS singles one out); failing that, and only when
+        every remaining candidate is uncharacterised and the index includes
+        uncharacterised flows (rank 8 only, decision (f)(1)), the relaxed nomenclature
+        placement (module docstring); otherwise ``sub_compartment_absent``, naming
+        every distinct candidate name and leaf so a reviewer can see what EF actually
+        offers.
         """
         if not candidates:
             return None
@@ -220,6 +246,37 @@ class MatchPipeline:
             )
             return self._pick(
                 candidates, flow, cas, matcher.tier, Placement.RESOURCE_BRANCH, (caveat,)
+            )
+        if self._index.includes_uncharacterised and all(
+            not c.flow.characterised for c in candidates
+        ):
+            # prefer the long-term unspecified leaf for a "*, long-term" source (it
+            # never holds an uncharacterised candidate, so this is usually a no-op),
+            # then the plain unspecified leaf, then the alphabetically first leaf.
+            preferred = [
+                unspecified_leaf(bucket, long_term="long-term" in flow.subcategory),
+                unspecified_leaf(bucket, long_term=False),
+            ]
+            leaf = next((p for p in preferred if p in leafs), leafs[0])
+            if len(leafs) == 1:
+                nomenclature_caveat = (
+                    f"EF has this name only in {leaf}; placed there for nomenclature "
+                    "alignment (no factor)"
+                )
+            else:
+                listed = ", ".join(repr(candidate_leaf) for candidate_leaf in leafs)
+                nomenclature_caveat = (
+                    f"EF has this name only in {listed}; placed on {leaf!r} "
+                    "for nomenclature alignment (no factor)"
+                )
+            leaf_candidates = [c for c in candidates if c.flow.leaf == leaf]
+            return self._pick(
+                leaf_candidates,
+                flow,
+                cas,
+                matcher.tier,
+                Placement.NOMENCLATURE,
+                (nomenclature_caveat,),
             )
         return Unmatched(
             "sub_compartment_absent",
@@ -366,7 +423,7 @@ def default_pipeline(
     resource_fallback: bool = True,
 ) -> MatchPipeline:
     """Build the standard pipeline: name, land-use class, ore composite, synonym,
-    qualifier, alias, region-stripped, CAS.
+    qualifier, carbon-oxide rewrite, ion-strip, alias, region-stripped, CAS.
 
     ``aliases`` is the curated BAFU-name -> EF-preferred-label table (see
     ``matchers.load_aliases``). ``unspecified_fallback`` and ``resource_fallback`` are
@@ -400,6 +457,19 @@ def default_pipeline(
     spelling, and "Water, KR" resolved to (or, for the real EF water families,
     remained ambiguous by) a bare CAS lookup instead of the more specific
     region-stripped name match.
+
+    ``CarbonOxideMatcher`` and ``IonStripMatcher`` both run right after
+    ``QualifierMatcher``, ahead of ``AliasMatcher``: both rewrite a BAFU name to an EF
+    spelling the same way ``QualifierMatcher`` does (decisions (d) and (e),
+    2026-09-13). Since the pipeline commits to the first tier that yields any
+    candidate, this ordering means a name either of them claims (a bare carbon oxide,
+    an ion/oxidation-state-shaped name) is decided by them, carrying their own
+    decision-specific caveat, and never reaches ``AliasMatcher`` at all -- a curated
+    alias line for such a name would simply never fire (dead weight, not a second
+    opinion). ``AliasMatcher`` only ever resolves the names neither of these two
+    claims. Both must still run after ``LandUseMatcher``/``OreCompositeMatcher``/
+    ``SynonymMatcher``, for the same reason those are ordered ahead of
+    ``QualifierMatcher`` above: a more specific earlier tier's match is never stolen.
     """
     named: list[Matcher] = [
         ExactNameMatcher(),
@@ -407,6 +477,8 @@ def default_pipeline(
         OreCompositeMatcher(),
         SynonymMatcher(),
         QualifierMatcher(),
+        CarbonOxideMatcher(),
+        IonStripMatcher(),
         AliasMatcher(aliases),
     ]
     return MatchPipeline(
