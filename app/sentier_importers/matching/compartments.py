@@ -16,10 +16,21 @@ connective); resource matching is on the whole leaf by suffix (e.g. ``in ground`
 matches any leaf ending in ``resources from ground``), except the land family, which
 matches the full ``Land use / ...`` leaf directly.
 
-EF 3.1 has neither a "ground water" leaf nor a "resources from biosphere" leaf, so the
-BAFU ``groundwater``/``fossilwater`` tokens (kept below to document BAFU vocabulary)
-never match a leaf exactly; they only ever place through the bucket-level
-``water, unspecified`` fallback (see ``place``). ``biotic`` never places at all.
+EF 3.1's *characterised* index (``EfFlowIndex`` built without
+``include_uncharacterised``, i.e. every index before phase 2 task 3, and still the
+default today) has neither a "ground water" leaf nor a "resources from biosphere"
+leaf, so the BAFU ``groundwater``/``fossilwater`` tokens (kept below to document BAFU
+vocabulary) never match a leaf exactly there; they only ever place through the
+bucket-level ``water, unspecified`` fallback (see ``place``), and ``biotic`` never
+places at all.
+
+That "resources from biosphere" / ``biotic`` statement stops being quite true once an
+index is built with ``include_uncharacterised=True`` (``matching.bw_context``): the
+``reso-biot`` crosswalk code introduces exactly one such leaf, "Renewable material
+resources from biosphere" (uncharacterised rows like Wood, Biomass, forest gross
+calorific value), and ``biotic`` matches it EXACT by suffix like any other resource
+leaf (``_RESOURCE_SUFFIX["biotic"]``). There is still no "ground water" leaf in either
+index -- ``groundwater``/``fossilwater`` remain fallback-only regardless.
 """
 
 from __future__ import annotations
@@ -86,8 +97,12 @@ _EMISSION_LEAFS: dict[str, _LeafFamily] = {
 #: BAFU resource subCategory -> the whole-leaf suffix EF uses, e.g. ``in ground``
 #: matches any leaf ending in ``resources from ground`` (``Non-renewable element
 #: resources from ground``, ``Non-renewable energy resources from ground``, ...).
-#: ``biotic`` documents BAFU vocabulary but has no EF 3.1 counterpart (there is no
-#: "resources from biosphere" leaf), so it never matches.
+#: ``biotic`` documents BAFU vocabulary; in EF 3.1's characterised index there is no
+#: "resources from biosphere" leaf for it to match, so it never does there. An index
+#: built with ``include_uncharacterised=True`` does have one such leaf ("Renewable
+#: material resources from biosphere", via the ``reso-biot`` bw-context crosswalk --
+#: see ``matching.bw_context``), which ``biotic`` matches EXACT by this same suffix
+#: rule like any other resource subCategory.
 _RESOURCE_SUFFIX: dict[str, str] = {
     "in ground": "resources from ground",
     "in water": "resources from water",
@@ -110,7 +125,38 @@ KNOWN_SUBCATEGORIES: frozenset[str] = (
 class Placement(Enum):
     EXACT = "exact"
     UNSPECIFIED = "unspecified_fallback"
+    RESOURCE_BRANCH = "resource_branch_fallback"
     NONE = "none"
+
+
+#: Resource sub-compartments that, on their own, carry no information about the
+#: extraction medium -- see ``is_uninformative_resource_sub``.
+_UNINFORMATIVE_RESOURCE_SUBS = frozenset({"unspecified", "land", "biotic"})
+
+
+def is_uninformative_resource_sub(category: str, subcategory: str, name: str) -> bool:
+    """Whether this BAFU resource sub-compartment carries no extraction-medium information.
+
+    Such a flow may be placed on the one EF resource branch that holds the substance
+    instead of being reported ``sub_compartment_absent`` (decision (b), 2026-09-13).
+
+    ``True`` when ``category`` is ``resources`` and ``subcategory`` is one of
+    ``unspecified``, ``land`` or ``biotic`` (none of these name a medium at all), or
+    when ``subcategory`` is ``in ground`` and ``name`` starts with ``Water`` (BAFU
+    files well and cooling water under ``in ground``, while EF keeps all water under
+    resources-from-water).
+
+    Deliberately NOT uninformative, so this stays ``False`` for them: ``in water``
+    (EF may hold the substance only from ground -- Bromine, Iodine, Magnesium: a
+    sea-water extraction is not a ground extraction, so the distinction is real
+    information, not noise), ``in air``, and ``in ground`` for a non-water name (a
+    real, informative medium already).
+    """
+    if category != "resources":
+        return False
+    if subcategory in _UNINFORMATIVE_RESOURCE_SUBS:
+        return True
+    return subcategory == "in ground" and name.startswith("Water")
 
 
 def bucket_of_bafu_category(category: str) -> str | None:

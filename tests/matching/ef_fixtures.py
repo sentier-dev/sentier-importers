@@ -35,6 +35,7 @@ VOCAB_SCHEMA = pa.schema(
         ("alt_labels", pa.list_(pa.string())),
         ("cas_number", pa.string()),
         ("source", pa.string()),
+        ("additional_notations", pa.list_(pa.string())),
     ]
 )
 EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
@@ -53,15 +54,18 @@ def cf_row(code, name, context, method="ef-3.1:human-toxicity-cancer", value=1.0
     }
 
 
-def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE):
+def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE, bw=None):
     # alt=None models the ~4,051 real EF vocab rows whose alt_labels is null,
     # as distinct from alt=() (an explicit empty list).
+    # bw models a row's one real "bw-context:<code>" additional_notations entry;
+    # a row that has no bw-context notation (the common case) gets an empty list.
     return {
         "iri": IRI + code,
         "pref_label": label,
         "alt_labels": list(alt) if alt is not None else None,
         "cas_number": cas,
         "source": source,
+        "additional_notations": [f"bw-context:{bw}"] if bw is not None else [],
     }
 
 

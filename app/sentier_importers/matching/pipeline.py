@@ -2,13 +2,22 @@
 disambiguation. Anything that cannot be asserted comes back as ``Unmatched`` with a
 reason a reviewer can act on.
 
-Tier order: exact name, land-use class, synonym, qualifier spelling, curated alias,
-the same five tiers again applied to the region-stripped name (``RegionStripMatcher``
-applies that same first-hit rule among its own inner matchers), then CAS last. The
-first matcher that yields any candidate in the flow's compartment decides the
-outcome: a later tier never rescues a placement failure of an earlier one, because
-"the exact-name EF flow exists but only in another sub-compartment" is information,
-not a miss.
+Tier order: exact name, land-use class, ore composite, synonym, qualifier spelling,
+curated alias, the same six tiers again applied to the region-stripped name
+(``RegionStripMatcher`` applies that same first-hit rule among its own inner
+matchers), then CAS last. The first matcher that yields any candidate in the flow's
+compartment decides the outcome: a later tier never rescues a placement failure of
+an earlier one, because "the exact-name EF flow exists but only in another
+sub-compartment" is information, not a miss.
+
+After a matcher's candidates fail both EXACT and UNSPECIFIED placement, one more
+placement is tried before giving up: the resource-branch fallback (decision (b),
+2026-09-13). A BAFU resource sub-compartment that carries no information about the
+extraction medium (``compartments.is_uninformative_resource_sub``) may still be placed
+on the one EF resource branch that holds the substance, provided every candidate the
+matcher found lands on the very same EF leaf -- if the candidates spread over more
+than one leaf, there is nothing to choose between and the flow stays
+``sub_compartment_absent``.
 """
 
 from __future__ import annotations
@@ -21,6 +30,7 @@ from sentier_importers.matching.compartments import (
     KNOWN_SUBCATEGORIES,
     Placement,
     bucket_of_bafu_category,
+    is_uninformative_resource_sub,
     place,
 )
 from sentier_importers.matching.ef_index import EfFlowIndex, normalise_cas
@@ -32,6 +42,7 @@ from sentier_importers.matching.matchers import (
     ExactNameMatcher,
     LandUseMatcher,
     Matcher,
+    OreCompositeMatcher,
     QualifierMatcher,
     RegionStripMatcher,
     SynonymMatcher,
@@ -55,11 +66,20 @@ _LEAF_HUMAN = {
     "industrial": "non-agricultural soil",
     "forestry": "non-agricultural soil",
     "fossilwater": "ground water",
-    "indoor": "indoor air",
+    "indoor": "air, indoor",
 }
-_NO_MATCH = (
+#: ``no_ef_flow`` detail template, picked by ``EfFlowIndex.includes_uncharacterised``:
+#: a characterised-only index really did restrict the search to factor-bearing flows,
+#: so it is honest to say so; the inclusive index (rank 8) searched uncharacterised
+#: flows too, so the detail must not imply otherwise.
+_NO_MATCH_CHARACTERISED = (
     "no EF 3.1 flow with a factor matches by name, synonym, qualifier, land-use "
-    "class, alias, region-stripped name or CAS in the {bucket} compartment"
+    "class, ore composite, alias, region-stripped name or CAS in the {bucket} compartment"
+)
+_NO_MATCH_INCLUSIVE = (
+    "no EF 3.1 flow, with or without a factor, matches by name, synonym, qualifier, "
+    "land-use class, ore composite, alias, region-stripped name or CAS in the "
+    "{bucket} compartment"
 )
 
 
@@ -92,6 +112,7 @@ class MatchPipeline:
         index: EfFlowIndex,
         *,
         unspecified_fallback: bool = True,
+        resource_fallback: bool = True,
     ) -> None:
         """Build the pipeline from an ordered ``matchers`` sequence and its ``index``.
 
@@ -99,13 +120,28 @@ class MatchPipeline:
         bucket-level "unspecified" EF context is accepted (with a caveat) when the
         BAFU sub-compartment names something more specific; disabling it turns that
         case into a ``sub_compartment_absent`` ``Unmatched`` instead.
+
+        ``resource_fallback`` controls the resource-branch fallback (decision (b),
+        2026-09-13): whether an uninformative BAFU resource sub-compartment
+        (``compartments.is_uninformative_resource_sub``) may be placed on the one EF
+        resource branch its candidates agree on; disabling it turns that case into a
+        ``sub_compartment_absent`` ``Unmatched`` too.
         """
         self._matchers = list(matchers)
         self._index = index
         self._fallback = unspecified_fallback
+        self._resource_fallback = resource_fallback
 
     def match(self, flow: BafuFlow, cas: str | None) -> Match | Unmatched:
-        """Resolve ``flow`` (with an optional ``cas`` number) to one EF flow, or report why not."""
+        """Resolve ``flow`` (with an optional ``cas`` number) to one EF flow, or report why not.
+
+        Guards the flow's compartment and sub-compartment, then tries each matcher in
+        tier order, handing its candidates to ``_resolve``: the first matcher whose
+        candidates resolve to anything (a ``Match`` or an ``Unmatched``, never
+        ``None``) decides the outcome -- a later tier never rescues a placement
+        failure of an earlier one, because "the exact-name EF flow exists but only in
+        another sub-compartment" is information, not a miss.
+        """
         bucket = bucket_of_bafu_category(flow.category)
         if bucket is None:
             return Unmatched("non_ef_compartment", flow.category)
@@ -113,41 +149,82 @@ class MatchPipeline:
             return Unmatched("unknown_sub_compartment", flow.subcategory)
         for matcher in self._matchers:
             candidates = matcher.candidates(flow, cas, self._index)
-            if not candidates:
-                continue
-            # a list of (candidate, placement) pairs, not a dict keyed by candidate:
-            # Candidate is a frozen dataclass, so distinct-but-equal candidates could
-            # otherwise collapse and silently drop a duplicate.
-            placed = [
-                (
-                    c,
-                    place(
-                        flow.category,
-                        c.subcategory_override or flow.subcategory,
-                        c.flow.context_path,
-                    ),
-                )
-                for c in candidates
-            ]
-            exact = [c for c, p in placed if p is Placement.EXACT]
-            if exact:
-                return self._pick(exact, flow, cas, matcher.tier, Placement.EXACT, ())
-            fallback = [c for c, p in placed if p is Placement.UNSPECIFIED]
-            if fallback and self._fallback:
-                human = _LEAF_HUMAN.get(flow.subcategory, flow.subcategory)
-                caveat = (
-                    f"EF has no {human} flow for this substance; the unspecified context is used"
-                )
-                return self._pick(
-                    fallback, flow, cas, matcher.tier, Placement.UNSPECIFIED, (caveat,)
-                )
-            leafs = sorted({c.flow.leaf for c in candidates})
-            names = sorted({c.flow.name.lower() for c in candidates})
-            return Unmatched(
-                "sub_compartment_absent",
-                f"EF has {', '.join(names)} only in: " + ", ".join(leafs),
+            outcome = self._resolve(candidates, flow, cas, matcher)
+            if outcome is not None:
+                return outcome
+        template = (
+            _NO_MATCH_INCLUSIVE
+            if self._index.includes_uncharacterised
+            else _NO_MATCH_CHARACTERISED
+        )
+        return Unmatched("no_ef_flow", template.format(bucket=bucket))
+
+    def _resolve(
+        self,
+        candidates: list[Candidate],
+        flow: BafuFlow,
+        cas: str | None,
+        matcher: Matcher,
+    ) -> Match | Unmatched | None:
+        """Place and disambiguate one matcher's ``candidates``, or ``None`` to try the
+        next matcher (an empty ``candidates`` list -- this matcher found nothing in
+        the flow's compartment at all).
+
+        In order: EXACT placement wins outright; failing that, UNSPECIFIED placement
+        (the bucket-level fallback, ``unspecified_fallback`` permitting); failing
+        that too, and only for the ``resource`` bucket, the resource-branch fallback
+        (``resource_fallback`` permitting, and only when
+        ``compartments.is_uninformative_resource_sub`` says the sub-compartment is
+        uninformative and every candidate lands on the same EF leaf -- disambiguation
+        can still turn this into ``ambiguous_substances`` when those candidates
+        differ in identity and no CAS singles one out); otherwise
+        ``sub_compartment_absent``, naming every distinct candidate name and leaf so a
+        reviewer can see what EF actually offers.
+        """
+        if not candidates:
+            return None
+        # a list of (candidate, placement) pairs, not a dict keyed by candidate:
+        # Candidate is a frozen dataclass, so distinct-but-equal candidates could
+        # otherwise collapse and silently drop a duplicate.
+        placed = [
+            (
+                c,
+                place(
+                    flow.category,
+                    c.subcategory_override or flow.subcategory,
+                    c.flow.context_path,
+                ),
             )
-        return Unmatched("no_ef_flow", _NO_MATCH.format(bucket=bucket))
+            for c in candidates
+        ]
+        exact = [c for c, p in placed if p is Placement.EXACT]
+        if exact:
+            return self._pick(exact, flow, cas, matcher.tier, Placement.EXACT, ())
+        fallback = [c for c, p in placed if p is Placement.UNSPECIFIED]
+        if fallback and self._fallback:
+            human = _LEAF_HUMAN.get(flow.subcategory, flow.subcategory)
+            caveat = f"EF has no {human} flow for this substance; the unspecified context is used"
+            return self._pick(fallback, flow, cas, matcher.tier, Placement.UNSPECIFIED, (caveat,))
+        leafs = sorted({c.flow.leaf for c in candidates})
+        names = sorted({c.flow.name.lower() for c in candidates})
+        bucket = bucket_of_bafu_category(flow.category)
+        if (
+            self._resource_fallback
+            and bucket == "resource"
+            and len(leafs) == 1
+            and is_uninformative_resource_sub(flow.category, flow.subcategory, flow.name)
+        ):
+            caveat = (
+                f"BAFU files this resource under {flow.subcategory}; "
+                f"EF has {', '.join(names)} only as {leafs[0]}"
+            )
+            return self._pick(
+                candidates, flow, cas, matcher.tier, Placement.RESOURCE_BRANCH, (caveat,)
+            )
+        return Unmatched(
+            "sub_compartment_absent",
+            f"EF has {', '.join(names)} only in: " + ", ".join(leafs),
+        )
 
     def _pick(
         self,
@@ -282,14 +359,18 @@ class MatchPipeline:
 
 
 def default_pipeline(
-    index: EfFlowIndex, aliases: Mapping[str, str | Alias], *, unspecified_fallback: bool = True
+    index: EfFlowIndex,
+    aliases: Mapping[str, str | Alias],
+    *,
+    unspecified_fallback: bool = True,
+    resource_fallback: bool = True,
 ) -> MatchPipeline:
-    """Build the standard pipeline: name, land-use class, synonym, qualifier, alias,
-    region-stripped, CAS.
+    """Build the standard pipeline: name, land-use class, ore composite, synonym,
+    qualifier, alias, region-stripped, CAS.
 
     ``aliases`` is the curated BAFU-name -> EF-preferred-label table (see
-    ``matchers.load_aliases``). ``unspecified_fallback`` is forwarded to
-    ``MatchPipeline``.
+    ``matchers.load_aliases``). ``unspecified_fallback`` and ``resource_fallback`` are
+    both forwarded to ``MatchPipeline`` unchanged.
 
     ``LandUseMatcher`` runs second, right after ``ExactNameMatcher`` and before
     ``SynonymMatcher``: an EF flow's ``alt_labels`` are free-form BAFU-side data, and a
@@ -299,6 +380,13 @@ def default_pipeline(
     a later tier (see the module docstring). ``ExactNameMatcher`` is left ahead of it
     because an EF preferred label never looks like a BAFU ``Occupation``/
     ``Transformation`` name in practice, so there is nothing for it to steal.
+
+    ``OreCompositeMatcher`` runs third, right after ``LandUseMatcher``: an ore
+    composite's own name (``Zinc, Zn 0.63%, ..., in ore``) never looks like an EF
+    preferred label or a BAFU land-use name, so ordering it there costs nothing, and
+    it must still run ahead of ``SynonymMatcher``/``QualifierMatcher`` for the same
+    reason ``LandUseMatcher`` does: an accidental synonym collision must not steal an
+    ore composite's match away from the element-decomposition rule.
 
     CAS runs last, after every name-keyed tier including the region-stripped ones, not
     third: a shared CAS number (the biogenic/fossil/land-use-change carbon dioxide
@@ -316,6 +404,7 @@ def default_pipeline(
     named: list[Matcher] = [
         ExactNameMatcher(),
         LandUseMatcher(),
+        OreCompositeMatcher(),
         SynonymMatcher(),
         QualifierMatcher(),
         AliasMatcher(aliases),
@@ -324,4 +413,5 @@ def default_pipeline(
         [*named, RegionStripMatcher(named), CasMatcher()],
         index,
         unspecified_fallback=unspecified_fallback,
+        resource_fallback=resource_fallback,
     )

@@ -5,6 +5,14 @@ links to, and an obsolete material — cover every branch the sources handle:
 sector routing, number->uuid technosphere resolution, biosphere in/out flows,
 all three observed uncertainty types, and the obsolete markers. No real BAFU
 rows: everything here is invented, so the fixture is safe in public git.
+
+Elementary flows carried by the electricity plant dataset: Carbon dioxide, fossil
+(emissions to air / unspecified / kg), Water, river (resources / in water / m3),
+Radon-222 (emissions to air / low. pop. / Bq), Gas, natural/m3 (resources / in
+ground / m3), Peat (resources / in ground / kg), Gas, mine, off-gas, process,
+coal mining/m3 (resources / in ground / Nm3), Occupation, industrial area
+(resources / unspecified / m2a), Uranium (resources / land / kg -- decision (b)'s
+resource-branch fallback fixture).
 """
 
 import io
@@ -65,9 +73,19 @@ _ELEC = """<?xml version='1.0' encoding='UTF-8'?>
         uncertaintyType="0" unit="kg">
         <inputGroup>4</inputGroup>
       </exchange>
+      <exchange category="resources" subCategory="in ground"
+        meanValue="0.03" name="Gas, mine, off-gas, process, coal mining/m3" number="207"
+        uncertaintyType="0" unit="Nm3">
+        <inputGroup>4</inputGroup>
+      </exchange>
       <exchange category="resources" subCategory="unspecified"
         meanValue="0.05" name="Occupation, industrial area" number="206"
         uncertaintyType="0" unit="m2a">
+        <inputGroup>4</inputGroup>
+      </exchange>
+      <exchange category="resources" subCategory="land"
+        meanValue="0.001" name="Uranium" number="208"
+        uncertaintyType="0" unit="kg">
         <inputGroup>4</inputGroup>
       </exchange>
     </flowData>

@@ -14,6 +14,7 @@ from sentier_importers.matching.compartments import (
     Placement,
     bucket_of_bafu_category,
     bucket_of_ef_context,
+    is_uninformative_resource_sub,
     leaf_matches,
     place,
     unspecified_leaf,
@@ -191,3 +192,20 @@ def test_place():
     # category agrees with the context's bucket, but the subCategory itself is only
     # ever valid in a different bucket (soil-only "agricultural" against an air leaf)
     assert place("emissions to air", "agricultural", AIR_UNSPEC) is Placement.NONE
+
+
+@pytest.mark.parametrize(
+    "category, sub, name, expected",
+    [
+        ("resources", "unspecified", "Iron, resource correction", True),
+        ("resources", "land", "Uranium", True),
+        ("resources", "biotic", "Peat", True),
+        ("resources", "in ground", "Water, well, RER", True),
+        ("resources", "in ground", "Uranium", False),
+        ("resources", "in water", "Bromine", False),
+        ("resources", "in air", "Krypton", False),
+        ("emissions to air", "unspecified", "Water", False),
+    ],
+)
+def test_is_uninformative_resource_sub(category, sub, name, expected):
+    assert is_uninformative_resource_sub(category, sub, name) is expected

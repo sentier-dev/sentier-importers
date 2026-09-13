@@ -30,13 +30,20 @@ aliases:
   water, cooling, unspecified natural origin: Water to Cooling
   water, turbine use, unspecified natural origin: Water to turbine
   water, process, unspecified natural origin/m3: Water
+  # its /kg twin: without this alias the three "resources / unspecified|land|in
+  # ground" rows land on one EF leaf (renewable material resources from water) but
+  # spread across three distinct EF flows (Ground Water / Water / Water to Cooling)
+  # with different factors -- ambiguous_substances. "Water" is the only defensible
+  # generic target; the kg -> m3 water-density conversion then applies as usual.
+  water, process, unspecified natural origin/kg: Water
   # surface water is river/lake water, not EF's unspecified-origin "Water"
   water, process, surface: River water
   # fossil/biotic energy resources (MJ) -> EF resource-use-fossils flows (megajoule)
   energy, from coal: Hard Coal
   energy, from coal, brown: Brown Coal
-  # "Energy, from oil" is filed under resources / unspecified; still withheld there
-  # as sub_compartment_absent (EF has no unspecified energy-resource leaf) -- expected.
+  # "Energy, from oil" is filed under resources / unspecified (uninformative, decision
+  # (b)); with exactly one EF leaf reachable via this alias, it resolves through the
+  # resource-branch fallback onto Crude Oil, carrying that fallback's own caveat.
   energy, from oil: Crude Oil
   energy, from peat: Peat
   energy, from uranium: Uranium
@@ -48,6 +55,28 @@ aliases:
   butane, perfluorocyclo-, pfc-318: PFC-318
   ethane, 1,1,2-trifluoro-, hfc-143: HFC-143
   octene (mixture of isomers): Octene
-  # "nitrogen" withdrawn: EF's "Nitrogen, Total (excluding N2)" asserts a chemical
-  # identity (total N), not a spelling difference -- open question for Laurenz,
-  # not a curated alias.
+  # fossil groundwater: taken as groundwater (decision 2026-09-13); "Water, fossil" is
+  # withdrawn from _NON_FRESHWATER accordingly (see mappings_biosphere_matched.py) so
+  # this alias actually gets a chance to fire.
+  water, fossil:
+    target: Ground Water
+    caveat: >-
+      fossil water taken as groundwater (decision 2026-09-13; EF files all water
+      resources under renewable material resources from water)
+  # "Nitrogen, Total (excluding N2)" asserts a chemical identity (total N), not a
+  # spelling difference; taken as BAFU's "Nitrogen" to water by decision 2026-09-13.
+  nitrogen:
+    target: "Nitrogen, Total (excluding N2)"
+    caveat: "BAFU 'Nitrogen' emitted to water taken as total nitrogen (decision 2026-09-13)"
+  coal, brown: Brown Coal
+  coal, hard: Hard Coal
+  oil, crude: Crude Oil
+  1-butanol: Butanol
+  azadirachtin a+b: Azadirachtin
+  benzo(g,h,i)perylene: Benzo(ghi)perylene
+  propylene glycol methyl ether acetate: Propylene Glycol Monomethyl Ether Acetate
+  # the three oxygen-demand targets exist in EF 3.1 but carry no factor: they only take
+  # effect once the nomenclature bridge (phase 2, task 4) is in place; kept deliberately
+  bod5, biological oxygen demand: Biological Oxygen Demand
+  cod, chemical oxygen demand: Chemical Oxygen Demand
+  toc, total organic carbon: Total Organic Carbon
