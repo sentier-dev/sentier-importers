@@ -11,6 +11,7 @@ from sentier_importers.matching.ef_index import EfFlowIndex
 from sentier_importers.matching.matchers import load_aliases
 from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeline
 from sentier_importers.sources.bafu.ecospold import flow_id
+from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCoverageSource
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     ENERGY_CONTENT,
     BafuEfMatchedSource,
@@ -321,6 +322,51 @@ def test_gas_mine_off_gas_volume_onto_the_fossil_resource_flow_is_withheld_as_un
     assert "Nm3" in outcome.detail and "megajoule" in outcome.detail
     rows = source.transform(records)
     assert MINE_GAS not in {r["source"]["code"] for r in rows}
+
+
+def test_uncharacterised_ef_flow_is_never_used_by_the_default_matched_source(tmp_path):
+    # Guard against phase 2 task 3's ``include_uncharacterised`` flag ever flipping to
+    # True by accident on this source (task 4 makes it a class attribute this source can
+    # opt into deliberately -- this test pins today's default, False). Stage an EF vocab
+    # row with no CF-table factor at all ("Mine gas") but a synonym that exactly names
+    # the otherwise-unmapped "Gas, mine, off-gas, process, coal mining/m3" BAFU flow, and
+    # a bw-context crosswalk (reso-grou) that places it in the same bucket ("resource")
+    # BAFU's flow is in. If the source's index ever included uncharacterised flows, this
+    # synonym would resolve a real match; with the flag at its default it must not.
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            bw="reso-grou",
+        )
+    ]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == MINE_GAS)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Unmatched) and outcome.reason == "no_ef_flow"
+    rows = source.transform(records)
+    assert MINE_GAS not in {r["source"]["code"] for r in rows}
+
+    coverage = BafuEfCoverageSource(
+        _config(
+            root,
+            name="bafu-ef-biosphere-coverage",
+            module="sentier_importers.sources.bafu.mappings_biosphere_coverage",
+            verb="coverage",
+            emit="coverage",
+        )
+    )
+    coverage_rows = _run(coverage, tmp_path)
+    mine_gas_row = next(r for r in coverage_rows if r["source"]["code"] == MINE_GAS)
+    assert mine_gas_row["status"] == "unmapped"
+    assert mine_gas_row.get("bridge") != 7
+    assert "bridge" not in mine_gas_row
 
 
 def test_peat_energy_content_converts_onto_the_fossil_resource_flow(tmp_path):

@@ -16,10 +16,21 @@ connective); resource matching is on the whole leaf by suffix (e.g. ``in ground`
 matches any leaf ending in ``resources from ground``), except the land family, which
 matches the full ``Land use / ...`` leaf directly.
 
-EF 3.1 has neither a "ground water" leaf nor a "resources from biosphere" leaf, so the
-BAFU ``groundwater``/``fossilwater`` tokens (kept below to document BAFU vocabulary)
-never match a leaf exactly; they only ever place through the bucket-level
-``water, unspecified`` fallback (see ``place``). ``biotic`` never places at all.
+EF 3.1's *characterised* index (``EfFlowIndex`` built without
+``include_uncharacterised``, i.e. every index before phase 2 task 3, and still the
+default today) has neither a "ground water" leaf nor a "resources from biosphere"
+leaf, so the BAFU ``groundwater``/``fossilwater`` tokens (kept below to document BAFU
+vocabulary) never match a leaf exactly there; they only ever place through the
+bucket-level ``water, unspecified`` fallback (see ``place``), and ``biotic`` never
+places at all.
+
+That "resources from biosphere" / ``biotic`` statement stops being quite true once an
+index is built with ``include_uncharacterised=True`` (``matching.bw_context``): the
+``reso-biot`` crosswalk code introduces exactly one such leaf, "Renewable material
+resources from biosphere" (uncharacterised rows like Wood, Biomass, forest gross
+calorific value), and ``biotic`` matches it EXACT by suffix like any other resource
+leaf (``_RESOURCE_SUFFIX["biotic"]``). There is still no "ground water" leaf in either
+index -- ``groundwater``/``fossilwater`` remain fallback-only regardless.
 """
 
 from __future__ import annotations
@@ -86,8 +97,12 @@ _EMISSION_LEAFS: dict[str, _LeafFamily] = {
 #: BAFU resource subCategory -> the whole-leaf suffix EF uses, e.g. ``in ground``
 #: matches any leaf ending in ``resources from ground`` (``Non-renewable element
 #: resources from ground``, ``Non-renewable energy resources from ground``, ...).
-#: ``biotic`` documents BAFU vocabulary but has no EF 3.1 counterpart (there is no
-#: "resources from biosphere" leaf), so it never matches.
+#: ``biotic`` documents BAFU vocabulary; in EF 3.1's characterised index there is no
+#: "resources from biosphere" leaf for it to match, so it never does there. An index
+#: built with ``include_uncharacterised=True`` does have one such leaf ("Renewable
+#: material resources from biosphere", via the ``reso-biot`` bw-context crosswalk --
+#: see ``matching.bw_context``), which ``biotic`` matches EXACT by this same suffix
+#: rule like any other resource subCategory.
 _RESOURCE_SUFFIX: dict[str, str] = {
     "in ground": "resources from ground",
     "in water": "resources from water",

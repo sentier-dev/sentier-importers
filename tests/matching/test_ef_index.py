@@ -360,3 +360,25 @@ def test_from_tables_include_uncharacterised_default_is_false():
     index = EfFlowIndex.from_tables(CF, UNCHAR_VOCAB)
     assert index.get("un-air") is None
     assert len(index) == 10
+
+
+def test_characterised_row_keeps_cf_context_despite_a_conflicting_bw_notation(tmp_path):
+    # Pins the ``if code in contexts: continue`` guard in ``from_tables``: a vocab row
+    # for an already-characterised code must never be re-placed via its own bw-context
+    # notation, even when that crosswalk disagrees with the CF table's own context.
+    # Without the guard, the uncharacterised branch appends a second EfFlow for the
+    # same code (built from the same vocab row) *after* the characterised one; since
+    # EfFlowIndex.__init__ does ``self._flows[flow.code] = flow`` in iteration order,
+    # that second entry would silently win, flipping ``characterised`` to False and
+    # swapping in the wrong (water) context in place of the CF table's (air) one.
+    rows = [cf_row("dual-ctx", "dual", AIR_URBAN, value=1.0)]
+    vocab = [vocab_row("dual-ctx", "Dual", bw="envi-wate-suwa")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, rows, vocab), include_uncharacterised=True
+    )
+    flow = index.get("dual-ctx")
+    assert flow is not None
+    assert flow.characterised is True
+    assert flow.context_uncertain is False
+    assert flow.context_path == AIR_URBAN
+    assert index.vector("dual-ctx") == {"ef-3.1:human-toxicity-cancer": 1.0}
