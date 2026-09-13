@@ -1,25 +1,27 @@
-"""Coverage sidecar: one row per bafu-2026-v1 elementary flow, mapped (which bridge, and
-for rank 7/8 which tier and placement) or unmapped (why). Reports bridges 3, 6, 7 and 8,
-in two passes:
+"""Coverage sidecar: one row per bafu-2026-v1 elementary flow, mapped (which package,
+and for the matched/nomenclature packages which tier and placement) or unmapped (why).
+Reports all four packages (biosphere-1-curated, biosphere-2-inferred,
+biosphere-3-matched, biosphere-4-nomenclature), in two passes:
 
 1. ``BafuEfMatchedSource.outcomes`` (inherited unchanged) over the characterised-only
    index -- exactly what ``bafu-ef-biosphere-matched`` itself runs -- for every flow
-   rank 3/6 leave uncovered. A ``Match`` here is bridge 7.
+   the curated/inferred packages leave uncovered. A ``Match`` here is biosphere-3-matched.
 2. For whatever pass 1 leaves ``Unmatched``, the same matching/decision chain
    (``mappings_biosphere_matched.outcome_for``) run again over the inclusive
    index/pipeline (``include_uncharacterised=True``) this source's own ``parse``
    override attaches to ``ParsedInputs`` (``inclusive_index``/``inclusive_pipeline``).
-   A ``Match`` here onto an uncharacterised target is bridge 8; onto a characterised
-   one would mean the inclusive index changed a characterised rank-7 outcome -- a
-   ``RuntimeError``, never silently reported. An ``Unmatched`` outcome is reported
-   from this second pass, not the first: the inclusive index can refine the reason
-   (e.g. a code the CF table has no context for at all).
+   A ``Match`` here onto an uncharacterised target is biosphere-4-nomenclature; onto a
+   characterised one would mean the inclusive index changed a characterised
+   biosphere-3-matched outcome -- a ``RuntimeError``, never silently reported. An
+   ``Unmatched`` outcome is reported from this second pass, not the first: the
+   inclusive index can refine the reason (e.g. a code the CF table has no context for
+   at all).
 
 ``transform`` itself is pure (records in, rows out): it never touches ``self.inputs``
 or ``self.config`` -- everything both passes need was already built in ``parse``.
 
-Rank-3 and rank-6 membership comes straight from ``ParsedInputs.rank3_codes``/
-``rank6_codes`` (kept apart there for exactly this reason -- the sibling's own
+Curated and inferred membership comes straight from ``ParsedInputs.curated_codes``/
+``inferred_codes`` (kept apart there for exactly this reason -- the sibling's own
 ``excluded`` is their union and cannot tell them apart).
 """
 
@@ -39,6 +41,7 @@ from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     outcome_for,
     source_record,
 )
+from sentier_importers.sources.bafu.packages import CURATED, INFERRED, MATCHED, NOMENCLATURE
 
 _VOCAB_DIR = "ef_vocab"
 
@@ -70,7 +73,7 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
 
         # pass 1: exactly what bafu-ef-biosphere-matched itself computes.
         pass1 = {flow.code: (flow, outcome) for flow, outcome in self.outcomes(records)}
-        bridge7: dict[str, Match] = {
+        matched: dict[str, Match] = {
             code: outcome for code, (flow, outcome) in pass1.items() if isinstance(outcome, Match)
         }
 
@@ -87,22 +90,22 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
                 and inputs.inclusive_index.get(outcome2.code).characterised
             ):
                 raise RuntimeError(
-                    "characterised match reached bridge 8 in the coverage sidecar: "
-                    f"{flow.name} -> {outcome2.code}; check that the rank7 input is "
-                    "the current rank-7 payload"
+                    f"characterised match reached {NOMENCLATURE} in the coverage sidecar: "
+                    f"{flow.name} -> {outcome2.code}; check that the matched input is "
+                    f"the current {MATCHED} payload"
                 )
             pass2[code] = outcome2
 
         rows: Rows = []
         for flow in sorted(inputs.bafu, key=flow_sort_key):
             row: Record = {"source": source_record(flow)}
-            if flow.code in inputs.rank3_codes or flow.code in inputs.rank6_codes:
+            if flow.code in inputs.curated_codes or flow.code in inputs.inferred_codes:
                 row["status"] = "mapped"
-                row["bridge"] = 3 if flow.code in inputs.rank3_codes else 6
-            elif flow.code in bridge7:
-                outcome = bridge7[flow.code]
+                row["package"] = CURATED if flow.code in inputs.curated_codes else INFERRED
+            elif flow.code in matched:
+                outcome = matched[flow.code]
                 row["status"] = "mapped"
-                row["bridge"] = 7
+                row["package"] = MATCHED
                 row["tier"] = outcome.tier
                 row["placement"] = outcome.placement
                 if outcome.location is not None:
@@ -113,7 +116,7 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
                 outcome2 = pass2[flow.code]
                 if isinstance(outcome2, Match):
                     row["status"] = "mapped"
-                    row["bridge"] = 8
+                    row["package"] = NOMENCLATURE
                     row["tier"] = outcome2.tier
                     row["placement"] = outcome2.placement
                     row["characterised"] = False

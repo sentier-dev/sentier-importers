@@ -555,7 +555,7 @@ def test_emissions_unspecified_fallback_is_unaffected_by_resource_fallback(pipel
     assert got.placement == "unspecified_fallback"
 
 
-# --- rank-8-only relaxed nomenclature placement (decision (f)(1), 2026-09-13) ------
+# --- nomenclature-package-only relaxed placement (decision (f)(1), 2026-09-13) -----
 
 _WIDGET_UNCHAR_VOCAB = [
     # bw="envi-air-hist15me" -> "Emissions to non-urban air or from high stacks"
@@ -684,8 +684,8 @@ def test_relaxed_placement_never_fires_on_the_characterised_only_index(tmp_path)
     # unspecified leaf anyway) nor the resource-branch fallback (bucket is "air", not
     # "resource"). On the inclusive index this exact shape would qualify for the
     # relaxed nomenclature placement -- but ``index.includes_uncharacterised`` is
-    # False here (a plain characterised-only, rank-7-shaped index), so the pipeline
-    # must still report ``sub_compartment_absent``, never Placement.NOMENCLATURE.
+    # False here (a plain characterised-only, matched-package-shaped index), so the
+    # pipeline must still report ``sub_compartment_absent``, never Placement.NOMENCLATURE.
     cf = [
         cf_row("widget-c-urban", "widget6", AIR_URBAN, value=1.0),
         cf_row("widget-c-rural", "widget6", AIR_RURAL, value=1.0),
@@ -980,7 +980,7 @@ def test_refrigerant_code_tiebreak_picks_the_named_flow_when_it_drops_no_categor
     assert got.code == "cfc10-rc" and got.tier == "cas"
     assert got.caveats == (
         "EF carries a second flow for this CAS with different factors (Carbon "
-        "Tetrachloride); the flow named by the source's refrigerant code is used, "
+        "Tetrachloride); the flow named by the source's refrigerant code is used; "
         "it characterises every impact category the other does (decision "
         "2026-09-13)",
     )

@@ -86,11 +86,11 @@ def _payload(codes):
     }
 
 
-def _stage(tmp_path, rank3=(), rank6=(), cf=CF, vocab=VOCAB):
+def _stage(tmp_path, curated=(), inferred=(), cf=CF, vocab=VOCAB):
     (tmp_path / "bafu.zip").write_bytes(fixture_zip().content)
     write_ef_inputs(tmp_path, cf, vocab)
-    (tmp_path / "rank3.json").write_text(json.dumps(_payload(rank3)))
-    (tmp_path / "rank6.json").write_text(json.dumps(_payload(rank6)))
+    (tmp_path / "curated.json").write_text(json.dumps(_payload(curated)))
+    (tmp_path / "inferred.json").write_text(json.dumps(_payload(inferred)))
     return tmp_path
 
 
@@ -99,13 +99,13 @@ def _config(
     name="bafu-ef-biosphere-matched",
     module="sentier_importers.sources.bafu.mappings_biosphere_matched",
     verb="replace",
-    emit="biosphere",
+    emit="biosphere-3-matched",
 ):
     return SourceConfig(
         name=name,
         module=module,
         target="sentier_mappings",
-        category="07-bafu-2026-v1__ef-3.1",
+        category="bafu-2026-v1__ef-3.1",
         fetch_url=f"file://{root}/bafu.zip",
         fetch_format="zip",
         output_format="json",
@@ -114,8 +114,8 @@ def _config(
         package_version="0.1.0",
         package_verb=verb,
         inputs={
-            "rank3": f"file://{root}/rank3.json",
-            "rank6": f"file://{root}/rank6.json",
+            "curated": f"file://{root}/curated.json",
+            "inferred": f"file://{root}/inferred.json",
             "ef_cfs": f"file://{root}/characterization-factors.parquet",
             "ef_vocab": f"file://{root}/elementary-flows",
         },
@@ -200,9 +200,9 @@ def test_kilogram_water_emission_onto_an_ef_water_use_flow_converts_to_cubic_met
     assert from_kg["target"]["unit"] == "cubic meter" and from_kg["conversion_factor"] == 0.001
 
 
-def test_flows_already_in_rank_3_or_6_are_skipped(tmp_path):
+def test_flows_already_in_curated_or_inferred_are_skipped(tmp_path):
     rows = _run(
-        BafuEfMatchedSource(_config(_stage(tmp_path, rank3=[CO2], rank6=[RADON]))), tmp_path
+        BafuEfMatchedSource(_config(_stage(tmp_path, curated=[CO2], inferred=[RADON]))), tmp_path
     )
     assert {r["source"]["code"] for r in rows} == {WATER, LAND}
 
@@ -369,8 +369,9 @@ def test_uncharacterised_ef_flow_is_never_used_by_the_default_matched_source(tmp
     assert MINE_GAS not in {r["source"]["code"] for r in rows}
 
     # the coverage sidecar's own second pass runs over the inclusive index, so it
-    # correctly reports this exact scenario as bridge 8 (mapped, uncharacterised),
-    # never as rank 7 -- the matched source above never emits it.
+    # correctly reports this exact scenario as biosphere-4-nomenclature (mapped,
+    # uncharacterised), never as biosphere-3-matched -- the matched source above never
+    # emits it.
     coverage = BafuEfCoverageSource(
         _config(
             root,
@@ -383,7 +384,7 @@ def test_uncharacterised_ef_flow_is_never_used_by_the_default_matched_source(tmp
     coverage_rows = _run(coverage, tmp_path)
     mine_gas_row = next(r for r in coverage_rows if r["source"]["code"] == MINE_GAS)
     assert mine_gas_row["status"] == "mapped"
-    assert mine_gas_row["bridge"] == 8
+    assert mine_gas_row["package"] == "biosphere-4-nomenclature"
     assert mine_gas_row["characterised"] is False
 
 
@@ -530,7 +531,7 @@ def test_ocean_discharge_does_not_take_the_water_use_unspecified_fallback(tmp_pa
 
 
 def test_outcomes_returns_one_tuple_per_non_excluded_fixture_flow(tmp_path):
-    root = _stage(tmp_path, rank3=[CO2])
+    root = _stage(tmp_path, curated=[CO2])
     source = BafuEfMatchedSource(_config(root))
     records = source.parse(
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))

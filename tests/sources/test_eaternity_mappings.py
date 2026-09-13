@@ -1,4 +1,5 @@
-"""End-to-end: rank-4 (biosphere3 -> Eaternity) x CF identity -> bafu-2026-v1 -> ef-3.1."""
+"""End-to-end: ecoinvent-biosphere3 -> eaternity-bafu-ext (biosphere3 -> Eaternity) x
+CF identity -> bafu-2026-v1 -> ef-3.1."""
 
 import copy
 import io
@@ -35,7 +36,7 @@ EAT_WATER = "eaternity-water"
 EAT_GHOST = "eaternity-ghost"
 
 
-def _rank4(entries):
+def _eaternity_pair(entries):
     return {
         "name": "ecoinvent-biosphere3__eaternity-bafu-ext-biosphere",
         "version": "0.2.0",
@@ -55,7 +56,7 @@ def _b3(code, name, unit, context, target_code, target_name, target_unit, target
     }
 
 
-RANK4 = _rank4(
+EATERNITY_PAIRS = _eaternity_pair(
     [
         _b3(
             B3_CO2,
@@ -89,9 +90,9 @@ RANK4 = _rank4(
         ),
     ]
 )
-RANK3_EMPTY = {"name": "bafu-2026-v1__ef-3.1-biosphere", "version": "0.5.0", "replace": []}
-RANK3_WITH_CO2 = {
-    **RANK3_EMPTY,
+CURATED_EMPTY = {"name": "bafu-2026-v1__ef-3.1-biosphere", "version": "0.5.0", "replace": []}
+CURATED_WITH_CO2 = {
+    **CURATED_EMPTY,
     "replace": [
         {
             "source": {
@@ -136,9 +137,9 @@ def _parquet(rows, schema):
     return buffer.getvalue()
 
 
-def _stage(tmp_path, rank3=RANK3_EMPTY):
-    (tmp_path / "rank4.json").write_text(json.dumps(RANK4))
-    (tmp_path / "rank3.json").write_text(json.dumps(rank3))
+def _stage(tmp_path, curated=CURATED_EMPTY):
+    (tmp_path / "eaternity_pairs.json").write_text(json.dumps(EATERNITY_PAIRS))
+    (tmp_path / "curated.json").write_text(json.dumps(curated))
     (tmp_path / "bafu.zip").write_bytes(fixture_zip().content)
     (tmp_path / "ef.parquet").write_bytes(
         _parquet(
@@ -169,8 +170,8 @@ def _config(
         name=name,
         module=module,
         target="sentier_mappings",
-        category="06-bafu-2026-v1__ef-3.1",
-        fetch_url=f"file://{root}/rank4.json",
+        category="bafu-2026-v1__ef-3.1",
+        fetch_url=f"file://{root}/eaternity_pairs.json",
         fetch_format="json",
         output_format="json",
         emit_filename=emit,
@@ -178,7 +179,7 @@ def _config(
         package_version="0.1.0",
         package_verb=verb,
         inputs={
-            "rank3": f"file://{root}/rank3.json",
+            "curated": f"file://{root}/curated.json",
             "ecospold": f"file://{root}/bafu.zip",
             "ef_flows": f"file://{root}/ef.parquet",
             "method_cfs": f"file://{root}/method_cfs",
@@ -215,8 +216,8 @@ def test_infers_a_bafu_ef_entry_from_the_eaternity_pair(tmp_path):
     assert "conversion_factor" not in entry
 
 
-def test_flows_already_in_rank_3_are_not_re_emitted(tmp_path):
-    root = _stage(tmp_path, rank3=RANK3_WITH_CO2)
+def test_flows_already_in_curated_are_not_re_emitted(tmp_path):
+    root = _stage(tmp_path, curated=CURATED_WITH_CO2)
     source = EaternityInferredBafuEfSource(
         _config(root, "sentier_importers.sources.eaternity.mappings_biosphere")
     )
@@ -274,8 +275,8 @@ def test_partners_asserting_different_ef_flows_are_withheld_not_picked(tmp_path)
     vectors: neither may win by code order."""
 
     root = _stage(tmp_path)
-    rank4 = copy.deepcopy(RANK4)
-    rank4["replace"].append(
+    eaternity_pairs = copy.deepcopy(EATERNITY_PAIRS)
+    eaternity_pairs["replace"].append(
         _b3(
             "zz-other-co2",
             "Carbon dioxide, land transformation",
@@ -287,7 +288,7 @@ def test_partners_asserting_different_ef_flows_are_withheld_not_picked(tmp_path)
             "air",
         )
     )
-    (root / "rank4.json").write_text(json.dumps(rank4))
+    (root / "eaternity_pairs.json").write_text(json.dumps(eaternity_pairs))
     cfs = root / "method_cfs" / "climate" / "cfs.parquet"
     rows = CF_TABLES["climate"] + [
         {"database": ECO, "code": "zz-other-co2", "amount": 0.5},
@@ -331,8 +332,8 @@ def test_partners_asserting_different_ef_flows_are_withheld_not_picked(tmp_path)
     assert EF_CO2 in disagree[0]["detail"] and "ef-co2-lt" in disagree[0]["detail"]
 
 
-def test_rank_3_skips_are_counted(tmp_path):
-    root = _stage(tmp_path, rank3=RANK3_WITH_CO2)
+def test_curated_skips_are_counted(tmp_path):
+    root = _stage(tmp_path, curated=CURATED_WITH_CO2)
     source = EaternityInferredBafuEfSource(
         _config(root, "sentier_importers.sources.eaternity.mappings_biosphere")
     )
@@ -341,7 +342,7 @@ def test_rank_3_skips_are_counted(tmp_path):
             source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
         )
     )
-    assert inference.skipped_in_rank3 == 1
+    assert inference.skipped_in_curated == 1
     assert inference.entries == []
 
 

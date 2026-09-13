@@ -1,13 +1,14 @@
-"""Compose rank 4 (biosphere3 -> Eaternity) with CF identity into bafu-2026-v1 -> ef-3.1.
+"""Compose the ecoinvent-biosphere3 -> eaternity-bafu-ext bridge with CF identity into
+bafu-2026-v1 -> ef-3.1.
 
-For every rank-4 entry the Eaternity target is placed at BAFU sub-compartment level
-(:mod:`bridge`), and the biosphere3 source is resolved to its EF twin
-(:mod:`cf_identity`). The composition asserts one thing per entry: *this BAFU flow
-receives this EF characterization factor*. Flows the rank-3 bridge already maps are
-skipped, so the emitted package only fills gaps and rank 3 keeps precedence by
-construction; everything that cannot be asserted goes to the review sidecar with a
-reason rather than being guessed at. That includes a BAFU flow reached by several
-biosphere3 partners that resolve to different EF flows.
+For every ecoinvent-biosphere3 -> eaternity-bafu-ext entry the Eaternity target is
+placed at BAFU sub-compartment level (:mod:`bridge`), and the biosphere3 source is
+resolved to its EF twin (:mod:`cf_identity`). The composition asserts one thing per
+entry: *this BAFU flow receives this EF characterization factor*. Flows the curated
+package already maps are skipped, so the emitted package only fills gaps and the
+curated package keeps precedence by construction; everything that cannot be asserted
+goes to the review sidecar with a reason rather than being guessed at. That includes a
+BAFU flow reached by several biosphere3 partners that resolve to different EF flows.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from sentier_importers.sources.eaternity.cf_identity import (
     find_twin,
 )
 
-#: BAFU unit -> the spelling the rank-3 bridge uses on the EF side. EF ionising-
+#: BAFU unit -> the spelling the curated package uses on the EF side. EF ionising-
 #: radiation factors are per kBq, so a Bq source lands on a kBq target (with the
 #: ``conversion_factor`` the resolver supplies). Unknown units keep the BAFU spelling.
 EF_UNIT: dict[str, str] = {
@@ -45,8 +46,8 @@ _T3_COMMENT = (
 
 @dataclass(frozen=True)
 class Inputs:
-    rank4: dict
-    rank3_codes: frozenset[str]
+    eaternity_pairs: dict
+    curated_codes: frozenset[str]
     bafu: BafuFlowIndex
     vectors: CfVectors
     labels: EfLabels
@@ -56,7 +57,7 @@ class Inputs:
 class Inference:
     entries: Rows = field(default_factory=list)
     review: Rows = field(default_factory=list)
-    skipped_in_rank3: int = 0
+    skipped_in_curated: int = 0
 
 
 def _entries(package: dict) -> list[Record]:
@@ -88,8 +89,7 @@ def entry_for(flow: BafuFlow, twin: Twin, factor: float, labels: EfLabels) -> Re
         caveats.append(_T3_COMMENT)
     if not twin.sub_matched and context:
         caveats.append(
-            "no CF-identical EF flow in the matching sub-compartment; target is "
-            f"{context[-1]!r}"
+            f"no CF-identical EF flow in the matching sub-compartment; target is {context[-1]!r}"
         )
     if caveats:
         entry["comment"] = "; ".join(caveats)
@@ -101,10 +101,10 @@ def _review(source: Record, reason: str, detail: str) -> Record:
 
 
 def infer(inputs: Inputs) -> Inference:
-    """Entries for BAFU flows rank 3 lacks, plus a review row per withheld pair."""
+    """Entries for BAFU flows the curated package lacks, plus a review row per withheld pair."""
     reached: dict[BafuFlow, dict[str, float]] = {}
     result = Inference()
-    for entry in _entries(inputs.rank4):
+    for entry in _entries(inputs.eaternity_pairs):
         target, b3 = entry["target"], entry["source"]
         root = (target.get("context") or [""])[0]
         resolutions = resolve(
@@ -124,8 +124,8 @@ def infer(inputs: Inputs) -> Inference:
             reached.setdefault(resolution.flow, {})[b3["code"]] = resolution.conversion_factor
 
     for flow in sorted(reached, key=lambda f: (f.name, f.category, f.subcategory, f.unit)):
-        if flow.code in inputs.rank3_codes:
-            result.skipped_in_rank3 += 1
+        if flow.code in inputs.curated_codes:
+            result.skipped_in_curated += 1
             continue
         outcomes = {
             b3_code: find_twin(inputs.vectors, inputs.labels, b3_code, flow)

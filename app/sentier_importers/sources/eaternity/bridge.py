@@ -5,8 +5,8 @@ sub-compartments to the root compartment and spells units the Brightway way, so 
 Eaternity flow is ``(name, root, unit)``. Our ``bafu-2026-v1`` keys every flow by
 ``(name, category, subcategory, unit)`` over the v1 ecoSpold exchange universe.
 
-The rank-4 bridge (``ecoinvent-biosphere3 -> eaternity-bafu-ext``) retains the
-biosphere3 source sub-compartment on every entry; that sub-compartment is what
+The ecoinvent-biosphere3 -> eaternity-bafu-ext bridge retains the biosphere3 source
+sub-compartment on every entry; that sub-compartment is what
 places an Eaternity flow at BAFU sub-compartment level. Placement is **strict**:
 a biosphere3 ``ocean`` flow resolves only to the BAFU ``ocean`` flow of that
 name, never to ``river`` or ``unspecified`` as a fallback. EF factors for sea

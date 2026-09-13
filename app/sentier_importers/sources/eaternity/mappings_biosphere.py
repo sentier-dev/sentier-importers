@@ -1,18 +1,19 @@
 """bafu-2026-v1 -> EF 3.1 CF keys inferred from Eaternity's biosphere3 pair family.
 
-Primary input: the rank-4 ``ecoinvent-biosphere3 -> eaternity-bafu-ext`` package
-(Eaternity, sentier-mappings PR #7). Named inputs:
+Primary input: the ``ecoinvent-biosphere3 -> eaternity-bafu-ext`` package (Eaternity,
+sentier-mappings PR #7). Named inputs:
 
-- ``rank3``: the rank-3 ``bafu-2026-v1 -> ef-3.1`` package, whose source codes are
-  excluded (rank 3 keeps precedence; this bridge only fills its gaps);
+- ``curated``: the ``bafu-2026-v1 -> ef-3.1`` curated package (biosphere-1-curated),
+  whose source codes are excluded (the curated package keeps precedence; this bridge
+  only fills its gaps);
 - ``ecospold``: the BAFU-2026 v1 ecoSpold zip, the flow-identity authority;
 - ``ef_flows``: sentier-methods' EF 3.1 CF table, for EF flow names and contexts;
 - ``method_cfs``: a *directory* of ``<method>/cfs.parquet`` tables (dds-carbonminds-data
   layout) holding the EF v3.1 factors matched onto both flow universes. Read from
   the local path directly, not through the fetch cache.
 
-Emits the ``biosphere.json`` of the rank-6 ``06-bafu-2026-v1__ef-3.1`` bridge. The
-sibling :mod:`inference_review` source emits the withheld pairs. See ``inference.py``.
+Emits ``biosphere-2-inferred.json`` of the ``bafu-2026-v1__ef-3.1`` pair. The sibling
+:mod:`inference_review` source emits the withheld pairs. See ``inference.py``.
 """
 
 from __future__ import annotations
@@ -35,11 +36,12 @@ _METHOD_CFS = "method_cfs"
 _EF_COLUMNS = ["flow", "flow_name", "flow_context"]
 
 
-_REQUIRED_INPUTS = ("rank3", "ecospold", "ef_flows", _METHOD_CFS)
+_REQUIRED_INPUTS = ("curated", "ecospold", "ef_flows", _METHOD_CFS)
 
 
 class EaternityInferredBafuEfSource(Source):
-    """Compose rank 4 with CF identity into ``bafu-2026-v1 -> ef-3.1`` replace entries."""
+    """Compose the ecoinvent-biosphere3 -> eaternity-bafu-ext bridge with CF identity
+    into ``bafu-2026-v1 -> ef-3.1`` replace entries."""
 
     def fetch(self, ctx: RunContext) -> RawData:
         # every input but the CF directory goes through the cached fetcher
@@ -60,13 +62,13 @@ class EaternityInferredBafuEfSource(Source):
                 f"inputs {missing} not fetched: fetch() must run before parse(), and the "
                 f"registry entry must declare inputs {list(_REQUIRED_INPUTS)}"
             )
-        rank3 = orjson.loads(self.inputs["rank3"].content)
+        curated = orjson.loads(self.inputs["curated"].content)
         ef_rows = pq.read_table(
             io.BytesIO(self.inputs["ef_flows"].content), columns=_EF_COLUMNS
         ).to_pylist()
         inputs = Inputs(
-            rank4=orjson.loads(raw.content),
-            rank3_codes=frozenset(codes_of(rank3)),
+            eaternity_pairs=orjson.loads(raw.content),
+            curated_codes=frozenset(codes_of(curated)),
             bafu=BafuFlowIndex.from_ecospold(parse_ecospold_zip(self.inputs["ecospold"])),
             vectors=CfVectors.from_directory(
                 fetch_mod.local_path(self.config.inputs.get(_METHOD_CFS), _METHOD_CFS)

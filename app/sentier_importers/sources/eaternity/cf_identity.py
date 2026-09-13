@@ -5,7 +5,8 @@ so a biosphere3 code and an EF code carrying the same factor in every method are
 same characterization factor. Comparing CF vectors recovers that pairing without
 publishing anything ecoinvent-shaped: the output names only the EF flow. This is the
 de-bridging argument of ``docs/specs/2026-08-06-bafu-ef-debridged-mappings.md``,
-reused here for the biosphere3 side of the rank-4 Eaternity bridge.
+reused here for the biosphere3 side of the ecoinvent-biosphere3 -> eaternity-bafu-ext
+bridge.
 
 Tiers, first hit wins, each gated on compartment:
 
