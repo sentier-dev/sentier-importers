@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import jsonschema
@@ -17,7 +18,7 @@ from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     _decide,
     substance_cas,
 )
-from sentier_importers.sources.eaternity.bridge import BafuFlow
+from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
@@ -764,7 +765,36 @@ def test_assembled_package_validates_against_the_randonneur_schema(tmp_path):
 
 
 def test_no_intermediate_database_identifier_in_output(tmp_path):
-    blob = json.dumps(_run(BafuEfMatchedSource(_config(_stage(tmp_path))), tmp_path)).lower()
+    # exercises both caveat-producing paths that used to name the intermediate database
+    # verbatim: an energy-content conversion (Peat, already in the fixture zip -- see
+    # test_peat_energy_content_converts_onto_the_fossil_resource_flow) and an
+    # ore-composite decomposition (injected the same way other tests in this module add
+    # a flow the fixture zip itself doesn't carry).
+    cf = CF + [
+        cf_row("peat", "peat", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0),
+        cf_row("zinc", "zinc", RES_GROUND, value=1.0),
+    ]
+    vocab = VOCAB + [vocab_row("peat", "Peat"), vocab_row("zinc", "Zinc")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    ore_flow = BafuFlow(
+        "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore",
+        "resources",
+        "in ground",
+        "kg",
+    )
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [ore_flow]))
+    rows = source.transform([{"inputs": augmented}])
+
+    # sanity: both caveat-producing paths actually fired in this fixture
+    assert any("net calorific value" in r.get("comment", "") for r in rows)
+    assert any("ore composite" in r.get("comment", "") for r in rows)
+
+    blob = json.dumps(rows).lower()
     assert "ecoinvent" not in blob and "biosphere3" not in blob
 
 

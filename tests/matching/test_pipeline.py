@@ -422,7 +422,7 @@ def test_ore_composite_match_at_pipeline_level(tmp_path_factory):
         placement="exact",
         location=None,
         candidates=1,
-        caveats=("ecoinvent v2 ore composite; the amount is kg of Zinc",),
+        caveats=("ore composite of the BAFU-2026 source nomenclature; the amount is kg of Zinc",),
     )
     assert idx.reference_unit(got.code) == "kilogram"
 

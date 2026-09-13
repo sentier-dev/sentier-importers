@@ -99,7 +99,8 @@ def test_conversion_for_applies_every_energy_content_table_entry(
     got = conversion_for(flow, match, index)
     assert got == (
         factor,
-        f"energy content {factor:g} MJ/{unit} (ecoinvent v2 net calorific value)",
+        f"energy content {factor:g} MJ/{unit} (net calorific value convention of the "
+        "BAFU-2026 source inventory)",
     )
 
 

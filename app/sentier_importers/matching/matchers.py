@@ -305,7 +305,9 @@ class OreCompositeMatcher:
             return []
         element = match.group("element")
         found = _by_name_in_leaf(index, element, _ORE_LEAF)
-        caveat = f"ecoinvent v2 ore composite; the amount is kg of {element}"
+        caveat = (
+            f"ore composite of the BAFU-2026 source nomenclature; the amount is kg of {element}"
+        )
         return [Candidate(f, tier=self.tier, caveat=caveat) for f in found]
 
 

@@ -198,8 +198,46 @@ def test_assembled_package_uses_the_coverage_verb(tmp_path):
 
 
 def test_no_intermediate_database_identifier_in_output(tmp_path):
-    blob = json.dumps(_run(_source(_stage(tmp_path)), tmp_path)).lower()
+    # exercises both caveat-producing paths that used to name the intermediate database
+    # verbatim: an energy-content conversion (Peat, already in the fixture zip) and an
+    # ore-composite decomposition (injected the same way the sibling matched-source test
+    # does, and the way other coverage tests add a flow the fixture zip doesn't carry).
+    # The energy-content wording is assembled only in entry_for (the matched/nomenclature
+    # sources' own output), never in a coverage row -- Peat is included here anyway so a
+    # regression that ever changed that would be caught by the blob-wide assertion below.
+    cf = CF + [
+        cf_row("peat", "peat", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0),
+        cf_row("zinc", "zinc", RES_GROUND, value=1.0),
+    ]
+    vocab = VOCAB + [vocab_row("peat", "Peat"), vocab_row("zinc", "Zinc")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = _source(root)
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    ore_flow = BafuFlow(
+        "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore",
+        "resources",
+        "in ground",
+        "kg",
+    )
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [ore_flow]))
+    rows = source.transform([{"inputs": augmented}])
+
+    # sanity: the ore-composite match actually landed in this row's caveats
+    zinc = next(r for r in rows if r["source"]["name"].startswith("Zinc,"))
+    assert zinc["status"] == "mapped" and any("ore composite" in c for c in zinc["caveats"])
+    peat = next(r for r in rows if r["source"]["name"] == "Peat")
+    assert peat["status"] == "mapped" and peat["bridge"] == 7
+
+    blob = json.dumps(rows).lower()
     assert "ecoinvent" not in blob and "biosphere3" not in blob
+    for row in rows:
+        detail = row.get("detail", "")
+        caveats = " ".join(row.get("caveats", []))
+        assert "ecoinvent" not in detail.lower() and "biosphere3" not in detail.lower()
+        assert "ecoinvent" not in caveats.lower() and "biosphere3" not in caveats.lower()
 
 
 def test_rank7_match_location_and_caveats_are_reported_when_present(tmp_path):

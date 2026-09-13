@@ -550,7 +550,10 @@ def test_ore_composite_matcher_decomposes_a_zinc_ore(ore_index):
     got = OreCompositeMatcher().candidates(flow, None, ore_index)
     assert [c.flow.code for c in got] == ["zinc"]
     assert got[0].tier == "ore"
-    assert got[0].caveat == "ecoinvent v2 ore composite; the amount is kg of Zinc"
+    assert (
+        got[0].caveat
+        == "ore composite of the BAFU-2026 source nomenclature; the amount is kg of Zinc"
+    )
 
 
 def test_ore_composite_matcher_decomposes_a_copper_ore_with_the_crude_ore_spelling(ore_index):
@@ -559,7 +562,10 @@ def test_ore_composite_matcher_decomposes_a_copper_ore_with_the_crude_ore_spelli
     )
     got = OreCompositeMatcher().candidates(flow, None, ore_index)
     assert [c.flow.code for c in got] == ["copper"]
-    assert got[0].caveat == "ecoinvent v2 ore composite; the amount is kg of Copper"
+    assert (
+        got[0].caveat
+        == "ore composite of the BAFU-2026 source nomenclature; the amount is kg of Copper"
+    )
 
 
 def test_ore_composite_matcher_refuses_a_compound_name(ore_index):

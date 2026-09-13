@@ -230,3 +230,31 @@ def test_characterised_match_reaching_transform_raises_runtime_error(tmp_path):
     source = BafuEfNomenclatureSource(_config(tmp_path))
     with pytest.raises(RuntimeError, match="characterised match reached the nomenclature source"):
         source.transform([{"inputs": inputs}])
+
+
+def test_no_intermediate_database_identifier_in_output(tmp_path):
+    # an ore-composite name can resolve onto an uncharacterised target too (the ore
+    # caveat is carried through entry_for's uncharacterised branch like any other
+    # match.caveats entry) -- exercise that path and check the reworded caveat text
+    # never names the intermediate database.
+    vocab = VOCAB + [vocab_row("zinc-unchar", "Zinc", bw="reso-grou")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    ore_flow = BafuFlow(
+        "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore",
+        "resources",
+        "in ground",
+        "kg",
+    )
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [ore_flow]))
+    rows = source.transform([{"inputs": augmented}])
+
+    # sanity: the ore-composite match actually landed in this entry's comment
+    (zinc,) = [r for r in rows if r["source"]["name"].startswith("Zinc,")]
+    assert "ore composite" in zinc["comment"]
+
+    blob = json.dumps(rows).lower()
+    assert "ecoinvent" not in blob and "biosphere3" not in blob

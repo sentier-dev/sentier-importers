@@ -142,7 +142,10 @@ def conversion_for(
     if index.reference_unit(match.code) == "megajoule":
         energy = ENERGY_CONTENT.get((flow.name, flow.unit))
         if energy is not None:
-            caveat = f"energy content {energy:g} MJ/{flow.unit} (ecoinvent v2 net calorific value)"
+            caveat = (
+                f"energy content {energy:g} MJ/{flow.unit} (net calorific value convention "
+                "of the BAFU-2026 source inventory)"
+            )
             return energy, caveat
     if flow.unit == "kg" and set(index.vector(match.code)) == {WATER_USE_METHOD}:
         # water is the only substance with a fixed mass -> volume factor (density);
