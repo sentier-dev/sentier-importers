@@ -5,7 +5,10 @@ maps, run ``matching.pipeline.default_pipeline`` (name, land-use class, ore comp
 synonym, qualifier, carbon-oxide, ion-strip, alias, the same eight tiers again on the
 region-stripped name, CAS last) against the public EF flow index and emit one
 ``replace`` entry per match. Withheld flows are emitted by the sibling coverage
-source.
+source. Round 4, decision 2026-09-13: a tier whose candidates exist in EF but not in
+the flow's own sub-compartment (``sub_compartment_absent``) no longer stops the
+pipeline outright; a later tier -- most often CAS, after every name-keyed tier has
+failed to place -- may still resolve it (``pipeline.MatchPipeline.match``).
 
 Inputs: the ecoSpold zip (primary), ``rank3`` and ``rank6`` payloads (exclusion) and
 ``ef_cfs`` (sentier-methods CF table) all go through the content-addressed fetch
@@ -14,7 +17,7 @@ elementary-flow shards) bypasses it, read from its local path directly in ``pars
 a directory has no single content digest to cache against.
 
 Unit/dimension conversion (``unit_conversion``, ``conversion_for``, ``ENERGY_CONTENT``,
-``nomenclature_unit``) lives in the sibling ``ef_units`` module.
+``STOICHIOMETRIC``, ``nomenclature_unit``) lives in the sibling ``ef_units`` module.
 """
 
 from __future__ import annotations

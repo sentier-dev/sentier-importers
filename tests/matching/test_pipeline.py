@@ -21,6 +21,7 @@ from tests.matching.ef_fixtures import (
 
 LT = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
 SOIL_INDUSTRIAL = "Emissions / Emissions to soil / Emissions to non-agricultural soil"
+WATER_SEA = "Emissions / Emissions to water / Emissions to sea water"
 CF = [
     cf_row("zn-fresh", "zinc", WATER_FRESH, value=1.0),
     cf_row("zn-unspec", "zinc", WATER_UNSPEC, value=1.0),
@@ -699,3 +700,347 @@ def test_relaxed_placement_never_fires_on_the_characterised_only_index(tmp_path)
         detail="EF has widget6 only in: emissions to non-urban air or from high "
         "stacks, emissions to urban air close to ground",
     )
+
+
+# --- round 4: tier fall-through past sub_compartment_absent (decision 2026-09-13) --
+
+_FT_CF = [
+    # name tier finds "Widget9" only on fresh water (the wrong leaf for an "ocean"
+    # source); CAS finds the same substance under a different EF name ("Widget9
+    # atom") that DOES sit on sea water, the leaf the source actually names.
+    cf_row("widget9-fresh", "widget9", WATER_FRESH, value=1.0),
+    cf_row("widget9-sea", "widget9 atom", WATER_SEA, value=2.0),
+]
+_FT_VOCAB = [
+    vocab_row("widget9-fresh", "Widget9", cas="111-11-1"),
+    vocab_row("widget9-sea", "Widget9 atom", cas="222-22-2"),
+]
+
+
+@pytest.fixture(scope="module")
+def ft_index(tmp_path_factory):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("fallthrough"), _FT_CF, _FT_VOCAB)
+    )
+
+
+@pytest.fixture(scope="module")
+def ft_pipeline(ft_index):
+    return default_pipeline(ft_index, {})
+
+
+def test_name_tier_hit_in_unplaceable_leaf_falls_through_to_a_cas_tier_match(ft_pipeline):
+    got = ft_pipeline.match(water("Widget9", "ocean"), "222-22-2")
+    assert got.code == "widget9-sea" and got.tier == "cas" and got.placement == "exact"
+    assert got.caveats == (
+        "an earlier tier's match could not be placed in this sub-compartment; "
+        "resolved instead by CAS 222-22-2, whose EF target name may not resemble "
+        "the source name",
+    )
+
+
+def test_cas_tier_fallthrough_caveat_is_not_added_without_a_prior_sub_compartment_absent(
+    pipeline,
+):
+    # a plain CAS-tier match that was never preceded by a sub_compartment_absent
+    # (earlier tiers found nothing at all, not a placement failure) carries no such
+    # caveat -- pre-existing behaviour, pinned again here for contrast.
+    got = pipeline.match(air("Methane, tetrachloro-, CFC-10"), "56-23-5")
+    assert got.tier == "cas" and got.caveats == ()
+
+
+_AMBIG_CF = [
+    cf_row("ambig-a", "ambigflow", WATER_FRESH, value=1.0),
+    cf_row("ambig-b", "ambigflow", WATER_FRESH, value=2.0),
+    cf_row("ambig-wrong", "wrong target", WATER_FRESH, value=3.0),
+]
+_AMBIG_VOCAB = [
+    vocab_row("ambig-a", "Ambigflow"),
+    vocab_row("ambig-b", "Ambigflow"),
+    vocab_row("ambig-wrong", "Wrong Target", cas="333-33-3"),
+]
+
+
+def test_ambiguity_at_the_first_tier_is_not_skipped(tmp_path_factory):
+    # "Ambigflow" is ambiguous (two different factors, no CAS on either) at the name
+    # tier; if the pipeline wrongly treated this like sub_compartment_absent and kept
+    # going, CasMatcher would resolve the same source CAS onto "Wrong Target" instead.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("ambig-not-skipped"), _AMBIG_CF, _AMBIG_VOCAB)
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(water("Ambigflow", "river"), "333-33-3")
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="name match finds 2 EF flows with different factors for ambigflow; "
+        "the source CAS 333-33-3 does not single one out",
+    )
+
+
+_DEAD_CF = [
+    cf_row("dead-a", "deadname", AIR_URBAN, value=1.0),
+    cf_row("dead-b", "deadname-alt", AIR_RURAL, value=1.0),
+]
+_DEAD_VOCAB = [
+    vocab_row("dead-a", "Deadname"),
+    vocab_row("dead-b", "Deadname alt", cas="444-44-4"),
+]
+
+
+def test_two_dead_tiers_returns_the_first_unmatched(tmp_path_factory):
+    # both the name tier (urban air leaf) and the CAS tier (non-urban air leaf) find a
+    # candidate that fails to place under "indoor" -- neither ever yields a Match, so
+    # the FIRST sub_compartment_absent (naming "deadname", the urban leaf) wins, not
+    # the second (which would name "deadname alt" and the rural leaf).
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("two-dead-tiers"), _DEAD_CF, _DEAD_VOCAB)
+    )
+    pipe = default_pipeline(index, {}, unspecified_fallback=False)
+    got = pipe.match(BafuFlow("Deadname", "emissions to air", "indoor", "kg"), "444-44-4")
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has deadname only in: emissions to urban air close to ground",
+    )
+
+
+# --- round 4: Placement.LONG_TERM_COLLAPSED (decision 2026-09-13) -----------------
+
+_LT_CF = [
+    cf_row("chlorobenzene", "chlorobenzene", WATER_FRESH, value=1.0),
+    cf_row("chromium6", "chromium vi", WATER_UNSPEC, value=1.0),
+    cf_row("widgetlt", "widgetlt", AIR_RURAL, value=1.0),
+]
+_LT_VOCAB = [
+    vocab_row("chlorobenzene", "Chlorobenzene"),
+    vocab_row("chromium6", "Chromium VI"),
+    vocab_row("widgetlt", "Widgetlt"),
+]
+
+
+@pytest.fixture(scope="module")
+def lt_index(tmp_path_factory):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("long-term-collapsed"), _LT_CF, _LT_VOCAB)
+    )
+
+
+@pytest.fixture(scope="module")
+def lt_pipeline(lt_index):
+    return default_pipeline(lt_index, {})
+
+
+def test_long_term_collapsed_strips_river_onto_fresh_water(lt_pipeline):
+    # "river, long-term" -> "river": EF has no long-term leaf for this substance at
+    # all, so the immediate-emission (fresh water) flow is used instead.
+    got = lt_pipeline.match(water("Chlorobenzene", "river, long-term"), None)
+    assert got.code == "chlorobenzene"
+    assert got.placement == Placement.LONG_TERM_COLLAPSED.value
+    assert got.caveats == (
+        "EF has no long-term leaf for this substance; the immediate-emission flow "
+        "is used (decision 2026-09-13)",
+    )
+
+
+def test_long_term_collapsed_strips_groundwater_onto_the_unspecified_fallback(lt_pipeline):
+    # "groundwater, long-term" -> "groundwater" -> EF has no ground-water leaf either,
+    # so the stripped placement itself only reaches the bucket-level unspecified
+    # fallback -- both caveats are carried, the long-term one first.
+    got = lt_pipeline.match(water("Chromium VI", "groundwater, long-term"), None)
+    assert got.code == "chromium6"
+    assert got.placement == Placement.LONG_TERM_COLLAPSED.value
+    assert got.caveats == (
+        "EF has no long-term leaf for this substance; the immediate-emission flow "
+        "is used (decision 2026-09-13)",
+        "EF has no ground water flow for this substance; the unspecified context is used",
+    )
+
+
+def test_long_term_collapsed_strips_low_pop_onto_non_urban_air(lt_pipeline):
+    got = lt_pipeline.match(air("Widgetlt", "low. pop., long-term"), None)
+    assert got.code == "widgetlt"
+    assert got.placement == Placement.LONG_TERM_COLLAPSED.value
+    assert got.caveats == (
+        "EF has no long-term leaf for this substance; the immediate-emission flow "
+        "is used (decision 2026-09-13)",
+    )
+
+
+def test_long_term_collapsed_unspecified_fallback_can_be_disabled(lt_index):
+    # with the ordinary unspecified fallback disabled, the stripped "groundwater"
+    # placement never reaches UNSPECIFIED either, so the flow stays absent.
+    pipe = default_pipeline(lt_index, {}, unspecified_fallback=False)
+    got = pipe.match(water("Chromium VI", "groundwater, long-term"), None)
+    assert got.reason == "sub_compartment_absent"
+
+
+# --- round 4: Placement.DEFAULT_LEAF (decision 2026-09-13) ------------------------
+
+_DL_CF = [cf_row("dichloroethane", "dichloroethane", WATER_FRESH, value=1.0)]
+_DL_VOCAB = [vocab_row("dichloroethane", "Dichloroethane")]
+
+
+def test_default_leaf_places_a_water_unspecified_source_on_fresh_water(tmp_path_factory):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("default-leaf"), _DL_CF, _DL_VOCAB)
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(water("Dichloroethane", "unspecified"), None)
+    assert got.code == "dichloroethane"
+    assert got.placement == Placement.DEFAULT_LEAF.value
+    assert got.caveats == (
+        "EF has no unspecified leaf for this substance; fresh water is used (decision 2026-09-13)",
+    )
+
+
+_DL_AIR_CF = [cf_row("airwidget", "airwidget", AIR_URBAN, value=1.0)]
+_DL_AIR_VOCAB = [vocab_row("airwidget", "Airwidget")]
+
+
+def test_default_leaf_does_not_apply_outside_the_water_bucket(tmp_path_factory):
+    # DEFAULT_LEAF only ever defines a fallback for "water"; an air (or soil/resource)
+    # "unspecified" source whose only candidate sits on an unrelated leaf must stay
+    # sub_compartment_absent, not silently land on that leaf.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("default-leaf-air"), _DL_AIR_CF, _DL_AIR_VOCAB)
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(air("Airwidget", "unspecified"), None)
+    assert got.reason == "sub_compartment_absent"
+
+
+_DL_LT_CF = [
+    cf_row("widget10-fresh", "widget10", WATER_FRESH, value=1.0),
+    cf_row("widget10-lt", "widget10", LT, value=0.5),
+]
+_DL_LT_VOCAB = [
+    vocab_row("widget10-fresh", "Widget10"),
+    vocab_row("widget10-lt", "Widget10"),
+]
+
+
+def test_default_leaf_does_not_fire_when_a_long_term_unspecified_candidate_exists(
+    tmp_path_factory,
+):
+    # round 4 review, item 1: a candidate on the bucket-level long-term-unspecified
+    # leaf is a strictly better placement than the default-leaf guess -- but neither
+    # EXACT nor the ordinary UNSPECIFIED fallback above (both keyed on the PLAIN
+    # unspecified leaf only) ever catch it for an "unspecified" source, so DEFAULT_LEAF
+    # must check the full candidate set itself, not just the ones on the default leaf.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(
+            tmp_path_factory.mktemp("default-leaf-long-term"), _DL_LT_CF, _DL_LT_VOCAB
+        )
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(water("Widget10", "unspecified"), None)
+    assert got.reason == "sub_compartment_absent"
+
+
+# --- round 4: refrigerant-code tiebreak (decision 2026-09-13) ---------------------
+# CFC-10/Carbon Tetrachloride share the same single method (only their factor VALUE
+# differs) -- the code-named flow drops no method, so the tiebreak applies. HCFC-140
+# and 1,1,1-trichloroethane are genuinely complementary EF flows for the same real
+# substance/CAS (coordinator decision, round 4 review): HCFC-140 only carries
+# climate-change here, 1,1,1-trichloroethane only ozone-depletion -- picking HCFC-140
+# would silently drop ozone-depletion, so the tiebreak must decline and report the
+# ambiguity instead.
+_RC_CF = [
+    cf_row("cfc10-rc", "cfc-10", AIR_UNSPEC, value=3.0),
+    cf_row("ccl4-rc", "carbon tetrachloride", AIR_UNSPEC, value=5.0),
+    cf_row("hcfc140-rc", "hcfc-140", AIR_RURAL, method="ef-3.1:climate-change", value=7.0),
+    cf_row(
+        "tce-rc", "1,1,1-trichloroethane", AIR_RURAL, method="ef-3.1:ozone-depletion", value=9.0
+    ),
+]
+_RC_VOCAB = [
+    vocab_row("cfc10-rc", "CFC-10", cas="56-23-5"),
+    vocab_row("ccl4-rc", "Carbon Tetrachloride", cas="56-23-5"),
+    vocab_row("hcfc140-rc", "HCFC-140", cas="71-55-6"),
+    vocab_row("tce-rc", "1,1,1-Trichloroethane", cas="71-55-6"),
+]
+
+
+@pytest.fixture(scope="module")
+def rc_index(tmp_path_factory):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("refrigerant-code"), _RC_CF, _RC_VOCAB)
+    )
+
+
+@pytest.fixture(scope="module")
+def rc_pipeline(rc_index):
+    return default_pipeline(rc_index, {})
+
+
+def test_refrigerant_code_tiebreak_picks_the_named_flow_when_it_drops_no_category(rc_pipeline):
+    # neither candidate's own CAS is singled out by the source CAS (both share it),
+    # so the CAS-first check does not resolve it and the refrigerant code is tried;
+    # CFC-10 shares its one method with Carbon Tetrachloride, so it drops nothing.
+    got = rc_pipeline.match(air("Methane, tetrachloro-, CFC-10"), "56-23-5")
+    assert got.code == "cfc10-rc" and got.tier == "cas"
+    assert got.caveats == (
+        "EF carries a second flow for this CAS with different factors (Carbon "
+        "Tetrachloride); the flow named by the source's refrigerant code is used, "
+        "it characterises every impact category the other does (decision "
+        "2026-09-13)",
+    )
+
+
+def test_refrigerant_code_tiebreak_declines_when_it_would_drop_an_impact_category(rc_pipeline):
+    # HCFC-140 (climate-change only here) does not cover 1,1,1-trichloroethane's own
+    # ozone-depletion method -- picking it would silently drop that impact category,
+    # so the tiebreak declines and the pre-existing ambiguity report is used instead.
+    got = rc_pipeline.match(air("Ethane, 1,1,1-trichloro-, HCFC-140", "low. pop."), "71-55-6")
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="CAS 71-55-6 finds 2 EF flows with different factors for "
+        "1,1,1-trichloroethane, hcfc-140; the source CAS 71-55-6 does not single "
+        "one out",
+    )
+
+
+def test_refrigerant_code_tiebreak_does_not_apply_without_a_trailing_code(rc_pipeline):
+    # no refrigerant-code-shaped trailing segment -- falls straight through to the
+    # ordinary CAS disambiguation, which cannot single either one out here either.
+    got = rc_pipeline.match(air("Methane, tetrachloro-"), "56-23-5")
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="CAS 56-23-5 finds 2 EF flows with different factors for carbon "
+        "tetrachloride, cfc-10; the source CAS 56-23-5 does not single one out",
+    )
+
+
+def test_refrigerant_code_tiebreak_falls_through_when_no_candidate_matches_the_code(rc_pipeline):
+    # "CFC-99" is refrigerant-code-shaped but names neither candidate: the tiebreak
+    # declines, and the ordinary CAS check (both share the CAS) reports ambiguity.
+    got = rc_pipeline.match(air("Methane, tetrachloro-, CFC-99"), "56-23-5")
+    assert got.reason == "ambiguous_substances"
+
+
+#: A separate, small index modelling a same-CAS-named-flow ambiguity where the
+#: source's OWN CAS singles out the non-refrigerant-coded candidate specifically --
+#: item 3, round 4 review: CAS evidence must win outright and never even reach the
+#: refrigerant-code tiebreak.
+_RC_CAS_CF = [
+    cf_row("coded", "widget9, cfc-99", AIR_UNSPEC, value=1.0),
+    cf_row("generic", "widget9, cfc-99", AIR_UNSPEC, value=2.0),
+]
+_RC_CAS_VOCAB = [
+    vocab_row("coded", "CFC-99", alt=["Widget9, CFC-99"], cas="111-11-1"),
+    vocab_row("generic", "Widget Generic", alt=["Widget9, CFC-99"], cas="222-22-2"),
+]
+
+
+def test_cas_singling_out_a_candidate_beats_the_refrigerant_code(tmp_path_factory):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(
+            tmp_path_factory.mktemp("cas-beats-refrigerant"), _RC_CAS_CF, _RC_CAS_VOCAB
+        )
+    )
+    pipe = default_pipeline(index, {})
+    # both candidates share the synonym "Widget9, CFC-99" (so a synonym-tier lookup
+    # returns both), but only "Widget Generic" carries the source's own CAS -- even
+    # though the source name ends in a refrigerant-code-shaped segment that names the
+    # OTHER candidate ("CFC-99") exactly, CAS evidence must win.
+    got = pipe.match(air("Widget9, CFC-99"), "222-22-2")
+    assert got.code == "generic" and got.caveats == ()
