@@ -8,6 +8,7 @@ from sentier_importers.matching.matchers import (
     CasMatcher,
     ExactNameMatcher,
     LandUseMatcher,
+    OreCompositeMatcher,
     QualifierMatcher,
     RegionStripMatcher,
     SynonymMatcher,
@@ -207,6 +208,22 @@ def test_shipped_alias_file_loads_lowercased_and_has_the_seed_entries():
     assert all(k == k.lower() for k in aliases)
     assert all(isinstance(v, Alias) and v.target for v in aliases.values())
     assert aliases["particulates, < 10 um"].caveat is not None
+
+
+def test_shipped_alias_file_has_the_decision_a_and_c_entries():
+    # decisions (a) and (c) (Laurenz, 2026-09-13): fossil water taken as non-renewable
+    # groundwater, and BAFU "Nitrogen" taken as total nitrogen; both carry a caveat
+    # naming the decision. "coal, hard" is a plain spelling alias (no caveat needed).
+    aliases = load_aliases()
+    assert aliases["water, fossil"] == Alias(
+        target="Ground Water",
+        caveat="fossil water taken as non-renewable groundwater (decision 2026-09-13)",
+    )
+    assert aliases["nitrogen"] == Alias(
+        target="Nitrogen, Total (excluding N2)",
+        caveat="BAFU 'Nitrogen' emitted to water taken as total nitrogen (decision 2026-09-13)",
+    )
+    assert aliases["coal, hard"] == Alias(target="Hard Coal")
 
 
 def test_load_aliases_raises_on_missing_aliases_key(tmp_path):
@@ -474,6 +491,72 @@ def test_by_class_returns_a_code_sorted_list(land_index):
         land_index, "occupation", "industrial area", "land occupation"
     )
     assert found == sorted(found, key=lambda f: f.code)
+
+
+# --- OreCompositeMatcher ----------------------------------------------------------
+
+ORE_CF = [
+    cf_row("zinc", "zinc", RES_GROUND, value=1.0),
+    cf_row("copper", "copper", RES_GROUND, value=1.0),
+]
+ORE_VOCAB = [
+    vocab_row("zinc", "Zinc"),
+    vocab_row("copper", "Copper"),
+]
+
+
+@pytest.fixture(scope="module")
+def ore_index(tmp_path_factory):
+    """A tiny EF index of bare-element resource flows for OreCompositeMatcher."""
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("ore"), ORE_CF, ORE_VOCAB)
+    )
+
+
+def _ground_resource(name, unit="kg"):
+    return BafuFlow(name, "resources", "in ground", unit)
+
+
+def test_ore_composite_matcher_tier():
+    assert OreCompositeMatcher.tier == "ore"
+
+
+def test_ore_composite_matcher_decomposes_a_zinc_ore(ore_index):
+    flow = _ground_resource("Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore")
+    got = OreCompositeMatcher().candidates(flow, None, ore_index)
+    assert [c.flow.code for c in got] == ["zinc"]
+    assert got[0].tier == "ore"
+    assert got[0].caveat == "ecoinvent v2 ore composite; the amount is kg of Zinc"
+
+
+def test_ore_composite_matcher_decomposes_a_copper_ore_with_the_crude_ore_spelling(ore_index):
+    flow = _ground_resource(
+        "Copper, 0.99% in sulfide, Cu 0.36% and Mo 8.2E-3% in crude ore, in ground"
+    )
+    got = OreCompositeMatcher().candidates(flow, None, ore_index)
+    assert [c.flow.code for c in got] == ["copper"]
+    assert got[0].caveat == "ecoinvent v2 ore composite; the amount is kg of Copper"
+
+
+def test_ore_composite_matcher_refuses_a_compound_name(ore_index):
+    # "TiO2" is not a plain capitalised element word: the leading segment names a
+    # compound, and collapsing it onto an element would assert the wrong substance.
+    flow = _ground_resource("TiO2, 54% in ilmenite, 2.6% in crude ore")
+    assert OreCompositeMatcher().candidates(flow, None, ore_index) == []
+
+
+def test_ore_composite_matcher_refuses_a_bare_element_name(ore_index):
+    assert OreCompositeMatcher().candidates(_ground_resource("Copper"), None, ore_index) == []
+
+
+def test_ore_composite_matcher_is_resource_bucket_only(ore_index):
+    flow = BafuFlow(
+        "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore",
+        "emissions to air",
+        "unspecified",
+        "kg",
+    )
+    assert OreCompositeMatcher().candidates(flow, None, ore_index) == []
 
 
 # --- tier-ordering invariant: land names never resolve via name/synonym/cas ------

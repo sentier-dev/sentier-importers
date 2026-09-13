@@ -60,9 +60,12 @@ _CURATED_TIERS = {"alias", "region/alias"}
 _CARBON_OXIDES = {"Carbon dioxide", "Carbon monoxide"}
 
 #: EF's water-use method characterises freshwater deprivation only: a BAFU salt-water
-#: or fossil-water resource flow can never receive an EF water factor, even when the
-#: pipeline finds a same-named candidate (that candidate is the freshwater flow).
-_NON_FRESHWATER = ("Water, salt", "Water, fossil")
+#: resource flow can never receive an EF water factor, even when the pipeline finds a
+#: same-named candidate (that candidate is the freshwater flow). ``Water, fossil`` is
+#: deliberately NOT here (decision 2026-09-13): it is taken as non-renewable
+#: groundwater and resolved via the curated ``water, fossil`` alias instead (see
+#: ``matching/aliases.yaml``), each such entry carrying that decision as a caveat.
+_NON_FRESHWATER = ("Water, salt",)
 
 #: Physical dimension per unit spelling (BAFU and EF spellings both included), used by
 #: ``unit_conversion`` to tell a safe same-dimension unit respelling from an unsafe
@@ -92,6 +95,20 @@ _DIMENSION: dict[str, str] = {
 #: direction, kBq -> Bq, never occurs: EF's reference unit for ionising radiation is
 #: always kBq (``EfFlowIndex.reference_unit``), never Bq.
 _SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoule"): 3.6}
+
+#: ecoinvent v2 net calorific values, MJ per BAFU unit, keyed by (BAFU name, BAFU unit) so a
+#: conversion is never applied by accident. These are the resource-flow definitions the
+#: BAFU-2026 inventory is built from. Decision Laurenz 2026-09-13. `Gas, natural/m3` exists in
+#: both m3 and Nm3 in BAFU; both are treated as normal cubic metres.
+ENERGY_CONTENT: dict[tuple[str, str], float] = {
+    ("Coal, hard", "kg"): 19.1,
+    ("Coal, brown", "kg"): 9.9,
+    ("Oil, crude", "kg"): 45.8,
+    ("Peat", "kg"): 9.9,
+    ("Uranium", "kg"): 560_000.0,
+    ("Gas, natural/m3", "m3"): 38.3,
+    ("Gas, natural/m3", "Nm3"): 38.3,
+}
 
 
 @dataclass(frozen=True)
@@ -206,16 +223,33 @@ def unit_conversion(bafu_unit: str, ef_unit: str) -> float | None:
     return 1.0
 
 
-def conversion_for(flow: BafuFlow, match: Match, index: EfFlowIndex) -> float | None:
-    """The multiplier from ``flow.unit`` onto ``match``'s EF reference unit, or
-    ``None`` when no fixed conversion exists and the flow must be withheld.
+def conversion_for(
+    flow: BafuFlow, match: Match, index: EfFlowIndex
+) -> tuple[float, str | None] | None:
+    """The multiplier from ``flow.unit`` onto ``match``'s EF reference unit, paired with
+    any caveat that factor itself carries, or ``None`` when no fixed conversion exists
+    and the flow must be withheld.
+
+    Checked in this order: an energy-content factor (``ENERGY_CONTENT``) whenever the
+    target's reference unit is megajoule and ``(flow.name, flow.unit)`` is a key BAFU
+    actually reports -- checked first, and keyed on the exact BAFU (name, unit) pair,
+    so it is never applied by accident to an unrelated flow that merely happens to
+    share the same EF target; then the water density special case (depends on the
+    target's characterisation method, so it cannot live in the generic, method-blind
+    ``unit_conversion`` table); then the generic, unit-string-only fallback.
     """
+    if index.reference_unit(match.code) == "megajoule":
+        energy = ENERGY_CONTENT.get((flow.name, flow.unit))
+        if energy is not None:
+            caveat = f"energy content {energy} MJ/{flow.unit} (ecoinvent v2 net calorific value)"
+            return energy, caveat
     if flow.unit == "kg" and set(index.vector(match.code)) == {_WATER_USE}:
         # water is the only substance with a fixed mass -> volume factor (density);
         # this depends on the target's characterisation method, so it cannot live in
         # the generic, method-blind ``unit_conversion`` table above.
-        return 0.001
-    return unit_conversion(flow.unit, index.reference_unit(match.code))
+        return 0.001, None
+    factor = unit_conversion(flow.unit, index.reference_unit(match.code))
+    return None if factor is None else (factor, None)
 
 
 def _refine_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
@@ -246,11 +280,14 @@ def _refine_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
 def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> Match | Unmatched:
     """The single ordered decision chain applied to every pipeline outcome.
 
-    1. non-freshwater water (Decision 5): a BAFU ``Water, salt``/``Water, fossil``
-       flow is never characterised by EF's water-use method, whether the pipeline
-       found a real ``Match`` (it would be the freshwater flow of the same name) or
-       came back ``Unmatched`` -- the reason is distinct (``non_freshwater``) so the
-       coverage source can single these flows out;
+    1. non-freshwater water (Decision 5): a BAFU ``Water, salt`` flow is never
+       characterised by EF's water-use method, whether the pipeline found a real
+       ``Match`` (it would be the freshwater flow of the same name) or came back
+       ``Unmatched`` -- the reason is distinct (``non_freshwater``) so the coverage
+       source can single these flows out. ``Water, fossil`` is handled differently
+       (decision 2026-09-13): it is taken as non-renewable groundwater and resolved
+       through the curated ``water, fossil`` alias onto ``Ground Water`` instead, so
+       it never reaches this branch;
     2. ocean-discharge water (Task 6 correction (3)): a ``Match`` onto a
        water-use-only EF target for an ``emissions to water`` / ``ocean`` flow is
        likewise never right -- EF's water-use method never characterises sea-water
@@ -357,12 +394,13 @@ class BafuEfMatchedSource(Source):
             source["context"] = flow.context
 
         ef_unit = index.reference_unit(match.code)
-        factor = conversion_for(flow, match, index)
-        if factor is None:
+        conversion = conversion_for(flow, match, index)
+        if conversion is None:
             raise ValueError(
                 f"no fixed conversion from {flow.unit} to {ef_unit} for {match.code}; "
                 "outcomes() withholds this as unit_mismatch"
             )
+        factor, energy_caveat = conversion
 
         target: Record = {"code": match.code}
         if ef_flow.name:
@@ -376,8 +414,9 @@ class BafuEfMatchedSource(Source):
         entry: Record = {"source": source, "target": target}
         if factor != 1.0:
             entry["conversion_factor"] = factor
-        if match.caveats:
-            entry["comment"] = "; ".join(match.caveats)
+        comments = list(match.caveats) + ([energy_caveat] if energy_caveat else [])
+        if comments:
+            entry["comment"] = "; ".join(comments)
         return entry
 
     def outcomes(self, records: Records) -> list[tuple[BafuFlow, Match | Unmatched]]:

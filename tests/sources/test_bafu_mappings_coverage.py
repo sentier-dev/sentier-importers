@@ -14,6 +14,7 @@ from tests.sources.test_bafu_mappings_matched import (
     CO2,
     GAS,
     LAND,
+    MINE_GAS,
     PEAT,
     RADON,
     VOCAB,
@@ -39,9 +40,9 @@ def _source(root):
 def test_every_universe_flow_has_exactly_one_row(tmp_path):
     root = _stage(tmp_path, rank3=[CO2], rank6=[RADON])
     rows = _run(_source(root), tmp_path)
-    assert len(rows) == 6
+    assert len(rows) == 7
     by_code = {r["source"]["code"]: r for r in rows}
-    assert set(by_code) == {CO2, WATER, RADON, GAS, PEAT, LAND}
+    assert set(by_code) == {CO2, WATER, RADON, GAS, PEAT, MINE_GAS, LAND}
     assert by_code[LAND]["status"] == "mapped" and by_code[LAND]["bridge"] == 7
     assert by_code[LAND]["tier"] == "landuse"
     assert by_code[CO2] == {
@@ -116,8 +117,10 @@ def test_unmapped_rows_carry_reason_and_detail(tmp_path):
 
 def test_unit_mismatch_is_reported_as_unmapped(tmp_path):
     root = _stage(tmp_path)
-    # an EF natural-gas flow in MJ, reachable from the BAFU m3 flow by alias, so the
-    # pipeline resolves a real Match that the unit check must then withhold.
+    # an EF natural-gas flow in MJ, reachable from both BAFU gas flows by alias/synonym,
+    # so the pipeline resolves a real Match for each. "Gas, natural/m3" has a fixed
+    # energy-content factor (decision 2026-09-13) and converts; the mine off-gas flow's
+    # name is not in that table, so it is still withheld as unit_mismatch.
     extra_cf = [
         cf_row("gas", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
     ]
@@ -125,14 +128,24 @@ def test_unit_mismatch_is_reported_as_unmapped(tmp_path):
     pq.write_table(
         pa.Table.from_pylist(cf, schema=CF_SCHEMA), root / "characterization-factors.parquet"
     )
-    extra_vocab = [vocab_row("gas", "Natural gas", alt=["Gas, natural/m3"])]
+    extra_vocab = [
+        vocab_row(
+            "gas",
+            "Natural gas",
+            alt=["Gas, natural/m3", "Gas, mine, off-gas, process, coal mining/m3"],
+        )
+    ]
     vocab_path = root / "elementary-flows" / "air-01.parquet"
     vocab = pq.read_table(vocab_path).to_pylist() + extra_vocab
     pq.write_table(pa.Table.from_pylist(vocab, schema=VOCAB_SCHEMA), vocab_path)
     rows = _run(_source(root), tmp_path)
     gas = next(r for r in rows if r["source"]["name"] == "Gas, natural/m3")
-    assert gas["status"] == "unmapped" and gas["reason"] == "unit_mismatch"
-    assert "megajoule" in gas["detail"]
+    assert gas["status"] == "mapped" and gas["bridge"] == 7
+    mine_gas = next(
+        r for r in rows if r["source"]["name"] == "Gas, mine, off-gas, process, coal mining/m3"
+    )
+    assert mine_gas["status"] == "unmapped" and mine_gas["reason"] == "unit_mismatch"
+    assert "megajoule" in mine_gas["detail"]
 
 
 def test_location_and_caveats_are_absent_outside_a_rank7_match(tmp_path):
@@ -170,7 +183,7 @@ def test_assembled_package_uses_the_coverage_verb(tmp_path):
     )
     package = _assemble(_run(BafuEfCoverageSource(config), tmp_path), config)
     assert set(package) == {"name", "version", "coverage"}
-    assert len(package["coverage"]) == 6
+    assert len(package["coverage"]) == 7
     json.dumps(package)  # JSON-serialisable (no sets, no tuples that matter)
 
 

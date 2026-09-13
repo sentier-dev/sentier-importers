@@ -48,6 +48,26 @@ aliases:
   butane, perfluorocyclo-, pfc-318: PFC-318
   ethane, 1,1,2-trifluoro-, hfc-143: HFC-143
   octene (mixture of isomers): Octene
-  # "nitrogen" withdrawn: EF's "Nitrogen, Total (excluding N2)" asserts a chemical
-  # identity (total N), not a spelling difference -- open question for Laurenz,
-  # not a curated alias.
+  # fossil groundwater: taken as non-renewable groundwater (decision 2026-09-13);
+  # "Water, fossil" is withdrawn from _NON_FRESHWATER accordingly (see
+  # mappings_biosphere_matched.py) so this alias actually gets a chance to fire.
+  water, fossil:
+    target: Ground Water
+    caveat: "fossil water taken as non-renewable groundwater (decision 2026-09-13)"
+  # "Nitrogen, Total (excluding N2)" asserts a chemical identity (total N), not a
+  # spelling difference; taken as BAFU's "Nitrogen" to water by decision 2026-09-13.
+  nitrogen:
+    target: "Nitrogen, Total (excluding N2)"
+    caveat: "BAFU 'Nitrogen' emitted to water taken as total nitrogen (decision 2026-09-13)"
+  coal, brown: Brown Coal
+  coal, hard: Hard Coal
+  oil, crude: Crude Oil
+  1-butanol: Butanol
+  azadirachtin a+b: Azadirachtin
+  benzo(g,h,i)perylene: Benzo(ghi)perylene
+  propylene glycol methyl ether acetate: Propylene Glycol Monomethyl Ether Acetate
+  # the three oxygen-demand targets exist in EF 3.1 but carry no factor: they only take
+  # effect once the nomenclature bridge (phase 2, task 4) is in place; kept deliberately
+  bod5, biological oxygen demand: Biological Oxygen Demand
+  cod, chemical oxygen demand: Chemical Oxygen Demand
+  toc, total organic carbon: Total Organic Carbon

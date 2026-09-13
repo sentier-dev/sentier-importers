@@ -50,6 +50,19 @@ _LAND_CLASS_SYNONYMS = {
     "natural (non-use)": "natural",
     "non-use": "natural",
 }
+#: ecoinvent v2 ore composite names: a leading capitalised element word, optionally
+#: followed by more comma segments, then an ore-grade segment (``x% in y``, or the
+#: bare ``in ore``/``in crude ore``), with an optional trailing ``, in ground``. A
+#: name whose first segment is not a plain element word (``TiO2, 54% in ilmenite,
+#: ...``) does not match: it names a compound, not an element, and the amount would
+#: not be "kg of <element>".
+_ORE_RE = re.compile(
+    r"^(?P<element>[A-Z][a-z]+)(?:, [^,]+)*?, "
+    r"(?:[^,]*\d% in [^,]+|in (?:crude )?ore)(?:, in ground)?$"
+)
+#: The EF leaf ``OreCompositeMatcher`` restricts its candidates to: an ore-composite
+#: name always names a non-renewable element resource extracted from the ground.
+_ORE_LEAF = "non-renewable element resources from ground"
 
 
 def _normalise_land_class(raw: str) -> str:
@@ -251,6 +264,41 @@ class LandUseMatcher:
         ef_name = cls if kind == "occupation" else f"{kind} {cls}"
         found = [f for f in index.by_name(ef_name, "resource") if f.leaf == leaf]
         return sorted(found, key=lambda f: f.code)
+
+
+class OreCompositeMatcher:
+    """Matches an ecoinvent v2 ore-composite name onto its bare element resource.
+
+    Resource bucket only. BAFU carries several minerals as an ore composite: a
+    leading element word, an ore-grade segment (``Zn 0.63%, ..., in ore`` or
+    ``0.99% in sulfide, ..., in crude ore``), and sometimes a trailing ``, in
+    ground`` (``_ORE_RE``) -- the amount is always kg of the *plain element*, never
+    of the ore rock. A name whose leading segment is not a bare capitalised element
+    word (e.g. ``TiO2, 54% in ilmenite, ...``) does not match: it names a compound,
+    and collapsing it onto the element would silently assert the wrong substance.
+
+    Candidates are restricted to the ``non-renewable element resources from ground``
+    EF leaf (``_ORE_LEAF``) -- an ore composite is never anything else -- and every
+    candidate carries a caveat naming the composite decomposition, since the BAFU
+    amount is not what the ore name on its own would suggest.
+    """
+
+    tier = "ore"
+
+    def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
+        """Return the bare-element EF resource flow(s) an ore-composite name decomposes to."""
+        if _bucket(flow) != "resource":
+            return []
+        match = _ORE_RE.match(flow.name.strip())
+        if match is None:
+            return []
+        element = match.group("element")
+        found = [f for f in index.by_name(element, "resource") if f.leaf == _ORE_LEAF]
+        caveat = f"ecoinvent v2 ore composite; the amount is kg of {element}"
+        return [
+            Candidate(f, tier=self.tier, caveat=caveat)
+            for f in sorted(found, key=lambda f: f.code)
+        ]
 
 
 class AliasMatcher:

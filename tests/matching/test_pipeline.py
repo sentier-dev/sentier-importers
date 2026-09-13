@@ -8,6 +8,7 @@ from tests.matching.ef_fixtures import (
     AIR_RURAL,
     AIR_UNSPEC,
     LAND_OCC,
+    RES_GROUND,
     RES_WATER,
     WATER_FRESH,
     WATER_UNSPEC,
@@ -360,3 +361,29 @@ def test_land_use_matcher_runs_inside_region_strip(pipeline):
     assert got.location == "CH"
     assert got.placement == "exact"
     assert got.caveats == ()
+
+
+def test_ore_composite_match_at_pipeline_level(tmp_path_factory):
+    # a zinc ore composite in resources / in ground decomposes onto plain "Zinc",
+    # tier "ore", exact placement, the composite caveat, and EF's default kilogram
+    # reference unit (no special-cased method is in play).
+    cf = [cf_row("zinc", "zinc", RES_GROUND, value=1.0)]
+    vocab = [vocab_row("zinc", "Zinc")]
+    idx = EfFlowIndex.from_files(*write_ef_inputs(tmp_path_factory.mktemp("ore-pipe"), cf, vocab))
+    ore_pipeline = default_pipeline(idx, {})
+    flow = BafuFlow(
+        "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore",
+        "resources",
+        "in ground",
+        "kg",
+    )
+    got = ore_pipeline.match(flow, None)
+    assert got == Match(
+        code="zinc",
+        tier="ore",
+        placement="exact",
+        location=None,
+        candidates=1,
+        caveats=("ecoinvent v2 ore composite; the amount is kg of Zinc",),
+    )
+    assert idx.reference_unit(got.code) == "kilogram"

@@ -8,6 +8,7 @@ from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
 from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.matchers import load_aliases
 from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeline
 from sentier_importers.sources.bafu.ecospold import flow_id
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
@@ -39,6 +40,8 @@ _SCHEMA = Path(__file__).parent / "fixtures" / "randonneur-package.schema.json"
 #                                                                              (CAS 14859-67-7)
 #                              Gas, natural/m3               | resources        | in ground   | m3
 #                              Peat                          | resources        | in ground   | kg
+#                              Gas, mine, off-gas, process,   resources          in ground     Nm3
+#                                coal mining/m3
 #                              Occupation, industrial area   | resources        | unspecified | m2a
 CF = [
     cf_row(
@@ -65,6 +68,7 @@ WATER = flow_id("Water, river", "resources", "in water", "m3")
 RADON = flow_id("Radon-222", "emissions to air", "low. pop.", "Bq")
 GAS = flow_id("Gas, natural/m3", "resources", "in ground", "m3")
 PEAT = flow_id("Peat", "resources", "in ground", "kg")
+MINE_GAS = flow_id("Gas, mine, off-gas, process, coal mining/m3", "resources", "in ground", "Nm3")
 LAND = flow_id("Occupation, industrial area", "resources", "unspecified", "m2a")
 #: _decide never touches its ``index`` argument for a pure Unmatched-in/Unmatched-out
 #: call (the freshwater check and _refine_unmatched are both index-free); an empty
@@ -257,9 +261,10 @@ def test_unit_conversion_fixed_factors_and_cross_dimension_mismatches(
     assert unit_conversion(bafu_unit, ef_unit) == expected
 
 
-def test_natural_gas_volume_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_path):
+def test_natural_gas_volume_converts_via_energy_content_onto_the_fossil_resource_flow(tmp_path):
     # EF characterises fossil resources in megajoule (resource-use-fossils); a BAFU
-    # m3-denominated gas flow has no fixed volume -> energy conversion.
+    # m3-denominated natural-gas flow has a fixed ecoinvent v2 net calorific value
+    # (38.3 MJ/m3, decision 2026-09-13), so it converts rather than being withheld.
     cf = CF + [
         cf_row(
             "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
@@ -274,15 +279,51 @@ def test_natural_gas_volume_onto_a_fossil_resource_flow_is_withheld_as_unit_mism
     outcomes = dict(source.outcomes(records))
     flow = next(f for f in outcomes if f.code == GAS)
     outcome = outcomes[flow]
-    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
-    assert "m3" in outcome.detail and "megajoule" in outcome.detail
+    assert isinstance(outcome, Match)
+    entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
+    assert entry["conversion_factor"] == 38.3
+    assert "38.3 MJ/m3" in entry["comment"]
     rows = source.transform(records)
-    assert GAS not in {r["source"]["code"] for r in rows}
+    assert GAS in {r["source"]["code"] for r in rows}
 
 
-def test_peat_mass_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_path):
+def test_gas_mine_off_gas_volume_onto_the_fossil_resource_flow_is_withheld_as_unit_mismatch(
+    tmp_path,
+):
+    # "Gas, mine, off-gas, process, coal mining/m3" (unit Nm3) also candidates onto
+    # "Natural gas", but the energy-content table is keyed on the exact BAFU (name,
+    # unit) pair -- this name is not "Gas, natural/m3", so no factor applies and the
+    # cross-dimension (volume -> energy) conversion is withheld as before.
+    cf = CF + [
+        cf_row(
+            "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
+        )
+    ]
+    vocab = VOCAB + [
+        vocab_row(
+            "gas-mj",
+            "Natural gas",
+            alt=["Gas, natural/m3", "Gas, mine, off-gas, process, coal mining/m3"],
+        )
+    ]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == MINE_GAS)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
+    assert "Nm3" in outcome.detail and "megajoule" in outcome.detail
+    rows = source.transform(records)
+    assert MINE_GAS not in {r["source"]["code"] for r in rows}
+
+
+def test_peat_energy_content_converts_onto_the_fossil_resource_flow(tmp_path):
     # same decision, the other cross-dimension direction: a BAFU kg-denominated peat
-    # flow has no fixed mass -> energy conversion onto EF's megajoule reference unit.
+    # flow has a fixed ecoinvent v2 net calorific value (9.9 MJ/kg), so it converts
+    # onto EF's megajoule reference unit instead of being withheld.
     cf = CF + [cf_row("peat", "peat", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)]
     vocab = VOCAB + [vocab_row("peat", "Peat")]
     root = _stage(tmp_path, cf=cf, vocab=vocab)
@@ -293,9 +334,31 @@ def test_peat_mass_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_
     outcomes = dict(source.outcomes(records))
     flow = next(f for f in outcomes if f.code == PEAT)
     outcome = outcomes[flow]
-    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
+    assert isinstance(outcome, Match)
+    entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
+    assert entry["conversion_factor"] == 9.9
+    assert "9.9 MJ/kg" in entry["comment"]
     rows = source.transform(records)
-    assert PEAT not in {r["source"]["code"] for r in rows}
+    assert PEAT in {r["source"]["code"] for r in rows}
+
+
+def test_coal_hard_alias_converts_via_energy_content(tmp_path):
+    # "Coal, hard" -> "Hard Coal" via the shipped alias; energy content 19.1 MJ/kg.
+    cf = CF + [
+        cf_row("coal", "hard coal", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
+    ]
+    vocab = VOCAB + [vocab_row("coal", "Hard Coal")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    (r,) = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    flow = BafuFlow("Coal, hard", "resources", "in ground", "kg")
+    match = r["inputs"].pipeline.match(flow, None)
+    assert isinstance(match, Match) and match.tier == "alias"
+    entry = source.entry_for(flow, match, r["inputs"].index)
+    assert entry["conversion_factor"] == 19.1
+    assert "19.1 MJ/kg" in entry["comment"]
 
 
 def test_uranium_mass_onto_an_ionising_radiation_flow_is_withheld_as_unit_mismatch(tmp_path):
@@ -355,12 +418,14 @@ def test_outcomes_returns_one_tuple_per_non_excluded_fixture_flow(tmp_path):
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
     )
     outcomes = source.outcomes(records)
-    assert {flow.code for flow, _ in outcomes} == {WATER, RADON, GAS, PEAT, LAND}
+    assert {flow.code for flow, _ in outcomes} == {WATER, RADON, GAS, PEAT, MINE_GAS, LAND}
     assert all(isinstance(o, (Match, Unmatched)) for _, o in outcomes)
-    # Gas and Peat have no matching EF flow in the default fixture CF/VOCAB at all
+    # Gas, Peat and the mine off-gas have no matching EF flow in the default fixture
+    # CF/VOCAB at all
     by_code = {flow.code: outcome for flow, outcome in outcomes}
     assert by_code[GAS].reason == "no_ef_flow"
     assert by_code[PEAT].reason == "no_ef_flow"
+    assert by_code[MINE_GAS].reason == "no_ef_flow"
     assert isinstance(by_code[LAND], Match) and by_code[LAND].tier == "landuse"
 
 
@@ -487,14 +552,6 @@ def test_decide_reports_non_freshwater_for_both_match_and_unmatched_inputs(tmp_p
     assert salt == Unmatched(
         "non_freshwater", "EF water use characterises freshwater deprivation only"
     )
-    fossil = _decide(
-        BafuFlow("Water, fossil", "resources", "in water", "m3"),
-        Unmatched("ambiguous_substances", "z"),
-        _EMPTY_INDEX,
-    )
-    assert fossil == Unmatched(
-        "non_freshwater", "EF water use characterises freshwater deprivation only"
-    )
     # ...and it must override a real Match too: build a tiny index + pipeline where
     # "Water, salt, ocean" resolves (via a curated alias) to a real water-use flow.
     cf, vocab = write_ef_inputs(
@@ -510,6 +567,27 @@ def test_decide_reports_non_freshwater_for_both_match_and_unmatched_inputs(tmp_p
     outcome = _decide(flow, match, index)
     assert outcome == Unmatched(
         "non_freshwater", "EF water use characterises freshwater deprivation only"
+    )
+
+
+def test_water_fossil_no_longer_non_freshwater_resolves_via_alias_instead(tmp_path):
+    # Decision 2026-09-13 withdraws "Water, fossil" from _NON_FRESHWATER: it is taken
+    # as non-renewable groundwater and resolved through the shipped "water, fossil"
+    # alias onto "Ground Water" instead, carrying that decision as a caveat.
+    cf, vocab = write_ef_inputs(
+        tmp_path,
+        [cf_row("gw", "ground water", RES_WATER, method="ef-3.1:water-use", value=1.0)],
+        [vocab_row("gw", "Ground Water", cas="7732-18-5")],
+    )
+    index = EfFlowIndex.from_files(cf, vocab)
+    pipeline = default_pipeline(index, load_aliases())
+    flow = BafuFlow("Water, fossil", "resources", "in water", "m3")
+    match = pipeline.match(flow, None)
+    assert isinstance(match, Match) and match.tier == "alias"  # sanity: the alias fires
+    outcome = _decide(flow, match, index)
+    assert isinstance(outcome, Match) and outcome.code == "gw"
+    assert outcome.caveats == (
+        "fossil water taken as non-renewable groundwater (decision 2026-09-13)",
     )
 
 

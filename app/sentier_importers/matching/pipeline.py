@@ -2,13 +2,13 @@
 disambiguation. Anything that cannot be asserted comes back as ``Unmatched`` with a
 reason a reviewer can act on.
 
-Tier order: exact name, land-use class, synonym, qualifier spelling, curated alias,
-the same five tiers again applied to the region-stripped name (``RegionStripMatcher``
-applies that same first-hit rule among its own inner matchers), then CAS last. The
-first matcher that yields any candidate in the flow's compartment decides the
-outcome: a later tier never rescues a placement failure of an earlier one, because
-"the exact-name EF flow exists but only in another sub-compartment" is information,
-not a miss.
+Tier order: exact name, land-use class, ore composite, synonym, qualifier spelling,
+curated alias, the same six tiers again applied to the region-stripped name
+(``RegionStripMatcher`` applies that same first-hit rule among its own inner
+matchers), then CAS last. The first matcher that yields any candidate in the flow's
+compartment decides the outcome: a later tier never rescues a placement failure of
+an earlier one, because "the exact-name EF flow exists but only in another
+sub-compartment" is information, not a miss.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from sentier_importers.matching.matchers import (
     ExactNameMatcher,
     LandUseMatcher,
     Matcher,
+    OreCompositeMatcher,
     QualifierMatcher,
     RegionStripMatcher,
     SynonymMatcher,
@@ -284,8 +285,8 @@ class MatchPipeline:
 def default_pipeline(
     index: EfFlowIndex, aliases: Mapping[str, str | Alias], *, unspecified_fallback: bool = True
 ) -> MatchPipeline:
-    """Build the standard pipeline: name, land-use class, synonym, qualifier, alias,
-    region-stripped, CAS.
+    """Build the standard pipeline: name, land-use class, ore composite, synonym,
+    qualifier, alias, region-stripped, CAS.
 
     ``aliases`` is the curated BAFU-name -> EF-preferred-label table (see
     ``matchers.load_aliases``). ``unspecified_fallback`` is forwarded to
@@ -299,6 +300,13 @@ def default_pipeline(
     a later tier (see the module docstring). ``ExactNameMatcher`` is left ahead of it
     because an EF preferred label never looks like a BAFU ``Occupation``/
     ``Transformation`` name in practice, so there is nothing for it to steal.
+
+    ``OreCompositeMatcher`` runs third, right after ``LandUseMatcher``: an ore
+    composite's own name (``Zinc, Zn 0.63%, ..., in ore``) never looks like an EF
+    preferred label or a BAFU land-use name, so ordering it there costs nothing, and
+    it must still run ahead of ``SynonymMatcher``/``QualifierMatcher`` for the same
+    reason ``LandUseMatcher`` does: an accidental synonym collision must not steal an
+    ore composite's match away from the element-decomposition rule.
 
     CAS runs last, after every name-keyed tier including the region-stripped ones, not
     third: a shared CAS number (the biogenic/fossil/land-use-change carbon dioxide
@@ -316,6 +324,7 @@ def default_pipeline(
     named: list[Matcher] = [
         ExactNameMatcher(),
         LandUseMatcher(),
+        OreCompositeMatcher(),
         SynonymMatcher(),
         QualifierMatcher(),
         AliasMatcher(aliases),
