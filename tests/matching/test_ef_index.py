@@ -248,3 +248,197 @@ def test_reference_unit_defaults_to_kilogram(tmp_path):
     index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, CF, VOCAB))
     assert index.reference_unit("cu-urban") == "kilogram"  # human-toxicity-cancer et al.
     assert index.reference_unit("unknown-code") == "kilogram"  # no vector at all
+
+
+# --- uncharacterised flows (phase 2 task 3) -------------------------------------
+
+UNCHAR_VOCAB = [
+    *VOCAB,
+    # unambiguous crosswalk: envi-air-unkn -> air, unspecified
+    vocab_row("un-air", "Uncharacterised air thing", cas="1-2-3", bw="envi-air-unkn"),
+    # ambiguous crosswalk: envi-grou-unkn -> soil, unspecified (majority), flagged
+    vocab_row("un-soil", "Uncharacterised soil thing", bw="envi-grou-unkn"),
+    # envi-biot has no EF leaf at all: must be skipped
+    vocab_row("un-biot", "Uncharacterised biotic thing", bw="envi-biot"),
+    # no bw-context notation at all: must be skipped
+    vocab_row("un-none", "No notation thing"),
+    # a code from a family not otherwise exercised here, just to broaden coverage
+    vocab_row("un-land", "Uncharacterised land thing", alt=["Land alias"], bw="laus-occu"),
+]
+
+
+def test_default_build_is_unaffected_by_uncharacterised_rows(tmp_path):
+    # same 10 characterised flows as the plain CF/VOCAB fixture (see
+    # test_only_cf_bearing_ef_flows_are_indexed), regardless of the extra
+    # uncharacterised vocab rows present in the shard
+    cf, vocab = write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB)
+    default_index = EfFlowIndex.from_files(cf, vocab)
+    assert len(default_index) == 10
+    assert default_index.get("un-air") is None
+    assert default_index.get("un-soil") is None
+    assert default_index.get("un-land") is None
+
+
+def test_include_uncharacterised_adds_flows_via_bw_context(tmp_path):
+    cf, vocab = write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB)
+    index = EfFlowIndex.from_files(cf, vocab, include_uncharacterised=True)
+    flow = index.get("un-air")
+    assert flow is not None
+    assert flow.characterised is False
+    assert flow.context_uncertain is False
+    assert flow.context == (
+        "Emissions",
+        "Emissions to air",
+        "Emissions to air, unspecified",
+    )
+    assert flow.bucket == "air"
+    assert flow.leaf == "emissions to air, unspecified"
+    assert flow.cas == "1-2-3"
+    assert index.by_name("Uncharacterised air thing", "air") == [flow]
+    assert index.by_cas("1-2-3", "air") == [flow]
+
+
+def test_ambiguous_bw_context_code_marks_flow_uncertain(tmp_path):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB), include_uncharacterised=True
+    )
+    flow = index.get("un-soil")
+    assert flow is not None
+    assert flow.characterised is False
+    assert flow.context_uncertain is True
+    assert flow.bucket == "soil"
+
+
+def test_envi_biot_code_is_skipped(tmp_path):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB), include_uncharacterised=True
+    )
+    assert index.get("un-biot") is None
+
+
+def test_row_without_bw_context_notation_is_skipped(tmp_path):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB), include_uncharacterised=True
+    )
+    assert index.get("un-none") is None
+
+
+def test_uncharacterised_flow_has_no_vector_or_identity(tmp_path):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB), include_uncharacterised=True
+    )
+    assert index.vector("un-air") == {}
+    assert index.identity("un-air") == ()
+
+
+def test_reference_unit_is_none_for_uncharacterised_flow(tmp_path):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB), include_uncharacterised=True
+    )
+    assert index.reference_unit("un-air") is None
+    assert index.reference_unit("un-soil") is None
+
+
+def test_include_uncharacterised_count_matches_expectation(tmp_path):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB), include_uncharacterised=True
+    )
+    # 10 characterised (from CF) + 3 uncharacterised placed (un-air, un-soil, un-land);
+    # un-biot and un-none are skipped
+    assert len(index) == 13
+    assert {f.code for f in index if not f.characterised} == {"un-air", "un-soil", "un-land"}
+
+
+def test_from_bytes_passes_include_uncharacterised_through(tmp_path):
+    cf, vocab = write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB)
+    index = EfFlowIndex.from_bytes(cf.read_bytes(), vocab, include_uncharacterised=True)
+    assert index.get("un-air") is not None
+    assert index.get("un-air").characterised is False
+
+
+def test_from_tables_include_uncharacterised_default_is_false():
+    index = EfFlowIndex.from_tables(CF, UNCHAR_VOCAB)
+    assert index.get("un-air") is None
+    assert len(index) == 10
+
+
+def test_characterised_row_keeps_cf_context_despite_a_conflicting_bw_notation(tmp_path):
+    # Pins the ``if code in contexts: continue`` guard in ``from_tables``: a vocab row
+    # for an already-characterised code must never be re-placed via its own bw-context
+    # notation, even when that crosswalk disagrees with the CF table's own context.
+    # Without the guard, the uncharacterised branch appends a second EfFlow for the
+    # same code (built from the same vocab row) *after* the characterised one; since
+    # EfFlowIndex.__init__ does ``self._flows[flow.code] = flow`` in iteration order,
+    # that second entry would silently win, flipping ``characterised`` to False and
+    # swapping in the wrong (water) context in place of the CF table's (air) one.
+    rows = [cf_row("dual-ctx", "dual", AIR_URBAN, value=1.0)]
+    vocab = [vocab_row("dual-ctx", "Dual", bw="envi-wate-suwa")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, rows, vocab), include_uncharacterised=True
+    )
+    flow = index.get("dual-ctx")
+    assert flow is not None
+    assert flow.characterised is True
+    assert flow.context_uncertain is False
+    assert flow.context_path == AIR_URBAN
+    assert index.vector("dual-ctx") == {"ef-3.1:human-toxicity-cancer": 1.0}
+
+
+def test_includes_uncharacterised_flag_mirrors_the_build_argument(tmp_path):
+    cf, vocab = write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB)
+    assert EfFlowIndex.from_files(cf, vocab).includes_uncharacterised is False
+    assert EfFlowIndex.from_files(cf, vocab, include_uncharacterised=True).includes_uncharacterised
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Energy, geothermal, converted",
+        "Energy, kinetic (in wind), converted",
+        "Energy, solar, converted",
+        "Energy, potential (in hydropower reservoir), converted",
+        "Energy, gross calorific value, in biomass, primary forest",
+        "Primary Energy From Geothermics",
+        "Oil Sand (10% Bitumen)",
+        "Pit Methane",
+        "energy, tidal, converted",  # case-insensitive
+    ],
+)
+def test_energy_shaped_resource_names_are_forced_uncertain_regardless_of_code(tmp_path, name):
+    # reso-wate is NOT in bw_context.AMBIGUOUS_CODES on its own -- an ordinary
+    # (non-energy) row placed via it stays context_uncertain=False (see the sibling
+    # negative-control test below). The crosswalk simply has no code that reaches EF's
+    # energy-resource leaves at all, so any of these names must come back uncertain
+    # even via this otherwise-unambiguous code.
+    vocab = [vocab_row("un-energy", name, bw="reso-wate")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+    flow = index.get("un-energy")
+    assert flow is not None
+    assert flow.bucket == "resource"
+    assert flow.context_uncertain is True
+
+
+def test_non_energy_resource_name_on_the_same_code_stays_certain(tmp_path):
+    vocab = [vocab_row("un-material", "Wood", bw="reso-wate")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+    flow = index.get("un-material")
+    assert flow is not None
+    assert flow.bucket == "resource"
+    assert flow.context_uncertain is False
+
+
+def test_energy_shaped_name_outside_the_resource_bucket_is_not_forced_uncertain(tmp_path):
+    # the override is scoped to the resource bucket only: an "Energy ..." name placed
+    # via an air bw-context code is left alone (envi-air-unkn is unambiguous already).
+    vocab = [vocab_row("un-energy-air", "Energy something", bw="envi-air-unkn")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+    flow = index.get("un-energy-air")
+    assert flow is not None
+    assert flow.bucket == "air"
+    assert flow.context_uncertain is False

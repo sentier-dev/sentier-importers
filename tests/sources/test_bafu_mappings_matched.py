@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import jsonschema
@@ -8,15 +9,16 @@ from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
 from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.matchers import load_aliases
 from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeline
 from sentier_importers.sources.bafu.ecospold import flow_id
+from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCoverageSource
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     BafuEfMatchedSource,
     _decide,
     substance_cas,
-    unit_conversion,
 )
-from sentier_importers.sources.eaternity.bridge import BafuFlow
+from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
@@ -39,6 +41,8 @@ _SCHEMA = Path(__file__).parent / "fixtures" / "randonneur-package.schema.json"
 #                                                                              (CAS 14859-67-7)
 #                              Gas, natural/m3               | resources        | in ground   | m3
 #                              Peat                          | resources        | in ground   | kg
+#                              Gas, mine, off-gas, process,   resources          in ground     Nm3
+#                                coal mining/m3
 #                              Occupation, industrial area   | resources        | unspecified | m2a
 CF = [
     cf_row(
@@ -65,7 +69,9 @@ WATER = flow_id("Water, river", "resources", "in water", "m3")
 RADON = flow_id("Radon-222", "emissions to air", "low. pop.", "Bq")
 GAS = flow_id("Gas, natural/m3", "resources", "in ground", "m3")
 PEAT = flow_id("Peat", "resources", "in ground", "kg")
+MINE_GAS = flow_id("Gas, mine, off-gas, process, coal mining/m3", "resources", "in ground", "Nm3")
 LAND = flow_id("Occupation, industrial area", "resources", "unspecified", "m2a")
+URANIUM = flow_id("Uranium", "resources", "land", "kg")
 #: _decide never touches its ``index`` argument for a pure Unmatched-in/Unmatched-out
 #: call (the freshwater check and _refine_unmatched are both index-free); an empty
 #: index documents that rather than passing None.
@@ -230,36 +236,48 @@ def test_location_and_caveats_are_carried(tmp_path):
     )
 
 
-@pytest.mark.parametrize(
-    "bafu_unit,ef_unit,expected",
-    [
-        ("kg", "kilogram", 1.0),
-        ("kilogram", "kg", 1.0),
-        ("m3", "cubic meter", 1.0),
-        ("cubic meter", "m3", 1.0),
-        ("kBq", "kBq", 1.0),
-        ("m2", "m2", 1.0),
-        ("m2*a", "m2*a", 1.0),
-        ("m2a", "m2*a", 1.0),  # BAFU spells it without the asterisk; same area-time
-        ("MJ", "megajoule", 1.0),
-        ("Bq", "kBq", 0.001),
-        ("kWh", "megajoule", 3.6),
-        ("m3", "megajoule", None),  # volume vs energy: no fixed conversion
-        ("kg", "kBq", None),  # mass vs activity: no fixed conversion
-        ("Nm3", "kilogram", None),  # volume vs mass: no fixed conversion
-        ("m2", "m2*a", None),  # area vs area-time: no fixed conversion
-        ("kg", "unknown-unit", None),  # unit outside the dimension table at all
-    ],
-)
-def test_unit_conversion_fixed_factors_and_cross_dimension_mismatches(
-    bafu_unit, ef_unit, expected
-):
-    assert unit_conversion(bafu_unit, ef_unit) == expected
+class _ForcedInclusiveMatchedSource(BafuEfMatchedSource):
+    """Test-only subclass forcing ``include_uncharacterised=True`` on the default,
+    characterised-only matched source -- pins that ``transform`` never emits a match
+    onto an uncharacterised target even if the flag were ever flipped by accident.
+    """
+
+    include_uncharacterised = True
 
 
-def test_natural_gas_volume_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_path):
+def test_matched_source_never_emits_an_uncharacterised_target_even_if_forced(tmp_path):
+    # "Mine gas" carries no CF-table factor at all but a synonym that exactly names the
+    # otherwise-unmapped mine off-gas BAFU flow, placed via the reso-grou bw-context
+    # crosswalk. With include_uncharacterised forced True, the pipeline itself would
+    # happily match onto it -- transform()'s own characterised guard must still
+    # withhold it (belt-and-braces alongside include_uncharacterised's normal default).
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            bw="reso-grou",
+        )
+    ]
+    root = _stage(tmp_path, vocab=vocab)
+    source = _ForcedInclusiveMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == MINE_GAS)
+    outcome = outcomes[flow]
+    # sanity: the inclusive index really does resolve a match onto the uncharacterised target
+    assert isinstance(outcome, Match) and outcome.code == "mine-gas-unchar"
+    assert not records[0]["inputs"].index.get(outcome.code).characterised
+    rows = source.transform(records)
+    assert MINE_GAS not in {r["source"]["code"] for r in rows}
+
+
+def test_natural_gas_volume_converts_via_energy_content_onto_the_fossil_resource_flow(tmp_path):
     # EF characterises fossil resources in megajoule (resource-use-fossils); a BAFU
-    # m3-denominated gas flow has no fixed volume -> energy conversion.
+    # m3-denominated natural-gas flow has a fixed ecoinvent v2 net calorific value
+    # (38.3 MJ/m3, decision 2026-09-13), so it converts rather than being withheld.
     cf = CF + [
         cf_row(
             "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
@@ -274,15 +292,99 @@ def test_natural_gas_volume_onto_a_fossil_resource_flow_is_withheld_as_unit_mism
     outcomes = dict(source.outcomes(records))
     flow = next(f for f in outcomes if f.code == GAS)
     outcome = outcomes[flow]
-    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
-    assert "m3" in outcome.detail and "megajoule" in outcome.detail
+    assert isinstance(outcome, Match)
+    entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
+    assert entry["conversion_factor"] == 38.3
+    assert "38.3 MJ/m3" in entry["comment"]
     rows = source.transform(records)
-    assert GAS not in {r["source"]["code"] for r in rows}
+    assert GAS in {r["source"]["code"] for r in rows}
 
 
-def test_peat_mass_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_path):
+def test_gas_mine_off_gas_volume_onto_the_fossil_resource_flow_is_withheld_as_unit_mismatch(
+    tmp_path,
+):
+    # "Gas, mine, off-gas, process, coal mining/m3" (unit Nm3) also candidates onto
+    # "Natural gas", but the energy-content table is keyed on the exact BAFU (name,
+    # unit) pair -- this name is not "Gas, natural/m3", so no factor applies and the
+    # cross-dimension (volume -> energy) conversion is withheld as before.
+    cf = CF + [
+        cf_row(
+            "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
+        )
+    ]
+    vocab = VOCAB + [
+        vocab_row(
+            "gas-mj",
+            "Natural gas",
+            alt=["Gas, natural/m3", "Gas, mine, off-gas, process, coal mining/m3"],
+        )
+    ]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == MINE_GAS)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
+    assert "Nm3" in outcome.detail and "megajoule" in outcome.detail
+    rows = source.transform(records)
+    assert MINE_GAS not in {r["source"]["code"] for r in rows}
+
+
+def test_uncharacterised_ef_flow_is_never_used_by_the_default_matched_source(tmp_path):
+    # Guard against phase 2 task 3's ``include_uncharacterised`` flag ever flipping to
+    # True by accident on this source (task 4 makes it a class attribute this source can
+    # opt into deliberately -- this test pins today's default, False). Stage an EF vocab
+    # row with no CF-table factor at all ("Mine gas") but a synonym that exactly names
+    # the otherwise-unmapped "Gas, mine, off-gas, process, coal mining/m3" BAFU flow, and
+    # a bw-context crosswalk (reso-grou) that places it in the same bucket ("resource")
+    # BAFU's flow is in. If the source's index ever included uncharacterised flows, this
+    # synonym would resolve a real match; with the flag at its default it must not.
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            bw="reso-grou",
+        )
+    ]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == MINE_GAS)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Unmatched) and outcome.reason == "no_ef_flow"
+    rows = source.transform(records)
+    assert MINE_GAS not in {r["source"]["code"] for r in rows}
+
+    # the coverage sidecar's own second pass runs over the inclusive index, so it
+    # correctly reports this exact scenario as bridge 8 (mapped, uncharacterised),
+    # never as rank 7 -- the matched source above never emits it.
+    coverage = BafuEfCoverageSource(
+        _config(
+            root,
+            name="bafu-ef-biosphere-coverage",
+            module="sentier_importers.sources.bafu.mappings_biosphere_coverage",
+            verb="coverage",
+            emit="coverage",
+        )
+    )
+    coverage_rows = _run(coverage, tmp_path)
+    mine_gas_row = next(r for r in coverage_rows if r["source"]["code"] == MINE_GAS)
+    assert mine_gas_row["status"] == "mapped"
+    assert mine_gas_row["bridge"] == 8
+    assert mine_gas_row["characterised"] is False
+
+
+def test_peat_energy_content_converts_onto_the_fossil_resource_flow(tmp_path):
     # same decision, the other cross-dimension direction: a BAFU kg-denominated peat
-    # flow has no fixed mass -> energy conversion onto EF's megajoule reference unit.
+    # flow has a fixed ecoinvent v2 net calorific value (9.9 MJ/kg), so it converts
+    # onto EF's megajoule reference unit instead of being withheld.
     cf = CF + [cf_row("peat", "peat", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)]
     vocab = VOCAB + [vocab_row("peat", "Peat")]
     root = _stage(tmp_path, cf=cf, vocab=vocab)
@@ -293,9 +395,82 @@ def test_peat_mass_onto_a_fossil_resource_flow_is_withheld_as_unit_mismatch(tmp_
     outcomes = dict(source.outcomes(records))
     flow = next(f for f in outcomes if f.code == PEAT)
     outcome = outcomes[flow]
-    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
+    assert isinstance(outcome, Match)
+    entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
+    assert entry["conversion_factor"] == 9.9
+    assert "9.9 MJ/kg" in entry["comment"]
     rows = source.transform(records)
-    assert PEAT not in {r["source"]["code"] for r in rows}
+    assert PEAT in {r["source"]["code"] for r in rows}
+
+
+def test_uranium_resource_branch_fallback_converts_via_energy_content(tmp_path):
+    # decision (b): "Uranium" is filed by BAFU under "land" (no extraction-medium
+    # information); with exactly one EF leaf reachable by plain name, it resolves
+    # through the resource-branch fallback, and Task 1's energy-content factor
+    # (560000 MJ/kg) still applies onto EF's megajoule reference unit.
+    cf = CF + [
+        cf_row("uranium", "uranium", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
+    ]
+    vocab = VOCAB + [vocab_row("uranium", "Uranium")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == URANIUM)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Match) and outcome.placement == "resource_branch_fallback"
+    entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
+    assert entry["target"]["unit"] == "megajoule"
+    assert entry["conversion_factor"] == 560_000
+    assert "BAFU files this resource under land" in entry["comment"]
+    assert "energy content 560000 MJ/kg" in entry["comment"]
+    rows = source.transform(records)
+    assert URANIUM in {r["source"]["code"] for r in rows}
+
+
+def test_resource_correction_flow_carries_its_own_caveat_onto_a_characterised_target(
+    tmp_path,
+):
+    # a "..., resource correction" flow is a correction entry against a substance's own
+    # extraction, not a distinct resource -- entry_for appends a caveat saying so,
+    # regardless of which tier/placement actually resolved the match.
+    cf = CF + [cf_row("iron", "iron", RES_GROUND, value=1.0)]
+    vocab = VOCAB + [vocab_row("iron", "Iron")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    (r,) = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    flow = BafuFlow("Iron, resource correction", "resources", "in ground", "kg")
+    match = Match(
+        code="iron", tier="name", placement="exact", location=None, candidates=1, caveats=()
+    )
+    entry = source.entry_for(flow, match, r["inputs"].index)
+    assert (
+        "source is a resource-correction flow, mapped to the extraction of the same "
+        "element" in entry["comment"]
+    )
+
+
+def test_coal_hard_alias_converts_via_energy_content(tmp_path):
+    # "Coal, hard" -> "Hard Coal" via the shipped alias; energy content 19.1 MJ/kg.
+    cf = CF + [
+        cf_row("coal", "hard coal", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
+    ]
+    vocab = VOCAB + [vocab_row("coal", "Hard Coal")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    (r,) = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    flow = BafuFlow("Coal, hard", "resources", "in ground", "kg")
+    match = r["inputs"].pipeline.match(flow, None)
+    assert isinstance(match, Match) and match.tier == "alias"
+    entry = source.entry_for(flow, match, r["inputs"].index)
+    assert entry["conversion_factor"] == 19.1
+    assert "19.1 MJ/kg" in entry["comment"]
 
 
 def test_uranium_mass_onto_an_ionising_radiation_flow_is_withheld_as_unit_mismatch(tmp_path):
@@ -355,12 +530,23 @@ def test_outcomes_returns_one_tuple_per_non_excluded_fixture_flow(tmp_path):
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
     )
     outcomes = source.outcomes(records)
-    assert {flow.code for flow, _ in outcomes} == {WATER, RADON, GAS, PEAT, LAND}
+    assert {flow.code for flow, _ in outcomes} == {
+        WATER,
+        RADON,
+        GAS,
+        PEAT,
+        MINE_GAS,
+        LAND,
+        URANIUM,
+    }
     assert all(isinstance(o, (Match, Unmatched)) for _, o in outcomes)
-    # Gas and Peat have no matching EF flow in the default fixture CF/VOCAB at all
+    # Gas, Peat, the mine off-gas and Uranium have no matching EF flow in the default
+    # fixture CF/VOCAB at all
     by_code = {flow.code: outcome for flow, outcome in outcomes}
     assert by_code[GAS].reason == "no_ef_flow"
     assert by_code[PEAT].reason == "no_ef_flow"
+    assert by_code[MINE_GAS].reason == "no_ef_flow"
+    assert by_code[URANIUM].reason == "no_ef_flow"
     assert isinstance(by_code[LAND], Match) and by_code[LAND].tier == "landuse"
 
 
@@ -487,14 +673,6 @@ def test_decide_reports_non_freshwater_for_both_match_and_unmatched_inputs(tmp_p
     assert salt == Unmatched(
         "non_freshwater", "EF water use characterises freshwater deprivation only"
     )
-    fossil = _decide(
-        BafuFlow("Water, fossil", "resources", "in water", "m3"),
-        Unmatched("ambiguous_substances", "z"),
-        _EMPTY_INDEX,
-    )
-    assert fossil == Unmatched(
-        "non_freshwater", "EF water use characterises freshwater deprivation only"
-    )
     # ...and it must override a real Match too: build a tiny index + pipeline where
     # "Water, salt, ocean" resolves (via a curated alias) to a real water-use flow.
     cf, vocab = write_ef_inputs(
@@ -510,6 +688,28 @@ def test_decide_reports_non_freshwater_for_both_match_and_unmatched_inputs(tmp_p
     outcome = _decide(flow, match, index)
     assert outcome == Unmatched(
         "non_freshwater", "EF water use characterises freshwater deprivation only"
+    )
+
+
+def test_water_fossil_no_longer_non_freshwater_resolves_via_alias_instead(tmp_path):
+    # Decision 2026-09-13 withdraws "Water, fossil" from _NON_FRESHWATER: it is taken
+    # as groundwater and resolved through the shipped "water, fossil" alias onto
+    # "Ground Water" instead, carrying that decision as a caveat.
+    cf, vocab = write_ef_inputs(
+        tmp_path,
+        [cf_row("gw", "ground water", RES_WATER, method="ef-3.1:water-use", value=1.0)],
+        [vocab_row("gw", "Ground Water", cas="7732-18-5")],
+    )
+    index = EfFlowIndex.from_files(cf, vocab)
+    pipeline = default_pipeline(index, load_aliases())
+    flow = BafuFlow("Water, fossil", "resources", "in water", "m3")
+    match = pipeline.match(flow, None)
+    assert isinstance(match, Match) and match.tier == "alias"  # sanity: the alias fires
+    outcome = _decide(flow, match, index)
+    assert isinstance(outcome, Match) and outcome.code == "gw"
+    assert outcome.caveats == (
+        "fossil water taken as groundwater (decision 2026-09-13; EF files all water "
+        "resources under renewable material resources from water)",
     )
 
 
@@ -590,7 +790,36 @@ def test_assembled_package_validates_against_the_randonneur_schema(tmp_path):
 
 
 def test_no_intermediate_database_identifier_in_output(tmp_path):
-    blob = json.dumps(_run(BafuEfMatchedSource(_config(_stage(tmp_path))), tmp_path)).lower()
+    # exercises both caveat-producing paths that used to name the intermediate database
+    # verbatim: an energy-content conversion (Peat, already in the fixture zip -- see
+    # test_peat_energy_content_converts_onto_the_fossil_resource_flow) and an
+    # ore-composite decomposition (injected the same way other tests in this module add
+    # a flow the fixture zip itself doesn't carry).
+    cf = CF + [
+        cf_row("peat", "peat", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0),
+        cf_row("zinc", "zinc", RES_GROUND, value=1.0),
+    ]
+    vocab = VOCAB + [vocab_row("peat", "Peat"), vocab_row("zinc", "Zinc")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    ore_flow = BafuFlow(
+        "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore",
+        "resources",
+        "in ground",
+        "kg",
+    )
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [ore_flow]))
+    rows = source.transform([{"inputs": augmented}])
+
+    # sanity: both caveat-producing paths actually fired in this fixture
+    assert any("net calorific value" in r.get("comment", "") for r in rows)
+    assert any("ore composite" in r.get("comment", "") for r in rows)
+
+    blob = json.dumps(rows).lower()
     assert "ecoinvent" not in blob and "biosphere3" not in blob
 
 

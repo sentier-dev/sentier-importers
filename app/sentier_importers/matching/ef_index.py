@@ -8,6 +8,12 @@
 
 The CF vector keeps the global (location-less) factor per method; location-specific
 rows (land use, water use, some regionalised categories) are not part of flow identity.
+
+An EF vocab row that carries no factor at all (``characterised=False``) can still be
+placed and indexed, opt-in via ``include_uncharacterised``: its context comes not from
+the CF table (it has none) but from its ``additional_notations`` ``bw-context:<code>``
+entry, resolved through the ``matching.bw_context`` crosswalk. A code with no EF leaf
+(``envi-biot``) or a row with no ``bw-context`` notation at all is skipped, not indexed.
 """
 
 from __future__ import annotations
@@ -20,11 +26,19 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 from sentier_importers.core.errors import ParseError
+from sentier_importers.matching.bw_context import context_for
 from sentier_importers.matching.compartments import bucket_of_ef_context, leaf_of
 
 EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
 _CF_COLUMNS = ["method_id", "flow", "flow_name", "factor_value", "flow_context", "location"]
-_VOCAB_COLUMNS = ["iri", "pref_label", "alt_labels", "cas_number", "source"]
+_VOCAB_COLUMNS = [
+    "iri",
+    "pref_label",
+    "alt_labels",
+    "cas_number",
+    "source",
+    "additional_notations",
+]
 _SIGNIFICANT_DIGITS = 12
 
 #: EF 3.1 / ILCD reference-unit convention, keyed by the one method that fixes a
@@ -34,6 +48,21 @@ _MJ_METHOD = "ef-3.1:resource-use-fossils"
 _KBQ_METHOD = "ef-3.1:ionising-radiation-human-health"
 _M3_METHOD = "ef-3.1:water-use"
 _LAND_METHOD = "ef-3.1:land-use"
+
+#: An uncharacterised vocab row's context comes only from the ``bw-context`` crosswalk
+#: (``matching.bw_context.BW_CONTEXT_PATH``), and that crosswalk has no code at all for
+#: EF's ``Non-renewable energy resources from ground`` leaf or for any renewable-energy
+#: resource branch (its resource codes only ever reach the element/material leaves --
+#: ``reso-grou``'s own leaf is literally "...element resources...", see
+#: ``bw_context.py``). So a BAFU/EF resource flow that is actually an ENERGY resource by
+#: name (an ecoinvent-style "Energy, <form>, converted", a "Primary Energy ..." label,
+#: an oil-sand or pit-methane flow) can never land on the right branch through this
+#: crosswalk, no matter which code placed it -- it is always on the wrong (element or
+#: material) leaf. Such a row is marked ``context_uncertain`` unconditionally, not just
+#: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``; also imported by
+#: ``mappings_biosphere_matched._decide``, which withholds a rank-8 match onto one of
+#: these entirely (``context_unresolved``) rather than merely flag it uncertain.
+UNCERTAIN_RESOURCE_NAME = re.compile(r"^(Energy|Primary Energy|Oil Sand|Pit Methane)\b", re.I)
 
 
 def normalise_cas(cas: str | None) -> str | None:
@@ -57,6 +86,15 @@ class EfFlow:
     context: tuple[str, ...]
     synonyms: tuple[str, ...] = ()
     cas: str | None = None
+    #: ``False`` for a flow indexed only via ``include_uncharacterised`` (no CF
+    #: vector at all -- ``vector``/``identity`` are ``{}``/``()`` and
+    #: ``reference_unit`` is ``None`` for it).
+    characterised: bool = True
+    #: ``True`` when this flow's context was resolved through one of
+    #: ``bw_context.AMBIGUOUS_CODES`` -- the majority leaf was used, but a real
+    #: minority of flows under that code sit elsewhere. Always ``False`` for a
+    #: characterised flow.
+    context_uncertain: bool = False
 
     @property
     def context_path(self) -> str:
@@ -72,7 +110,9 @@ class EfFlow:
 
 
 class EfFlowIndex:
-    """Lookup index over the EF 3.1 flows that carry at least one characterization factor.
+    """Lookup index over EF 3.1 flows: by default only those that carry at least one
+    characterization factor, plus uncharacterised ones too when built with
+    ``include_uncharacterised=True`` (see ``from_tables``).
 
     Every lookup's ``bucket`` argument must be a value produced by
     ``compartments.bucket_of_bafu_category`` or ``compartments.bucket_of_ef_context``
@@ -83,7 +123,19 @@ class EfFlowIndex:
     or mutate any of these results without affecting the index.
     """
 
-    def __init__(self, flows: Iterable[EfFlow], vectors: dict[str, dict[str, float]]) -> None:
+    def __init__(
+        self,
+        flows: Iterable[EfFlow],
+        vectors: dict[str, dict[str, float]],
+        *,
+        includes_uncharacterised: bool = False,
+    ) -> None:
+        #: Mirrors the ``include_uncharacterised`` flag this index was built with (see
+        #: ``from_tables``) -- not whether any uncharacterised flow actually ended up
+        #: indexed, just what the index was asked to include. ``MatchPipeline`` reads
+        #: this to phrase a ``no_ef_flow`` detail honestly: "with a factor" only makes
+        #: sense to say when the search really was restricted to factor-bearing flows.
+        self.includes_uncharacterised = includes_uncharacterised
         self._flows: dict[str, EfFlow] = {}
         self._vectors: dict[str, dict[str, float]] = {code: dict(v) for code, v in vectors.items()}
         by_name: dict[tuple[str, str | None], list[EfFlow]] = {}
@@ -111,8 +163,22 @@ class EfFlowIndex:
         )
 
     @classmethod
-    def from_tables(cls, cf_rows: Iterable[dict], vocab_rows: Iterable[dict]) -> "EfFlowIndex":
-        """Build an index from CF table rows and vocab shard rows already loaded in memory."""
+    def from_tables(
+        cls,
+        cf_rows: Iterable[dict],
+        vocab_rows: Iterable[dict],
+        *,
+        include_uncharacterised: bool = False,
+    ) -> "EfFlowIndex":
+        """Build an index from CF table rows and vocab shard rows already loaded in memory.
+
+        When ``include_uncharacterised`` is ``True``, every EF vocab row whose code
+        carries no CF-table context is also indexed (``EfFlow.characterised=False``),
+        placed via ``bw_context.context_for`` on its ``additional_notations``. A row
+        whose ``bw-context`` code has no EF leaf, or that carries no ``bw-context``
+        notation at all, is skipped. Default ``False`` reproduces the exact previous
+        behaviour (characterised flows only).
+        """
         labels = {_code(r["iri"]): r for r in vocab_rows if (r.get("source") or "") == EF_SOURCE}
         contexts: dict[str, tuple[str, str]] = {}
         vectors: dict[str, dict[str, float]] = {}
@@ -143,24 +209,67 @@ class EfFlowIndex:
             )
             for code, (cf_name, context) in contexts.items()
         ]
-        # a flow only exists once it has a context; drop any vector accumulated for a
-        # context-less CF row so it cannot outlive the flow it would have belonged to
-        return cls(flows, {code: v for code, v in vectors.items() if code in contexts})
+        if include_uncharacterised:
+            for code, row in labels.items():
+                if code in contexts:
+                    continue  # already indexed as a characterised flow
+                path, uncertain = context_for(row.get("additional_notations") or [])
+                if path is None:
+                    continue  # no EF leaf for this code, or no bw-context notation at all
+                name = (row.get("pref_label") or "").strip()
+                if bucket_of_ef_context(path) == "resource" and UNCERTAIN_RESOURCE_NAME.match(
+                    name
+                ):
+                    # the crosswalk cannot reach an energy resource leaf at all (see
+                    # UNCERTAIN_RESOURCE_NAME) -- this placement is wrong regardless
+                    # of which code produced it.
+                    uncertain = True
+                flows.append(
+                    EfFlow(
+                        code=code,
+                        name=name,
+                        context=tuple(p.strip() for p in path.split("/") if p.strip()),
+                        synonyms=tuple(str(s) for s in (row.get("alt_labels") or [])),
+                        cas=normalise_cas(row.get("cas_number")),
+                        characterised=False,
+                        context_uncertain=uncertain,
+                    )
+                )
+        # a characterised flow only exists once it has a context; drop any vector
+        # accumulated for a context-less CF row so it cannot outlive the flow it
+        # would have belonged to
+        return cls(
+            flows,
+            {code: v for code, v in vectors.items() if code in contexts},
+            includes_uncharacterised=include_uncharacterised,
+        )
 
     @classmethod
-    def from_files(cls, cf_parquet: Path, vocab_dir: Path) -> "EfFlowIndex":
+    def from_files(
+        cls, cf_parquet: Path, vocab_dir: Path, *, include_uncharacterised: bool = False
+    ) -> "EfFlowIndex":
         """Build an index by reading the CF parquet file and every vocab shard parquet file."""
         cf_rows = pq.read_table(cf_parquet, columns=_CF_COLUMNS).to_pylist()
-        return cls.from_tables(cf_rows, cls._read_vocab_dir(vocab_dir))
+        return cls.from_tables(
+            cf_rows,
+            cls._read_vocab_dir(vocab_dir),
+            include_uncharacterised=include_uncharacterised,
+        )
 
     @classmethod
-    def from_bytes(cls, cf_parquet_bytes: bytes, vocab_dir: Path) -> "EfFlowIndex":
+    def from_bytes(
+        cls, cf_parquet_bytes: bytes, vocab_dir: Path, *, include_uncharacterised: bool = False
+    ) -> "EfFlowIndex":
         """Build an index from the CF parquet file's raw bytes (e.g. already fetched
         through the content-addressed cache, so the cache/offline contract holds) and
         every vocab shard parquet file read from ``vocab_dir`` on disk.
         """
         cf_rows = pq.read_table(io.BytesIO(cf_parquet_bytes), columns=_CF_COLUMNS).to_pylist()
-        return cls.from_tables(cf_rows, cls._read_vocab_dir(vocab_dir))
+        return cls.from_tables(
+            cf_rows,
+            cls._read_vocab_dir(vocab_dir),
+            include_uncharacterised=include_uncharacterised,
+        )
 
     @staticmethod
     def _read_vocab_dir(vocab_dir: Path) -> list[dict]:
@@ -181,8 +290,14 @@ class EfFlowIndex:
         """Hashable CF-identity key: the vector's ``(method_id, factor)`` pairs, sorted."""
         return tuple(sorted(self._vectors.get(code, {}).items()))
 
-    def reference_unit(self, code: str) -> str:
+    def reference_unit(self, code: str) -> str | None:
         """The EF 3.1 reference unit for ``code``, inferred from method membership.
+
+        Returns ``None`` when ``code`` is an uncharacterised flow
+        (``EfFlow.characterised=False``): it carries no CF vector at all, so there is
+        no method membership to infer a unit from. An unknown ``code`` (not indexed
+        at all) is unaffected by this and still defaults to ``"kilogram"`` below, same
+        as before.
 
         The CF table (``characterization-factors.parquet``) carries no flow-unit
         column at all -- only a ``factor_value`` per ``(flow, method)`` -- so a
@@ -200,6 +315,9 @@ class EfFlowIndex:
         anything starting with "occupation" -- rank 3's published payload uses
         ``m2*a`` for exactly the flows whose leaf is ``land occupation``.
         """
+        flow = self.get(code)
+        if flow is not None and not flow.characterised:
+            return None
         methods = set(self.vector(code))
         if _MJ_METHOD in methods:
             return "megajoule"
@@ -208,7 +326,6 @@ class EfFlowIndex:
         if _M3_METHOD in methods:
             return "cubic meter"
         if _LAND_METHOD in methods:
-            flow = self.get(code)
             return "m2*a" if flow is not None and flow.leaf == "land occupation" else "m2"
         return "kilogram"
 

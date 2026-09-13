@@ -65,7 +65,7 @@ def test_processes_obsolete_sector_flags_comment():
 def test_exchanges_filters_to_sector_processes():
     rows = _exchanges()
     assert {r["process_id"] for r in rows} == {UUID_ELEC}
-    assert len(rows) == 8
+    assert len(rows) == 10
 
 
 def test_exchanges_flow_ids_and_types():
@@ -115,7 +115,8 @@ def test_registry_declares_full_bafu_family():
     # 11 sectors x 2 inventory tables + source record + 11 per-sector process
     # term files + 6 per-compartment flow term files + the EF crosswalk (rank 3)
     # + the EF public-matching crosswalk (rank 7) + the coverage sidecar
-    assert len(bafu) == 43
+    # + the EF nomenclature crosswalk (rank 8)
+    assert len(bafu) == 44
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
@@ -123,6 +124,7 @@ def test_registry_declares_full_bafu_family():
         "bafu-ef-biosphere",
         "bafu-ef-biosphere-matched",
         "bafu-ef-coverage",
+        "bafu-ef-biosphere-nomenclature",
     ]
     # the bridge folder contract names the file, not the source
     assert {m.emit_filename for m in mappings} == {"biosphere", "coverage"}
@@ -153,10 +155,27 @@ def test_registry_declares_full_bafu_family():
 def test_coverage_sidecar_describes_the_same_computation_as_the_matched_payload():
     # the coverage sidecar must never drift from what bafu-ef-biosphere-matched actually
     # ran: same primary fetch, same named inputs, so a reader can trust coverage.json as
-    # an account of that payload rather than of some other run.
+    # an account of that payload rather than of some other run. Unlike the rank-8
+    # nomenclature source, the coverage sidecar recomputes rank 7 itself (two-pass) and so
+    # carries no rank7 input at all.
     bafu = {c.name: c for c in load_registry() if c.name.startswith("bafu")}
     matched = bafu["bafu-ef-biosphere-matched"]
     coverage = bafu["bafu-ef-coverage"]
     assert coverage.fetch_url == matched.fetch_url
     assert coverage.fetch_format == matched.fetch_format
     assert coverage.inputs == matched.inputs
+    assert "rank7" not in coverage.inputs
+
+
+def test_nomenclature_source_shares_the_matched_source_inputs_plus_rank7():
+    # rank 8 must run over exactly the same BAFU universe and EF public inputs as rank 7
+    # (fetch, ef_cfs, ef_vocab, rank3, rank6) -- only the extra rank7 input (rank 8's own
+    # exclusion set) sets it apart.
+    bafu = {c.name: c for c in load_registry() if c.name.startswith("bafu")}
+    matched = bafu["bafu-ef-biosphere-matched"]
+    nomenclature = bafu["bafu-ef-biosphere-nomenclature"]
+    assert nomenclature.fetch_url == matched.fetch_url
+    assert nomenclature.fetch_format == matched.fetch_format
+    for name in ("ef_cfs", "ef_vocab", "rank3", "rank6"):
+        assert nomenclature.inputs[name] == matched.inputs[name]
+    assert "rank7" in nomenclature.inputs and "rank7" not in matched.inputs

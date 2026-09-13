@@ -8,6 +8,7 @@ from sentier_importers.matching.matchers import (
     CasMatcher,
     ExactNameMatcher,
     LandUseMatcher,
+    OreCompositeMatcher,
     QualifierMatcher,
     RegionStripMatcher,
     SynonymMatcher,
@@ -207,6 +208,49 @@ def test_shipped_alias_file_loads_lowercased_and_has_the_seed_entries():
     assert all(k == k.lower() for k in aliases)
     assert all(isinstance(v, Alias) and v.target for v in aliases.values())
     assert aliases["particulates, < 10 um"].caveat is not None
+
+
+def test_shipped_alias_file_has_all_thirteen_entries_added_by_this_task():
+    # decisions (c) (2026-09-13): fossil water taken as groundwater, and BAFU
+    # "Nitrogen" taken as total nitrogen; both carry a caveat naming the decision. The
+    # other ten are plain spelling aliases (no caveat), plus the three oxygen-demand
+    # targets that carry no EF 3.1 factor today. The thirteenth (decision (b), Task 2)
+    # is the /kg twin of the existing "water, process, unspecified natural origin/m3"
+    # alias -- without it, the /kg flows' single EF leaf holds several
+    # differently-factored candidates and the resource-branch fallback reports them
+    # ambiguous_substances instead.
+    aliases = load_aliases()
+    expected = {
+        "water, fossil": Alias(
+            target="Ground Water",
+            caveat=(
+                "fossil water taken as groundwater (decision 2026-09-13; EF files all "
+                "water resources under renewable material resources from water)"
+            ),
+        ),
+        "nitrogen": Alias(
+            target="Nitrogen, Total (excluding N2)",
+            caveat=(
+                "BAFU 'Nitrogen' emitted to water taken as total nitrogen (decision 2026-09-13)"
+            ),
+        ),
+        "coal, brown": Alias(target="Brown Coal"),
+        "coal, hard": Alias(target="Hard Coal"),
+        "oil, crude": Alias(target="Crude Oil"),
+        "1-butanol": Alias(target="Butanol"),
+        "azadirachtin a+b": Alias(target="Azadirachtin"),
+        "benzo(g,h,i)perylene": Alias(target="Benzo(ghi)perylene"),
+        "propylene glycol methyl ether acetate": Alias(
+            target="Propylene Glycol Monomethyl Ether Acetate"
+        ),
+        "bod5, biological oxygen demand": Alias(target="Biological Oxygen Demand"),
+        "cod, chemical oxygen demand": Alias(target="Chemical Oxygen Demand"),
+        "toc, total organic carbon": Alias(target="Total Organic Carbon"),
+        "water, process, unspecified natural origin/kg": Alias(target="Water"),
+    }
+    assert len(expected) == 13
+    for key, alias in expected.items():
+        assert aliases[key] == alias
 
 
 def test_load_aliases_raises_on_missing_aliases_key(tmp_path):
@@ -476,6 +520,78 @@ def test_by_class_returns_a_code_sorted_list(land_index):
     assert found == sorted(found, key=lambda f: f.code)
 
 
+# --- OreCompositeMatcher ----------------------------------------------------------
+
+ORE_CF = [
+    cf_row("zinc", "zinc", RES_GROUND, value=1.0),
+    cf_row("copper", "copper", RES_GROUND, value=1.0),
+]
+ORE_VOCAB = [
+    vocab_row("zinc", "Zinc"),
+    vocab_row("copper", "Copper"),
+]
+
+
+@pytest.fixture(scope="module")
+def ore_index(tmp_path_factory):
+    """A tiny EF index of bare-element resource flows for OreCompositeMatcher."""
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("ore"), ORE_CF, ORE_VOCAB)
+    )
+
+
+def _ground_resource(name, unit="kg"):
+    return BafuFlow(name, "resources", "in ground", unit)
+
+
+def test_ore_composite_matcher_tier():
+    assert OreCompositeMatcher.tier == "ore"
+
+
+def test_ore_composite_matcher_decomposes_a_zinc_ore(ore_index):
+    flow = _ground_resource("Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore")
+    got = OreCompositeMatcher().candidates(flow, None, ore_index)
+    assert [c.flow.code for c in got] == ["zinc"]
+    assert got[0].tier == "ore"
+    assert (
+        got[0].caveat
+        == "ore composite of the BAFU-2026 source nomenclature; the amount is kg of Zinc"
+    )
+
+
+def test_ore_composite_matcher_decomposes_a_copper_ore_with_the_crude_ore_spelling(ore_index):
+    flow = _ground_resource(
+        "Copper, 0.99% in sulfide, Cu 0.36% and Mo 8.2E-3% in crude ore, in ground"
+    )
+    got = OreCompositeMatcher().candidates(flow, None, ore_index)
+    assert [c.flow.code for c in got] == ["copper"]
+    assert (
+        got[0].caveat
+        == "ore composite of the BAFU-2026 source nomenclature; the amount is kg of Copper"
+    )
+
+
+def test_ore_composite_matcher_refuses_a_compound_name(ore_index):
+    # "TiO2" is not a plain capitalised element word: the leading segment names a
+    # compound, and collapsing it onto an element would assert the wrong substance.
+    flow = _ground_resource("TiO2, 54% in ilmenite, 2.6% in crude ore")
+    assert OreCompositeMatcher().candidates(flow, None, ore_index) == []
+
+
+def test_ore_composite_matcher_refuses_a_bare_element_name(ore_index):
+    assert OreCompositeMatcher().candidates(_ground_resource("Copper"), None, ore_index) == []
+
+
+def test_ore_composite_matcher_is_resource_bucket_only(ore_index):
+    flow = BafuFlow(
+        "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore",
+        "emissions to air",
+        "unspecified",
+        "kg",
+    )
+    assert OreCompositeMatcher().candidates(flow, None, ore_index) == []
+
+
 # --- tier-ordering invariant: land names never resolve via name/synonym/cas ------
 
 
@@ -517,3 +633,46 @@ def test_synonym_matcher_does_not_steal_a_land_use_name(tmp_path_factory):
     got = pipeline.match(BafuFlow("Occupation, dump site", "resources", "land", "m2a"), None)
     assert isinstance(got, Match)
     assert got.tier == "landuse" and got.code == "dump-site"
+
+
+def test_synonym_matcher_does_not_steal_an_ore_composite_name(tmp_path_factory):
+    # a hypothetical EF resource flow whose alt_label happens to collide with the ore
+    # composite's own name: SynonymMatcher must not resolve it before
+    # OreCompositeMatcher gets a chance. OreCompositeMatcher is ordered right after
+    # LandUseMatcher (before SynonymMatcher) in default_pipeline's ``named`` list for
+    # exactly this reason -- it would return tier "synonym" (onto the wrong,
+    # non-decomposed flow) instead of "ore" (onto the bare element) otherwise.
+    name = "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore"
+    cf = [
+        cf_row("zinc", "zinc", RES_GROUND, value=1.0),
+        cf_row("hijack", "hijack resource", RES_GROUND, value=1.0),
+    ]
+    vocab = [
+        vocab_row("zinc", "Zinc"),
+        vocab_row("hijack", "Hijack Resource", alt=[name]),
+    ]
+    idx = EfFlowIndex.from_files(*write_ef_inputs(tmp_path_factory.mktemp("ore-order"), cf, vocab))
+    pipeline = default_pipeline(idx, {})
+    got = pipeline.match(BafuFlow(name, "resources", "in ground", "kg"), None)
+    assert isinstance(got, Match)
+    assert got.tier == "ore" and got.code == "zinc"
+
+
+def test_ore_composite_matcher_restricts_to_the_element_resources_leaf(tmp_path_factory):
+    # two EF flows named "Zinc" in the resource bucket on different leafs: the
+    # decomposition must resolve onto the element-resources leaf only, never onto a
+    # same-named flow filed under an unrelated resource leaf (e.g. energy resources).
+    cf = [
+        cf_row("zinc-element", "zinc", RES_GROUND, value=1.0),
+        cf_row(
+            "zinc-energy",
+            "zinc",
+            "Resources / Resources from ground / Non-renewable energy resources from ground",
+            value=1.0,
+        ),
+    ]
+    vocab = [vocab_row("zinc-element", "Zinc"), vocab_row("zinc-energy", "Zinc")]
+    idx = EfFlowIndex.from_files(*write_ef_inputs(tmp_path_factory.mktemp("ore-leaf"), cf, vocab))
+    flow = _ground_resource("Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore")
+    got = OreCompositeMatcher().candidates(flow, None, idx)
+    assert [c.flow.code for c in got] == ["zinc-element"]

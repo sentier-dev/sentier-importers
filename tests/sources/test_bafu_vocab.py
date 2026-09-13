@@ -79,8 +79,10 @@ def test_vocab_flows_filters_to_compartment_file():
     assert {r["pref_label"] for r in resource_rows} == {
         "Water, river",
         "Gas, natural/m3",
+        "Gas, mine, off-gas, process, coal mining/m3",
         "Peat",
         "Occupation, industrial area",
+        "Uranium",
     }
     assert rows_for("emissions-to-soil") == []
 
@@ -88,7 +90,9 @@ def test_vocab_flows_filters_to_compartment_file():
 def test_vocab_flows_distinct_biosphere_terms():
     src = BafuVocabFlowsSource(_cfg("bafu-elementary-flows", "elementary-flows", "vocab_flows"))
     rows = src.transform(src.parse(fixture_zip()))
-    assert len(rows) == 6  # CO2 + river water + radon-222 + natural gas + peat + land occupation
+    # CO2 + river water + radon-222 + natural gas + mine off-gas + peat + land
+    # occupation + uranium
+    assert len(rows) == 8
     co2 = next(r for r in rows if r["pref_label"] == "Carbon dioxide, fossil")
     fid = ecospold.flow_id("Carbon dioxide, fossil", "emissions to air", "unspecified", "kg")
     assert co2["iri"] == f"https://vocab.sentier.dev/flows/{fid}"

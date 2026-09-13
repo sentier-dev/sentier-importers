@@ -1138,7 +1138,8 @@ sources:
     enabled: false
 
   # sentier-mappings rank 7: bafu-2026-v1 → EF 3.1 by PUBLIC matching (name, land-use class,
-  # synonym, qualifier spelling, curated alias, the same on the region-stripped name, CAS last)
+  # ore composite, synonym, qualifier spelling, curated alias, the same on the region-stripped
+  # name, CAS last)
   # against sentier-methods' CF table + sentier-vocab's EF shards, for flows neither rank 3 nor
   # rank 6 maps. Strict sub-compartment placement with an explicit, commented `unspecified`
   # fallback. Plan: dds wiki 2026-09-12-bafu-ef-remaining-flows. Regenerate-locally with a fresh
@@ -1164,11 +1165,14 @@ sources:
     enabled: false
 
   # Same inputs and computation, emits the non-normative coverage.json sidecar: one row per
-  # bafu-2026-v1 flow, mapped (bridge 3/6/7, tier -- name, land-use class, synonym, qualifier
-  # spelling, curated alias, the same on the region-stripped name, CAS last -- and placement)
+  # bafu-2026-v1 flow, mapped (bridge 3/6/7/8, tier -- name, land-use class, ore composite,
+  # synonym, qualifier spelling, curated alias, the same on the region-stripped name, CAS last
+  # -- and placement)
   # or unmapped (reason, detail); rows of substances with conflicting source CAS values carry
-  # `cas_conflict`. Verb `coverage` (the shape of the other *_review.json sidecars; invisible
-  # to sentier-mappings CI by design).
+  # `cas_conflict`. Reports bridge 7 and bridge 8 via its own two-pass computation (the
+  # characterised-only index for 7, the inclusive index for 8, over what 7 leaves uncovered) so
+  # it never needs the rank-7 payload as an input. Verb `coverage` (the shape of the other
+  # *_review.json sidecars; invisible to sentier-mappings CI by design).
   - name: bafu-ef-coverage                     # emits coverage.json
     module: sentier_importers.sources.bafu.mappings_biosphere_coverage
     target: sentier_mappings
@@ -1187,4 +1191,31 @@ sources:
       name: bafu-2026-v1__ef-3.1-coverage
       version: 0.1.0
       verb: coverage
+    enabled: false
+
+  # sentier-mappings rank 8: NOMENCLATURE alignment for BAFU flows whose EF 3.1 counterpart exists in
+  # sentier-vocab but carries no factor in any EF 3.1 method (impact zero by construction). Same
+  # matching as rank 7 on the index that includes uncharacterised EF flows (placed via the Brightway
+  # context crosswalk, matching/bw_context.py), run only over the flows ranks 3, 6 and 7 leave
+  # uncovered. Every entry says so in its comment. Decision 2026-09-13. Regenerate-locally
+  # with a fresh --cache-dir, AFTER bafu-ef-biosphere-matched (it reads the rank-7 payload).
+  - name: bafu-ef-biosphere-nomenclature       # emits biosphere.json
+    module: sentier_importers.sources.bafu.mappings_biosphere_nomenclature
+    target: sentier_mappings
+    category: 08-bafu-2026-v1__ef-3.1
+    emit_filename: biosphere
+    fetch:
+      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      format: zip
+    inputs:
+      rank3: "file:///home/laurenz/dds/sentier-mappings/data/03-bafu-2026-v1__ef-3.1/biosphere.json"
+      rank6: "file:///home/laurenz/dds/sentier-mappings/data/06-bafu-2026-v1__ef-3.1/biosphere.json"
+      rank7: "file:///home/laurenz/dds/sentier-mappings/data/07-bafu-2026-v1__ef-3.1/biosphere.json"
+      ef_cfs: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      ef_vocab: "file:///home/laurenz/dds/sentier-vocab/data/elementary-flows"
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere-nomenclature
+      version: 0.1.0
+      verb: replace
     enabled: false
