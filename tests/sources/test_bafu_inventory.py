@@ -2,6 +2,7 @@
 
 import math
 
+from sentier_importers.core.registry import load_registry
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.sources.bafu import ecospold
 from sentier_importers.sources.bafu.inventory_exchanges import BafuInventoryExchangesSource
@@ -64,7 +65,7 @@ def test_processes_obsolete_sector_flags_comment():
 def test_exchanges_filters_to_sector_processes():
     rows = _exchanges()
     assert {r["process_id"] for r in rows} == {UUID_ELEC}
-    assert len(rows) == 4
+    assert len(rows) == 8
 
 
 def test_exchanges_flow_ids_and_types():
@@ -110,18 +111,21 @@ def test_exchanges_uncertainty_mapping():
 
 
 def test_registry_declares_full_bafu_family():
-    from sentier_importers.core.registry import load_registry
-
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
     # 11 sectors x 2 inventory tables + source record + 11 per-sector process
-    # term files + 6 per-compartment flow term files + the EF crosswalk
-    assert len(bafu) == 41
+    # term files + 6 per-compartment flow term files + the EF crosswalk (rank 3)
+    # + the EF public-matching crosswalk (rank 7) + the coverage sidecar
+    assert len(bafu) == 43
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
-    assert [c.name for c in mappings] == ["bafu-ef-biosphere"]
+    assert [c.name for c in mappings] == [
+        "bafu-ef-biosphere",
+        "bafu-ef-biosphere-matched",
+        "bafu-ef-coverage",
+    ]
     # the bridge folder contract names the file, not the source
-    assert mappings[0].emit_filename == "biosphere"
+    assert {m.emit_filename for m in mappings} == {"biosphere", "coverage"}
 
     inventory = [c for c in bafu if c.target == "sentier_inventory"]
     assert len(inventory) == 22
@@ -144,3 +148,15 @@ def test_registry_declares_full_bafu_family():
     assert provenance.emit_filename == "bafu-2026"
     # delivered payload files are content-named, never source-named
     assert all("bafu" not in c.emit_filename for c in vocab if c.category != "sources")
+
+
+def test_coverage_sidecar_describes_the_same_computation_as_the_matched_payload():
+    # the coverage sidecar must never drift from what bafu-ef-biosphere-matched actually
+    # ran: same primary fetch, same named inputs, so a reader can trust coverage.json as
+    # an account of that payload rather than of some other run.
+    bafu = {c.name: c for c in load_registry() if c.name.startswith("bafu")}
+    matched = bafu["bafu-ef-biosphere-matched"]
+    coverage = bafu["bafu-ef-coverage"]
+    assert coverage.fetch_url == matched.fetch_url
+    assert coverage.fetch_format == matched.fetch_format
+    assert coverage.inputs == matched.inputs

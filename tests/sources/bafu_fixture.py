@@ -50,6 +50,26 @@ _ELEC = """<?xml version='1.0' encoding='UTF-8'?>
         uncertaintyType="0" unit="m3">
         <inputGroup>4</inputGroup>
       </exchange>
+      <exchange CASNumber="014859-67-7" category="emissions to air" subCategory="low. pop."
+        meanValue="2.0" name="Radon-222" number="203"
+        uncertaintyType="0" unit="Bq">
+        <outputGroup>4</outputGroup>
+      </exchange>
+      <exchange category="resources" subCategory="in ground"
+        meanValue="1.0" name="Gas, natural/m3" number="204"
+        uncertaintyType="0" unit="m3">
+        <inputGroup>4</inputGroup>
+      </exchange>
+      <exchange category="resources" subCategory="in ground"
+        meanValue="0.2" name="Peat" number="205"
+        uncertaintyType="0" unit="kg">
+        <inputGroup>4</inputGroup>
+      </exchange>
+      <exchange category="resources" subCategory="unspecified"
+        meanValue="0.05" name="Occupation, industrial area" number="206"
+        uncertaintyType="0" unit="m2a">
+        <inputGroup>4</inputGroup>
+      </exchange>
     </flowData>
   </dataset>
 </ecoSpold>
