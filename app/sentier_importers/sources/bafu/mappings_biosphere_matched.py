@@ -110,14 +110,52 @@ ENERGY_CONTENT: dict[tuple[str, str], float] = {
     ("Gas, natural/m3", "Nm3"): 38.3,
 }
 
+#: BAFU unit -> (EF spelling of that unit's physical dimension, factor onto it), used
+#: only for an uncharacterised EF target (rank 8, ``mappings_biosphere_nomenclature``):
+#: such a target carries no CF vector at all, so ``EfFlowIndex.reference_unit`` has
+#: nothing to infer a reference unit from, and the plain unit-string respelling below
+#: stands in for it. Impact is zero by construction regardless of the unit chosen, so
+#: this is a nomenclature courtesy, not a physical-scale assertion the way
+#: ``unit_conversion``/``ENERGY_CONTENT`` are. A unit not listed here is passed through
+#: unchanged with no factor.
+_NOMENCLATURE_UNITS: dict[str, tuple[str, float | None]] = {
+    "kg": ("kilogram", None),
+    "Bq": ("kBq", 0.001),
+    "kBq": ("kBq", None),
+    "m3": ("cubic meter", None),
+    "Nm3": ("cubic meter", None),
+    "MJ": ("megajoule", None),
+    "kWh": ("megajoule", 3.6),
+    "m2": ("m2", None),
+    "m2a": ("m2*a", None),
+}
+
+
+def nomenclature_unit(bafu_unit: str) -> tuple[str, float | None]:
+    """The EF spelling of ``bafu_unit``'s dimension, and a factor onto it (or ``None``).
+
+    Used only when the match target is uncharacterised (rank 8): such a target has no
+    EF reference unit at all (``EfFlowIndex.reference_unit`` returns ``None`` for it),
+    so this is what ``entry_for`` uses to fill ``target["unit"]``/``conversion_factor``
+    instead. ``bafu_unit`` outside :data:`_NOMENCLATURE_UNITS` is returned unchanged
+    with no factor -- this is a labelling courtesy, not a claim of physical accuracy.
+    """
+    return _NOMENCLATURE_UNITS.get(bafu_unit, (bafu_unit, None))
+
 
 @dataclass(frozen=True)
 class ParsedInputs:
     """Everything ``BafuEfMatchedSource.parse`` builds once, for ``outcomes``/``transform``
     to reuse: the BAFU flow universe, the per-substance CAS table (and its conflicts,
-    for the sibling coverage source to report), the rank-3 and rank-6 source-code sets
-    (kept separate so the coverage sidecar can tell which bridge mapped a flow; see
-    ``excluded``), the EF flow index and the matching pipeline built over it.
+    for the sibling coverage source to report), the rank-3, rank-6 and rank-7
+    source-code sets (kept separate so the coverage sidecar can tell which bridge
+    mapped a flow; see ``excluded``), the EF flow index and the matching pipeline built
+    over it.
+
+    ``rank7_codes`` is empty unless the registry entry declares a ``rank7`` input (only
+    the rank-8 nomenclature source does): rank 7 and rank 8 both run over the
+    characterised-only index's leftovers, so rank 8 must also skip whatever rank 7
+    itself mapped, not just rank 3/6.
     """
 
     bafu: BafuFlowIndex
@@ -127,16 +165,18 @@ class ParsedInputs:
     rank6_codes: frozenset[str]
     index: EfFlowIndex
     pipeline: MatchPipeline
+    rank7_codes: frozenset[str] = frozenset()
 
     @property
     def excluded(self) -> frozenset[str]:
-        """Every source code rank 3 or rank 6 already maps -- this source's exclusion set.
+        """Every source code rank 3, 6 or 7 already maps -- this source's exclusion set.
 
-        A derived union rather than a stored field: ``rank3_codes``/``rank6_codes`` are
-        the single source of truth (the coverage sidecar needs them apart), and this
-        property keeps ``outcomes`` (which only needs the union) unchanged.
+        A derived union rather than a stored field: ``rank3_codes``/``rank6_codes``/
+        ``rank7_codes`` are the single source of truth (the coverage sidecar needs them
+        apart), and this property keeps ``outcomes`` (which only needs the union)
+        unchanged.
         """
-        return self.rank3_codes | self.rank6_codes
+        return self.rank3_codes | self.rank6_codes | self.rank7_codes
 
 
 def flow_sort_key(flow: BafuFlow) -> tuple[str, str, str, str]:
@@ -301,9 +341,14 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
        checked this exact pairing by hand; an EF target name that itself carries a
        species marker (``_EF_SPECIES``, e.g. ``Chromium(6+)``, ``Copper (II)``) means
        the match is onto the right species, not a collapse onto the bare element;
-    4. unit_mismatch (Task 6 correction (1)): a real ``Match`` with no fixed unit
-       conversion (``conversion_for``) onto the EF flow's reference unit is withheld
-       rather than emitted with a fabricated factor;
+    4. unit_mismatch (Task 6 correction (1)): applies only when the match target is
+       characterised (``EfFlow.characterised``) -- an uncharacterised target has no EF
+       reference unit at all (``EfFlowIndex.reference_unit`` returns ``None`` for it),
+       so ``conversion_for`` would always report a mismatch for it; rank 8
+       (``mappings_biosphere_nomenclature``) uses ``nomenclature_unit`` instead, at
+       entry-building time, not here. For a characterised target: a real ``Match``
+       with no fixed unit conversion (``conversion_for``) onto the EF flow's reference
+       unit is withheld rather than emitted with a fabricated factor;
     5. everything else: a ``Match`` is returned as-is; an ``Unmatched`` is refined by
        ``_refine_unmatched`` into ``speciation`` (Decision 4, the ``no_ef_flow`` twin
        of step 3 above) or ``qualifier_missing`` (Decision 3, unqualified carbon
@@ -329,8 +374,10 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
                     f"EF target {ef_name!r} does not",
                 )
         # only the None-ness matters here; the caveat conversion_for also returns is
-        # discarded and recomputed by entry_for when the entry is actually built.
-        if conversion_for(flow, outcome, index) is None:
+        # discarded and recomputed by entry_for when the entry is actually built. An
+        # uncharacterised target has no EF reference unit for conversion_for to check
+        # against at all (see the docstring point 4), so this step is skipped for one.
+        if index.get(outcome.code).characterised and conversion_for(flow, outcome, index) is None:
             ef_unit = index.reference_unit(outcome.code)
             return Unmatched(
                 "unit_mismatch",
@@ -343,6 +390,12 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
 
 class BafuEfMatchedSource(Source):
     """Match every BAFU flow rank 3 and rank 6 leave uncovered against the EF index."""
+
+    #: Whether ``parse`` builds the EF index with uncharacterised flows included (see
+    #: ``EfFlowIndex.from_bytes``). ``False`` here -- this source's targets always
+    #: carry a real factor. The rank-8 nomenclature source (``mappings_biosphere_
+    #: nomenclature.BafuEfNomenclatureSource``) is the one subclass that flips this.
+    include_uncharacterised: bool = False
 
     def fetch(self, ctx: RunContext) -> RawData:
         """Fetch every named input except ``ef_vocab`` (a directory, read locally in ``parse``)."""
@@ -363,16 +416,27 @@ class BafuEfMatchedSource(Source):
             )
         rank3 = orjson.loads(self.inputs["rank3"].content)
         rank6 = orjson.loads(self.inputs["rank6"].content)
+        rank7_input = self.inputs.get("rank7")
+        rank7_codes = (
+            frozenset(codes_of(orjson.loads(rank7_input.content)))
+            if rank7_input is not None
+            else frozenset()
+        )
         records = parse_ecospold_zip(raw)
         cas, conflicts = substance_cas(records)
         vocab_dir = fetch_mod.local_path(self.config.inputs.get(_VOCAB_DIR), _VOCAB_DIR)
-        index = EfFlowIndex.from_bytes(self.inputs["ef_cfs"].content, vocab_dir)
+        index = EfFlowIndex.from_bytes(
+            self.inputs["ef_cfs"].content,
+            vocab_dir,
+            include_uncharacterised=self.include_uncharacterised,
+        )
         inputs = ParsedInputs(
             bafu=BafuFlowIndex.from_ecospold(records),
             cas=cas,
             cas_conflicts=conflicts,
             rank3_codes=frozenset(codes_of(rank3)),
             rank6_codes=frozenset(codes_of(rank6)),
+            rank7_codes=rank7_codes,
             index=index,
             pipeline=default_pipeline(index, load_aliases()),
         )
@@ -381,12 +445,21 @@ class BafuEfMatchedSource(Source):
     def entry_for(self, flow: BafuFlow, match: Match, index: EfFlowIndex) -> Record:
         """One randonneur ``replace`` entry asserting ``flow`` resolves to ``match``.
 
-        The target unit is always the EF flow's own reference unit
-        (``EfFlowIndex.reference_unit``) -- never a respelling of the BAFU unit -- and
-        ``conversion_factor`` is set only when that factor is not 1.0. Raises
-        ``ValueError`` when no fixed conversion exists: ``outcomes()`` withholds any
-        such flow as ``unit_mismatch`` before an entry is ever built for it, so this
-        can only fire on a direct call with a mismatched (flow, match) pair.
+        For a characterised target, the target unit is always the EF flow's own
+        reference unit (``EfFlowIndex.reference_unit``) -- never a respelling of the
+        BAFU unit -- and ``conversion_factor`` is set only when that factor is not
+        1.0. Raises ``ValueError`` when no fixed conversion exists: ``outcomes()``
+        withholds any such flow as ``unit_mismatch`` before an entry is ever built for
+        it, so this can only fire on a direct call with a mismatched (flow, match)
+        pair.
+
+        For an uncharacterised target (rank 8 only -- ``_decide`` never lets one reach
+        here for the default, characterised-only source), there is no EF reference
+        unit at all: the target unit and factor come from ``nomenclature_unit``
+        instead, and the comment always starts with a fixed disclosure that the target
+        carries no factor in any EF 3.1 method, followed by a sub-compartment caveat
+        when the target's context itself was uncertain (``EfFlow.context_uncertain``),
+        then the match's own caveats.
         """
         ef_flow = index.get(match.code)
         source: Record = _base_source(flow)
@@ -394,6 +467,30 @@ class BafuEfMatchedSource(Source):
             source["unit"] = flow.unit
         if flow.context:
             source["context"] = flow.context
+
+        target: Record = {"code": match.code}
+        if ef_flow.name:
+            target["name"] = ef_flow.name
+        if ef_flow.context:
+            target["context"] = list(ef_flow.context)
+        if match.location:
+            target["location"] = match.location
+
+        if not ef_flow.characterised:
+            unit, factor = nomenclature_unit(flow.unit)
+            target["unit"] = unit
+            entry: Record = {"source": source, "target": target}
+            if factor is not None:
+                entry["conversion_factor"] = factor
+            comments = ["uncharacterised in EF 3.1: no factor in any method"]
+            if ef_flow.context_uncertain:
+                comments.append(
+                    "EF context inferred from the Brightway context code, "
+                    "sub-compartment uncertain"
+                )
+            comments.extend(match.caveats)
+            entry["comment"] = "; ".join(comments)
+            return entry
 
         ef_unit = index.reference_unit(match.code)
         conversion = conversion_for(flow, match, index)
@@ -403,17 +500,9 @@ class BafuEfMatchedSource(Source):
                 "outcomes() withholds this as unit_mismatch"
             )
         factor, energy_caveat = conversion
-
-        target: Record = {"code": match.code}
-        if ef_flow.name:
-            target["name"] = ef_flow.name
         target["unit"] = ef_unit
-        if ef_flow.context:
-            target["context"] = list(ef_flow.context)
-        if match.location:
-            target["location"] = match.location
 
-        entry: Record = {"source": source, "target": target}
+        entry = {"source": source, "target": target}
         if factor != 1.0:
             entry["conversion_factor"] = factor
         comments = list(match.caveats) + ([energy_caveat] if energy_caveat else [])
@@ -421,12 +510,26 @@ class BafuEfMatchedSource(Source):
             entry["comment"] = "; ".join(comments)
         return entry
 
+    @staticmethod
+    def outcome_for(
+        flow: BafuFlow, cas: str | None, pipeline: MatchPipeline, index: EfFlowIndex
+    ) -> Match | Unmatched:
+        """Match ``flow`` against ``pipeline``, then run the result through ``_decide``.
+
+        The one place the per-flow "match, then decide" computation lives, shared by
+        ``outcomes`` (this source's own single pass) and the coverage sidecar's second
+        pass (``BafuEfCoverageSource.transform``, the inclusive index): both passes
+        differ only in which ``pipeline``/``index`` get passed in here.
+        """
+        match = pipeline.match(flow, cas)
+        return _decide(flow, match, index)
+
     def outcomes(self, records: Records) -> list[tuple[BafuFlow, Match | Unmatched]]:
         """Every non-excluded BAFU flow with its final outcome, sorted for determinism.
 
-        A flow rank 3 or rank 6 already maps is skipped entirely -- not just its
-        entry withheld -- since those bridges keep precedence and this source's job
-        is only to fill the gap they leave.
+        A flow rank 3, rank 6 or rank 7 already maps is skipped entirely -- not just
+        its entry withheld -- since those bridges keep precedence and this source's
+        job is only to fill the gap they leave.
         """
         (record,) = records
         inputs: ParsedInputs = record["inputs"]
@@ -436,16 +539,24 @@ class BafuEfMatchedSource(Source):
             if flow.code in inputs.excluded:
                 continue
             cas = inputs.cas.get(flow.name)
-            match = inputs.pipeline.match(flow, cas)
-            result.append((flow, _decide(flow, match, inputs.index)))
+            result.append((flow, self.outcome_for(flow, cas, inputs.pipeline, inputs.index)))
         return result
 
     def transform(self, records: Records) -> Rows:
-        """Emit one entry per BAFU flow ``outcomes`` resolves to a ``Match``."""
+        """Emit one entry per BAFU flow ``outcomes`` resolves to a characterised ``Match``.
+
+        A ``Match`` onto an uncharacterised target is never emitted here -- with
+        ``include_uncharacterised`` at its default (``False``) this cannot happen at
+        all (the index built in ``parse`` carries no uncharacterised flow to match
+        onto), but the guard makes that contract explicit rather than relying on the
+        flag never being flipped by accident. The rank-8 nomenclature source
+        (``mappings_biosphere_nomenclature.BafuEfNomenclatureSource``) is the one
+        place such a match is actually emitted.
+        """
         (record,) = records
         index: EfFlowIndex = record["inputs"].index
         return [
             self.entry_for(flow, outcome, index)
             for flow, outcome in self.outcomes(records)
-            if isinstance(outcome, Match)
+            if isinstance(outcome, Match) and index.get(outcome.code).characterised
         ]

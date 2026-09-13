@@ -17,6 +17,7 @@ from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     BafuEfMatchedSource,
     _decide,
     conversion_for,
+    nomenclature_unit,
     substance_cas,
     unit_conversion,
 )
@@ -265,6 +266,63 @@ def test_unit_conversion_fixed_factors_and_cross_dimension_mismatches(
     assert unit_conversion(bafu_unit, ef_unit) == expected
 
 
+@pytest.mark.parametrize(
+    "bafu_unit,expected",
+    [
+        ("kg", ("kilogram", None)),
+        ("Bq", ("kBq", 0.001)),
+        ("kBq", ("kBq", None)),
+        ("m3", ("cubic meter", None)),
+        ("Nm3", ("cubic meter", None)),
+        ("MJ", ("megajoule", None)),
+        ("kWh", ("megajoule", 3.6)),
+        ("m2", ("m2", None)),
+        ("m2a", ("m2*a", None)),
+        ("unknown-unit", ("unknown-unit", None)),  # passed through unchanged
+    ],
+)
+def test_nomenclature_unit_covers_every_bafu_unit(bafu_unit, expected):
+    assert nomenclature_unit(bafu_unit) == expected
+
+
+class _ForcedInclusiveMatchedSource(BafuEfMatchedSource):
+    """Test-only subclass forcing ``include_uncharacterised=True`` on the default,
+    characterised-only matched source -- pins that ``transform`` never emits a match
+    onto an uncharacterised target even if the flag were ever flipped by accident.
+    """
+
+    include_uncharacterised = True
+
+
+def test_matched_source_never_emits_an_uncharacterised_target_even_if_forced(tmp_path):
+    # "Mine gas" carries no CF-table factor at all but a synonym that exactly names the
+    # otherwise-unmapped mine off-gas BAFU flow, placed via the reso-grou bw-context
+    # crosswalk. With include_uncharacterised forced True, the pipeline itself would
+    # happily match onto it -- transform()'s own characterised guard must still
+    # withhold it (belt-and-braces alongside include_uncharacterised's normal default).
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            bw="reso-grou",
+        )
+    ]
+    root = _stage(tmp_path, vocab=vocab)
+    source = _ForcedInclusiveMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == MINE_GAS)
+    outcome = outcomes[flow]
+    # sanity: the inclusive index really does resolve a match onto the uncharacterised target
+    assert isinstance(outcome, Match) and outcome.code == "mine-gas-unchar"
+    assert not records[0]["inputs"].index.get(outcome.code).characterised
+    rows = source.transform(records)
+    assert MINE_GAS not in {r["source"]["code"] for r in rows}
+
+
 def test_natural_gas_volume_converts_via_energy_content_onto_the_fossil_resource_flow(tmp_path):
     # EF characterises fossil resources in megajoule (resource-use-fossils); a BAFU
     # m3-denominated natural-gas flow has a fixed ecoinvent v2 net calorific value
@@ -353,6 +411,9 @@ def test_uncharacterised_ef_flow_is_never_used_by_the_default_matched_source(tmp
     rows = source.transform(records)
     assert MINE_GAS not in {r["source"]["code"] for r in rows}
 
+    # the coverage sidecar's own second pass runs over the inclusive index, so it
+    # correctly reports this exact scenario as bridge 8 (mapped, uncharacterised),
+    # never as rank 7 -- the matched source above never emits it.
     coverage = BafuEfCoverageSource(
         _config(
             root,
@@ -364,9 +425,9 @@ def test_uncharacterised_ef_flow_is_never_used_by_the_default_matched_source(tmp
     )
     coverage_rows = _run(coverage, tmp_path)
     mine_gas_row = next(r for r in coverage_rows if r["source"]["code"] == MINE_GAS)
-    assert mine_gas_row["status"] == "unmapped"
-    assert mine_gas_row.get("bridge") != 7
-    assert "bridge" not in mine_gas_row
+    assert mine_gas_row["status"] == "mapped"
+    assert mine_gas_row["bridge"] == 8
+    assert mine_gas_row["characterised"] is False
 
 
 def test_peat_energy_content_converts_onto_the_fossil_resource_flow(tmp_path):

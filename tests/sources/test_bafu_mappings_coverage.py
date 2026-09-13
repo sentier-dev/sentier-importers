@@ -3,9 +3,12 @@ from dataclasses import replace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.pipeline import _assemble
+from sentier_importers.matching.pipeline import Match
 from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCoverageSource
+from sentier_importers.sources.bafu.mappings_biosphere_matched import BafuEfMatchedSource
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 from tests.matching.ef_fixtures import CF_SCHEMA, RES_GROUND, VOCAB_SCHEMA, cf_row, vocab_row
@@ -236,3 +239,105 @@ def test_rank7_match_location_and_caveats_are_reported_when_present(tmp_path):
     assert europe["caveats"] == [
         "regional aggregate Europe in the source name; EF applies the global default factor"
     ]
+
+
+def test_bridge_8_row_reports_tier_placement_and_characterised_false(tmp_path):
+    # "Mine gas" carries no CF-table factor at all but a synonym that exactly names the
+    # otherwise-unmapped mine off-gas BAFU flow, placed via the reso-grou bw-context
+    # crosswalk (same fixture as the sibling matched-source test).
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            bw="reso-grou",
+        )
+    ]
+    root = _stage(tmp_path, vocab=vocab)
+    rows = _run(_source(root), tmp_path)
+    mine_gas = next(r for r in rows if r["source"]["code"] == MINE_GAS)
+    assert mine_gas["status"] == "mapped"
+    assert mine_gas["bridge"] == 8
+    assert mine_gas["characterised"] is False
+    assert mine_gas["tier"] == "synonym"
+    assert mine_gas["placement"] == "exact"
+    assert "reason" not in mine_gas and "detail" not in mine_gas
+
+
+def test_a_flow_mapped_in_pass_1_never_also_appears_as_bridge_8(tmp_path):
+    # LAND resolves via rank 7 (land-use class tier) in the plain fixture; it must never
+    # also be reconsidered by bridge 8's second pass.
+    rows = _run(_source(_stage(tmp_path)), tmp_path)
+    land = next(r for r in rows if r["source"]["code"] == LAND)
+    assert land["bridge"] == 7
+    assert "characterised" not in land
+
+
+def test_unmapped_rows_still_come_from_pass_2_when_nothing_resolves_there_either(tmp_path):
+    # GAS has no bw-context candidate at all in the default fixture: pass 2 finds
+    # nothing either, and the row is reported unmapped exactly as before.
+    root = _stage(tmp_path)
+    rows = _run(_source(root), tmp_path)
+    gas = next(r for r in rows if r["source"]["code"] == GAS)
+    assert gas["status"] == "unmapped" and gas["reason"] == "no_ef_flow"
+    assert "bridge" not in gas
+
+
+def test_bridge_8_location_and_caveats_are_reported_when_present(tmp_path):
+    # Same "Water, KR" / "Water, Europe" region-strip scenario as the rank-7 test above,
+    # but onto an uncharacterised "Water" vocab row (no CF row at all): bridge 8's
+    # location/caveats reporting must work exactly the same way rank 7's does.
+    vocab = VOCAB + [vocab_row("water-em-unchar", "Water", cas="7732-18-5", bw="envi-wate-unkn")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = _source(root)
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    extra = [
+        BafuFlow("Water, KR", "emissions to water", "unspecified", "m3"),
+        BafuFlow("Water, Europe", "emissions to water", "unspecified", "m3"),
+    ]
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + extra))
+    rows = source.transform([{"inputs": augmented}])
+    by_name = {r["source"]["name"]: r for r in rows}
+
+    kr = by_name["Water, KR"]
+    assert kr["bridge"] == 8 and kr["characterised"] is False
+    assert kr["location"] == "KR" and "caveats" not in kr
+
+    europe = by_name["Water, Europe"]
+    assert europe["bridge"] == 8 and "location" not in europe
+    assert europe["caveats"] == [
+        "regional aggregate Europe in the source name; EF applies the global default factor"
+    ]
+
+
+def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path):
+    # Pass 2 must never resolve onto a characterised target -- that would mean the
+    # inclusive index changed a characterised rank-7 outcome. Force it via a fake
+    # ``outcome_for`` that only overrides the pass-2 call (identified by ``index`` not
+    # being the pass-1 index the real pipeline built), returning a match onto "co2-fos"
+    # (characterised in the default fixture CF/VOCAB) for GAS, which pass 1 leaves
+    # Unmatched in the plain fixture.
+    root = _stage(tmp_path)
+    source = _source(root)
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    pass1_index = records[0]["inputs"].index
+
+    def fake_outcome_for(flow, cas, pipeline, index):
+        if index is not pass1_index and flow.code == GAS:
+            return Match(
+                code="co2-fos",
+                tier="name",
+                placement="exact",
+                location=None,
+                candidates=1,
+                caveats=(),
+            )
+        return BafuEfMatchedSource.outcome_for(flow, cas, pipeline, index)
+
+    source.outcome_for = fake_outcome_for
+    with pytest.raises(RuntimeError, match="characterised match reached bridge 8"):
+        source.transform(records)
