@@ -61,9 +61,10 @@ _LAND_METHOD = "ef-3.1:land-use"
 #: material) leaf. Such a row is marked ``context_uncertain`` unconditionally, not just
 #: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``; also imported by
 #: ``mappings_biosphere_matched.BafuEfMatchedSource.entry_for`` (decision (f)(2),
-#: 2026-09-13), which -- rather than withhold a rank-8 match onto one of these --
-#: omits ``target["context"]`` entirely from the emitted entry and discloses that the
-#: EF context is not recoverable from the source context code in the comment instead.
+#: 2026-09-13), which -- rather than withhold a nomenclature-package match onto one of
+#: these -- omits ``target["context"]`` entirely from the emitted entry and discloses
+#: that the EF context is not recoverable from the source context code in the comment
+#: instead.
 UNCERTAIN_RESOURCE_NAME = re.compile(r"^(Energy|Primary Energy|Oil Sand|Pit Methane)\b", re.I)
 
 
@@ -314,7 +315,7 @@ class EfFlowIndex:
 
         The land-use unit is keyed on the EF context *leaf*, not the flow name: EF
         occupation flows are named ``Arable``, ``Pasture/meadow`` and so on, never
-        anything starting with "occupation" -- rank 3's published payload uses
+        anything starting with "occupation" -- biosphere-1-curated's published payload uses
         ``m2*a`` for exactly the flows whose leaf is ``land occupation``.
         """
         flow = self.get(code)

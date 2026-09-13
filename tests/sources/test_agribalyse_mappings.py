@@ -129,7 +129,7 @@ def _config():
         name="biosphere",
         module="sentier_importers.sources.agribalyse.mappings_biosphere",
         target="sentier_mappings",
-        category="02-agribalyse-3.2__ef-3.1",
+        category="agribalyse-3.2__ef-3.1",
         fetch_url="unused://",
         fetch_format="parquet",
         output_format="json",

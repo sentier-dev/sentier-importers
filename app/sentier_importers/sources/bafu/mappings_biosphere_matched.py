@@ -1,8 +1,10 @@
-"""bafu-2026-v1 -> EF 3.1 CF keys by public matching (rank 7).
+"""bafu-2026-v1 -> EF 3.1 CF keys by public matching (the characterised package,
+biosphere-3-matched).
 
-For every BAFU-2026 v1 elementary flow that neither the rank-3 nor the rank-6 bridge
-maps, run ``matching.pipeline.default_pipeline`` (name, land-use class, ore composite,
-synonym, qualifier, carbon-oxide, ion-strip, alias, the same eight tiers again on the
+For every BAFU-2026 v1 elementary flow that neither the curated (biosphere-1-curated)
+nor the inferred (biosphere-2-inferred) package maps, run
+``matching.pipeline.default_pipeline`` (name, land-use class, ore composite, synonym,
+qualifier, carbon-oxide, ion-strip, alias, the same eight tiers again on the
 region-stripped name, CAS last) against the public EF flow index and emit one
 ``replace`` entry per match. Withheld flows are emitted by the sibling coverage
 source. Round 4, decision 2026-09-13: a tier whose candidates exist in EF but not in
@@ -10,8 +12,8 @@ the flow's own sub-compartment (``sub_compartment_absent``) no longer stops the
 pipeline outright; a later tier -- most often CAS, after every name-keyed tier has
 failed to place -- may still resolve it (``pipeline.MatchPipeline.match``).
 
-Inputs: the ecoSpold zip (primary), ``rank3`` and ``rank6`` payloads (exclusion) and
-``ef_cfs`` (sentier-methods CF table) all go through the content-addressed fetch
+Inputs: the ecoSpold zip (primary), ``curated`` and ``inferred`` payloads (exclusion)
+and ``ef_cfs`` (sentier-methods CF table) all go through the content-addressed fetch
 cache like any other input. Only ``ef_vocab`` (a DIRECTORY of sentier-vocab
 elementary-flow shards) bypasses it, read from its local path directly in ``parse``:
 a directory has no single content digest to cache against.
@@ -44,7 +46,7 @@ from sentier_importers.sources.bafu.ef_units import (
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 _VOCAB_DIR = "ef_vocab"
-_REQUIRED = ("rank3", "rank6", "ef_cfs")
+_REQUIRED = ("curated", "inferred", "ef_cfs")
 _BIOSPHERE_GROUP = 4
 
 #: Ion / oxidation-state markers BAFU bakes into a name: a trailing ``, ion`` /
@@ -68,44 +70,45 @@ _NON_FRESHWATER = ("Water, salt",)
 class ParsedInputs:
     """Everything ``BafuEfMatchedSource.parse`` builds once, for ``outcomes``/``transform``
     to reuse: the BAFU flow universe, the per-substance CAS table (and its conflicts,
-    for the sibling coverage source to report), the rank-3, rank-6 and rank-7
-    source-code sets (kept separate so the coverage sidecar can tell which bridge
+    for the sibling coverage source to report), the curated, inferred and matched
+    source-code sets (kept separate so the coverage sidecar can tell which package
     mapped a flow; see ``excluded``), the EF flow index and the matching pipeline built
     over it.
 
-    ``rank7_codes`` is empty unless the registry entry declares a ``rank7`` input (only
-    the rank-8 nomenclature source does): rank 7 and rank 8 both run over the
-    characterised-only index's leftovers, so rank 8 must also skip whatever rank 7
-    itself mapped, not just rank 3/6.
+    ``matched_codes`` is empty unless the registry entry declares a ``matched`` input
+    (only the nomenclature source does): the matched and nomenclature packages both run
+    over the characterised-only index's leftovers, so the nomenclature package must
+    also skip whatever the matched package itself mapped, not just curated/inferred.
 
     ``inclusive_index``/``inclusive_pipeline`` are the sibling coverage source's own
     fields (``None`` here): its ``parse`` override attaches an inclusive
     (``include_uncharacterised=True``) index and the pipeline built over it, so its
-    ``transform`` can run bridge 8's second pass without touching ``self.inputs`` or
-    ``self.config`` at all.
+    ``transform`` can run the nomenclature package's second pass without touching
+    ``self.inputs`` or ``self.config`` at all.
     """
 
     bafu: BafuFlowIndex
     cas: Mapping[str, str]
     cas_conflicts: Mapping[str, tuple[str, ...]]
-    rank3_codes: frozenset[str]
-    rank6_codes: frozenset[str]
+    curated_codes: frozenset[str]
+    inferred_codes: frozenset[str]
     index: EfFlowIndex
     pipeline: MatchPipeline
-    rank7_codes: frozenset[str] = frozenset()
+    matched_codes: frozenset[str] = frozenset()
     inclusive_index: EfFlowIndex | None = None
     inclusive_pipeline: MatchPipeline | None = None
 
     @property
     def excluded(self) -> frozenset[str]:
-        """Every source code rank 3, 6 or 7 already maps -- this source's exclusion set.
+        """Every source code the curated, inferred or matched package already maps --
+        this source's exclusion set.
 
-        A derived union rather than a stored field: ``rank3_codes``/``rank6_codes``/
-        ``rank7_codes`` are the single source of truth (the coverage sidecar needs them
-        apart), and this property keeps ``outcomes`` (which only needs the union)
-        unchanged.
+        A derived union rather than a stored field: ``curated_codes``/
+        ``inferred_codes``/``matched_codes`` are the single source of truth (the
+        coverage sidecar needs them apart), and this property keeps ``outcomes``
+        (which only needs the union) unchanged.
         """
-        return self.rank3_codes | self.rank6_codes | self.rank7_codes
+        return self.curated_codes | self.inferred_codes | self.matched_codes
 
 
 def flow_sort_key(flow: BafuFlow) -> tuple[str, str, str, str]:
@@ -209,9 +212,9 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
     3. unit_mismatch (Task 6 correction (1)): applies only when the match target is
        characterised (``EfFlow.characterised``) -- an uncharacterised target has no EF
        reference unit at all (``EfFlowIndex.reference_unit`` returns ``None`` for it),
-       so ``conversion_for`` would always report a mismatch for it; rank 8
-       (``mappings_biosphere_nomenclature``) uses ``nomenclature_unit`` instead, at
-       entry-building time, not here (a same-scale spelling only, never a factor). For
+       so ``conversion_for`` would always report a mismatch for it; the nomenclature
+       package (``mappings_biosphere_nomenclature``) uses ``nomenclature_unit`` instead,
+       at entry-building time, not here (a same-scale spelling only, never a factor). For
        a characterised target: a real ``Match`` with no fixed unit conversion
        (``conversion_for``) onto the EF flow's reference unit is withheld rather than
        emitted with a fabricated factor;
@@ -221,12 +224,13 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
 
     Decision (d), 2026-09-13, removed two withholding rules this chain used to carry
     for a ``Match``: the ion/oxidation-state speciation guard (an ion-shaped BAFU name
-    is now emitted, in whatever rank its target lives, with a caveat --
+    is now emitted, in whichever package its target lives, with a caveat --
     ``matching.matchers.IonStripMatcher`` is what actually produces such a ``Match``
-    now) and, decision (f)(2), the rank-8 energy-carrier ``context_unresolved``
-    withholding (such a ``Match`` is now emitted too; ``entry_for`` omits the
-    unrecoverable ``target["context"]`` and says so in the comment instead of
-    asserting a branch the bw-context crosswalk cannot actually place).
+    now) and, decision (f)(2), the nomenclature-package energy-carrier
+    ``context_unresolved`` withholding (such a ``Match`` is now emitted too;
+    ``entry_for`` omits the unrecoverable ``target["context"]`` and says so in the
+    comment instead of asserting a branch the bw-context crosswalk cannot actually
+    place).
 
     Rules 1 and 2 are both, in spirit, EF-water-use guards, but they behave
     differently for an uncharacterised target (``EfFlow.characterised=False``, no CF
@@ -235,11 +239,12 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
     can never be true for ``{}``: it is literally inert for an uncharacterised target,
     and correctly so -- there is no water-use method to wrongly characterise sea-water
     discharge with. Rule 1 keys only off the BAFU flow's own name, not the index, so it
-    still runs regardless of characterisation; but by the time rank 8's inclusive pass
-    ever sees a ``Water, salt`` flow, this same ``_decide`` has already withheld it as
-    ``non_freshwater`` once already (in the characterised-only pass every flow goes
-    through first -- see ``outcome_for``), so rule 1 only ever reconfirms an outcome
-    already reached, never lets a real "Water, salt" flow through as rank 8's Match.
+    still runs regardless of characterisation; but by the time the nomenclature
+    package's inclusive pass ever sees a ``Water, salt`` flow, this same ``_decide``
+    has already withheld it as ``non_freshwater`` once already (in the
+    characterised-only pass every flow goes through first -- see ``outcome_for``), so
+    rule 1 only ever reconfirms an outcome already reached, never lets a real "Water,
+    salt" flow through as the nomenclature package's Match.
 
     Key, phase 1 -> the plan's numbered Decisions and phase 2 -> the 2026-09-13
     lettered decisions: Decision 3 = ``qualifier_missing`` (bare carbon oxides, now
@@ -252,8 +257,8 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
     (taken as groundwater) and "Nitrogen" (taken as total nitrogen) aliases
     (``matching/aliases.yaml``), decision (d) = ion collapse (``IonStripMatcher``),
     decision (e) = unqualified carbon oxides (``CarbonOxideMatcher``), decision (f) =
-    rank-8-only relaxed placement (``pipeline.Placement.NOMENCLATURE``), energy-carrier
-    context omission (``entry_for``) and the wood/water aliases
+    nomenclature-package-only relaxed placement (``pipeline.Placement.NOMENCLATURE``),
+    energy-carrier context omission (``entry_for``) and the wood/water aliases
     (``matching/aliases.yaml``), decision (g) = the mine-gas energy content
     (``ef_units.ENERGY_CONTENT``/``ENERGY_CONTENT_NOTES``).
     """
@@ -302,11 +307,12 @@ def outcome_for(
 
 
 class BafuEfMatchedSource(Source):
-    """Match every BAFU flow rank 3 and rank 6 leave uncovered against the EF index."""
+    """Match every BAFU flow the curated and inferred packages leave uncovered against
+    the EF index."""
 
     #: Whether ``parse`` builds the EF index with uncharacterised flows included (see
     #: ``EfFlowIndex.from_bytes``). ``False`` here -- this source's targets always
-    #: carry a real factor. The rank-8 nomenclature source (``mappings_biosphere_
+    #: carry a real factor. The nomenclature source (``mappings_biosphere_
     #: nomenclature.BafuEfNomenclatureSource``) is the one subclass that flips this.
     include_uncharacterised: bool = False
 
@@ -327,12 +333,12 @@ class BafuEfMatchedSource(Source):
                 f"inputs {missing} not fetched: fetch() must run before parse(), and the "
                 f"registry entry must declare inputs {list(_REQUIRED)}"
             )
-        rank3 = orjson.loads(self.inputs["rank3"].content)
-        rank6 = orjson.loads(self.inputs["rank6"].content)
-        rank7_input = self.inputs.get("rank7")
-        rank7_codes = (
-            frozenset(codes_of(orjson.loads(rank7_input.content)))
-            if rank7_input is not None
+        curated = orjson.loads(self.inputs["curated"].content)
+        inferred = orjson.loads(self.inputs["inferred"].content)
+        matched_input = self.inputs.get("matched")
+        matched_codes = (
+            frozenset(codes_of(orjson.loads(matched_input.content)))
+            if matched_input is not None
             else frozenset()
         )
         records = parse_ecospold_zip(raw)
@@ -347,9 +353,9 @@ class BafuEfMatchedSource(Source):
             bafu=BafuFlowIndex.from_ecospold(records),
             cas=cas,
             cas_conflicts=conflicts,
-            rank3_codes=frozenset(codes_of(rank3)),
-            rank6_codes=frozenset(codes_of(rank6)),
-            rank7_codes=rank7_codes,
+            curated_codes=frozenset(codes_of(curated)),
+            inferred_codes=frozenset(codes_of(inferred)),
+            matched_codes=matched_codes,
             index=index,
             pipeline=default_pipeline(index, load_aliases()),
         )
@@ -366,12 +372,13 @@ class BafuEfMatchedSource(Source):
         it, so this can only fire on a direct call with a mismatched (flow, match)
         pair.
 
-        For an uncharacterised target (rank 8 only -- ``_decide`` never lets one reach
-        here for the default, characterised-only source), there is no EF reference
-        unit at all, and rank 8 never rescales an amount: the target unit is just
-        ``nomenclature_unit``'s same-scale respelling of the BAFU unit, and
-        ``conversion_factor`` is never set. When the target is a resource-bucket flow
-        whose name is energy-carrier-shaped (``ef_flow.bucket == "resource"`` and
+        For an uncharacterised target (the nomenclature package only -- ``_decide``
+        never lets one reach here for the default, characterised-only source), there is
+        no EF reference unit at all, and the nomenclature package never rescales an
+        amount: the target unit is just ``nomenclature_unit``'s same-scale respelling
+        of the BAFU unit, and ``conversion_factor`` is never set. When the target is a
+        resource-bucket flow whose name is energy-carrier-shaped
+        (``ef_flow.bucket == "resource"`` and
         ``ef_index.UNCERTAIN_RESOURCE_NAME`` matches, decision (f)(2), 2026-09-13),
         ``target["context"]`` is omitted entirely -- the bw-context crosswalk cannot
         reach an EF energy-resource branch at all (see
@@ -495,9 +502,9 @@ class BafuEfMatchedSource(Source):
     def outcomes(self, records: Records) -> list[tuple[BafuFlow, Match | Unmatched]]:
         """Every non-excluded BAFU flow with its final outcome, sorted for determinism.
 
-        A flow rank 3, rank 6 or rank 7 already maps is skipped entirely -- not just
-        its entry withheld -- since those bridges keep precedence and this source's
-        job is only to fill the gap they leave.
+        A flow the curated, inferred or matched package already maps is skipped
+        entirely -- not just its entry withheld -- since those packages keep
+        precedence and this source's job is only to fill the gap they leave.
         """
         (record,) = records
         inputs: ParsedInputs = record["inputs"]
@@ -517,7 +524,7 @@ class BafuEfMatchedSource(Source):
         ``include_uncharacterised`` at its default (``False``) this cannot happen at
         all (the index built in ``parse`` carries no uncharacterised flow to match
         onto), but the guard makes that contract explicit rather than relying on the
-        flag never being flipped by accident. The rank-8 nomenclature source
+        flag never being flipped by accident. The nomenclature source
         (``mappings_biosphere_nomenclature.BafuEfNomenclatureSource``) is the one
         place such a match is actually emitted.
         """

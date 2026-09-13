@@ -1,9 +1,24 @@
+import re
 import textwrap
 
 import pytest
 from sentier_importers.core import registry as registry_mod
 from sentier_importers.core.errors import RegistryError
 from sentier_importers.core.source import Source, SourceConfig
+from sentier_importers.sources.bafu.packages import CURATED, INFERRED, MATCHED, NOMENCLATURE
+
+#: Folder = pair convention (sentier-mappings 2026-09-14 restructure): every
+#: sentier_mappings ``category`` must be ``<source>__<target>``, lower-kebab,
+#: version-suffixed datasource ids, no numeric rank prefix.
+_PAIR_CATEGORY_RE = re.compile(r"^(?!\d)[a-z0-9][a-z0-9.-]*__(?!\d)[a-z0-9][a-z0-9.-]*$")
+
+
+def test_pair_category_pattern_rejects_the_old_rank_prefixed_spelling():
+    assert _PAIR_CATEGORY_RE.match("bafu-2026-v1__ef-3.1")
+    assert _PAIR_CATEGORY_RE.match("agribalyse-3.2__ecoinvent-3.9.1")
+    assert not _PAIR_CATEGORY_RE.match("03-bafu-2026-v1__ef-3.1")
+    assert not _PAIR_CATEGORY_RE.match("bafu-2026-v1__08-ef-3.1")
+    assert not _PAIR_CATEGORY_RE.match("-__-")
 
 
 def _write_registry(tmp_path, body):
@@ -159,10 +174,45 @@ def test_load_registry_parses_named_inputs(tmp_path):
               url: "file:///tmp/primary.json"
               format: json
             inputs:
-              rank3: "file:///tmp/rank3.json"
+              curated: "file:///tmp/curated.json"
               ecospold: "file:///tmp/bafu.zip"
             output_format: json
         """,
     )
     cfg = registry_mod.load_registry(path)[0]
-    assert cfg.inputs == {"rank3": "file:///tmp/rank3.json", "ecospold": "file:///tmp/bafu.zip"}
+    assert cfg.inputs == {
+        "curated": "file:///tmp/curated.json",
+        "ecospold": "file:///tmp/bafu.zip",
+    }
+
+
+def test_sentier_mappings_categories_are_pair_folder_names():
+    # sentier-mappings 2026-09-14: no more global numeric rank prefix. Every
+    # sentier_mappings entry's category must be exactly the pair folder name
+    # (``<source>__<target>``), never a ``<NN>-`` prefixed one.
+    mappings = [c for c in registry_mod.load_registry() if c.target == "sentier_mappings"]
+    assert mappings, "expected at least one sentier_mappings source in the registry"
+    for cfg in mappings:
+        assert _PAIR_CATEGORY_RE.match(
+            cfg.category
+        ), f"{cfg.name!r} category {cfg.category!r} is not a pair-folder name"
+
+
+def test_bafu_pair_emit_filenames_are_the_four_numbered_packages_plus_sidecars():
+    # data/bafu-2026-v1__ef-3.1/ holds exactly biosphere-1-curated.json,
+    # biosphere-2-inferred.json, biosphere-3-matched.json, biosphere-4-nomenclature.json,
+    # plus the coverage.json and inference_review.json sidecars -- no bare "biosphere"
+    # or rank-numbered name survives the restructure.
+    bafu_pair = [
+        c
+        for c in registry_mod.load_registry()
+        if c.target == "sentier_mappings" and c.category == "bafu-2026-v1__ef-3.1"
+    ]
+    assert {c.emit_filename for c in bafu_pair} == {
+        CURATED,
+        INFERRED,
+        MATCHED,
+        NOMENCLATURE,
+        "coverage",
+        "inference_review",
+    }

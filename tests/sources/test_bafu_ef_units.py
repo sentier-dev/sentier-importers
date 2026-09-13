@@ -155,6 +155,11 @@ def test_stoichiometric_notes_cover_exactly_the_same_two_keys():
     assert dict(STOICHIOMETRIC_NOTES) == {(n, u): note for n, u, _f, note in _STOICHIOMETRIC_CASES}
 
 
+@pytest.mark.parametrize("key,factor", list(STOICHIOMETRIC.items()))
+def test_every_stoichiometric_note_states_its_own_factor(key, factor):
+    assert f"{factor:g}" in STOICHIOMETRIC_NOTES[key]
+
+
 @pytest.mark.parametrize("name,unit,factor,note", _STOICHIOMETRIC_CASES)
 def test_conversion_for_applies_every_stoichiometric_table_entry(
     tmp_path_factory, name, unit, factor, note
