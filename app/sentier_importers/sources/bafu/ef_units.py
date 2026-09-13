@@ -1,10 +1,11 @@
 """Unit/dimension conversion helpers for the bafu-2026-v1 -> EF 3.1 bridges.
 
 Split out of ``mappings_biosphere_matched`` so the unit-conversion domain (physical
-dimensions, the ecoinvent v2 energy-content table, the water-density special case, and
-the nomenclature-only unit respelling rank 8 uses for an uncharacterised target) has
-its own home apart from the matching/decision pipeline itself. Everything here is a
-pure function or lookup table; nothing touches ``BafuFlow``/EF index construction.
+dimensions, the ecoinvent v2 energy-content table, the stoichiometric factor table,
+the water-density special case, and the nomenclature-only unit respelling rank 8 uses
+for an uncharacterised target) has its own home apart from the matching/decision
+pipeline itself. Everything here is a pure function or lookup table; nothing touches
+``BafuFlow``/EF index construction.
 """
 
 from __future__ import annotations
@@ -78,6 +79,33 @@ ENERGY_CONTENT_NOTES: dict[tuple[str, str], str] = {
     ),
     ("Gas, mine, off-gas, process, coal mining/m3", "Nm3"): (
         "coal-mine off-gas approximated as natural gas (decision 2026-09-13)"
+    ),
+}
+
+#: Round 4, decision 2026-09-13: the two BAFU ``TiO2, ...`` ore-composite-shaped names
+#: that ``matching.matchers.OreCompositeMatcher`` does NOT decompose (its ``_ORE_RE``
+#: requires a bare element as the leading segment; ``TiO2`` names a compound, not an
+#: element) but that the curated alias table still maps onto plain ``Titanium`` --
+#: BAFU's amount is kg of TiO2, not kg of titanium metal, so it needs its own factor
+#: (the titanium mass fraction of TiO2, 47.9/79.9 rounded) applied the same way
+#: ``ENERGY_CONTENT`` is: keyed on the exact BAFU (name, unit) pair, consulted by
+#: ``conversion_for`` whenever the target's reference unit is kilogram.
+STOICHIOMETRIC: dict[tuple[str, str], float] = {
+    ("TiO2, 54% in ilmenite, 2.6% in crude ore", "kg"): 0.5995,
+    ("TiO2, 95% in rutile, 0.40% in crude ore", "kg"): 0.5995,
+}
+
+#: The caveat text for each ``STOICHIOMETRIC`` key, same shape as
+#: ``ENERGY_CONTENT_NOTES``: unlike the energy-content caveat (one generic template,
+#: the factor and unit filled in), there is no substance-neutral wording for "this
+#: amount is really kg of a different compound" -- the compound name is part of the
+#: sentence itself, so each key's full caveat is stored here rather than assembled.
+STOICHIOMETRIC_NOTES: dict[tuple[str, str], str] = {
+    ("TiO2, 54% in ilmenite, 2.6% in crude ore", "kg"): (
+        "amount is kg TiO2; 0.5995 is the titanium mass fraction of TiO2 (decision 2026-09-13)"
+    ),
+    ("TiO2, 95% in rutile, 0.40% in crude ore", "kg"): (
+        "amount is kg TiO2; 0.5995 is the titanium mass fraction of TiO2 (decision 2026-09-13)"
     ),
 }
 
@@ -159,7 +187,9 @@ def conversion_for(
     target's reference unit is megajoule and ``(flow.name, flow.unit)`` is a key BAFU
     actually reports -- checked first, and keyed on the exact BAFU (name, unit) pair,
     so it is never applied by accident to an unrelated flow that merely happens to
-    share the same EF target; then the water density special case (depends on the
+    share the same EF target; then a stoichiometric factor (``STOICHIOMETRIC``,
+    decision 2026-09-13) whenever the target's reference unit is kilogram, the same
+    way and for the same reason; then the water density special case (depends on the
     target's characterisation method, so it cannot live in the generic, method-blind
     ``unit_conversion`` table); then the generic, unit-string-only fallback.
 
@@ -178,6 +208,10 @@ def conversion_for(
             if note:
                 caveat = f"{caveat}; {note}"
             return energy, caveat
+    if index.reference_unit(match.code) == "kilogram":
+        stoichiometric = STOICHIOMETRIC.get((flow.name, flow.unit))
+        if stoichiometric is not None:
+            return stoichiometric, STOICHIOMETRIC_NOTES[(flow.name, flow.unit)]
     if flow.unit == "kg" and set(index.vector(match.code)) == {WATER_USE_METHOD}:
         # water is the only substance with a fixed mass -> volume factor (density);
         # this depends on the target's characterisation method, so it cannot live in

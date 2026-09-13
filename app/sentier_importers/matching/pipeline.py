@@ -5,10 +5,22 @@ reason a reviewer can act on.
 Tier order: exact name, land-use class, ore composite, synonym, qualifier spelling,
 carbon-oxide rewrite, ion-strip, curated alias, the same eight tiers again applied to
 the region-stripped name (``RegionStripMatcher`` applies that same first-hit rule
-among its own inner matchers), then CAS last. The first matcher that yields any
-candidate in the flow's compartment decides the outcome: a later tier never rescues a
-placement failure of an earlier one, because "the exact-name EF flow exists but only
-in another sub-compartment" is information, not a miss.
+among its own inner matchers), then CAS last. The first matcher whose candidates
+resolve to a ``Match``, or to an ``Unmatched`` other than ``sub_compartment_absent``,
+decides the outcome. ``sub_compartment_absent`` alone is not final (round 4, decision
+2026-09-13): it means this matcher's candidates exist in EF but not in the flow's own
+sub-compartment, which a later tier's candidates may still place correctly (e.g. a
+name-tier hit that only exists on an unplaceable leaf, followed by a CAS-tier hit on
+the very same substance in the right leaf) -- so the pipeline keeps trying later tiers
+instead of stopping there. The first ``Match`` any tier produces wins; if none ever
+does, the FIRST ``sub_compartment_absent`` seen is returned (it names the substance,
+so it is the most informative of however many dead tiers followed). Every other
+``Unmatched`` reason (``ambiguous_substances`` included) still stops the pipeline
+outright, exactly as before. When a ``Match`` is only reached this way and its own
+tier is ``cas``, an extra caveat names the CAS used, since the EF target's own name
+found by CAS may not resemble the source name at all (BAFU ``2-Methyl-4-
+chlorophenoxyacetic acid`` onto EF's ``(4-Chloro-2-methylphenoxy)acetic acid`` --
+CAS 94-74-6, MCPA -- is exactly such a case).
 
 After a matcher's candidates fail both EXACT and UNSPECIFIED placement, one more
 placement is tried before giving up: the resource-branch fallback (decision (b),
@@ -37,13 +49,48 @@ when there is more than one, and which one was picked, so it never overstates
 "only" when several exist. This never fires for rank 7's characterised-only index:
 that index carries no uncharacterised flow at all, so the ``not characterised``
 condition can never hold for it.
+
+Round 4, decision 2026-09-13, two more placements, tried in this order, both after
+NOMENCLATURE and before giving up as ``sub_compartment_absent`` (so they never steal
+the eight existing rank-8 ``groundwater, long-term`` -> ``Placement.NOMENCLATURE`` rows,
+which are settled before either ever runs):
+
+- ``Placement.LONG_TERM_COLLAPSED``: whenever the BAFU sub-compartment carries
+  ``, long-term`` and nothing has placed yet, placement is retried with that suffix
+  stripped (``river, long-term`` -> ``river``, ``groundwater, long-term`` ->
+  ``groundwater``, ``low. pop., long-term`` -> ``low. pop.``) -- EF has no long-term
+  leaf at all for this substance, so the immediate-emission flow is used instead, with
+  a caveat saying so (plus the ordinary unspecified-fallback caveat too, when the
+  stripped placement itself only reached EXACT via that fallback).
+- ``Placement.DEFAULT_LEAF``: a ``water`` / ``unspecified`` BAFU source whose
+  candidates exist on neither the unspecified nor the unspecified (long-term) leaf, but
+  do exist on fresh water, is placed there instead (``DEFAULT_LEAF`` table below); air,
+  soil and resource get no such fallback -- there is no single obvious "default" leaf
+  for them the way fresh water is the default body of water.
+
+Round 4, decision 2026-09-13, one more tiebreak inside ``_pick``, tried only after the
+source CAS itself fails to single out exactly one candidate (no source CAS, or the CAS
+matches none or several of them -- a CAS that DOES single one out is positive evidence
+and always wins, never overridden by the refrigerant code): when several same-leaf
+candidates carry different CF identities (normally ``ambiguous_substances``) and the
+source name ends in a refrigerant code (``, CFC-10``, ``, HCFC-140``, ...) that names
+exactly one of the candidates, that candidate is used -- but only when its own CF
+identity characterises every impact-category method id at least one other candidate
+does (coordinator decision, round 4 review): BAFU sometimes bakes several synonyms for
+one substance into its own name, and the refrigerant code is the most specific of them,
+but two EF flows for the same substance can be genuinely complementary (one carries
+climate/POF/ecotoxicity factors, the other ozone-depletion/human-toxicity ones) rather
+than duplicates, and picking the code-named one must never silently drop an impact
+category the other one alone would have supplied -- when it would, this tiebreak
+declines and the ambiguity is reported as usual.
 """
 
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sentier_importers.matching.compartments import (
     KNOWN_SUBCATEGORIES,
@@ -75,7 +122,11 @@ from sentier_importers.sources.eaternity.bridge import BafuFlow
 #: Absent here: ``unspecified`` (already exact on its own bucket-level leaf) and
 #: every ``*, long-term`` subcategory, whose family already owns the bucket-level
 #: long-term-unspecified leaf too (see compartments.py) -- neither ever reaches this
-#: fallback branch, so neither needs a translation.
+#: fallback branch (the ordinary UNSPECIFIED one, keyed on the source's own
+#: sub-compartment), so neither needs a translation here. A ``*, long-term``
+#: subcategory's STRIPPED form (``river``, ``groundwater``, ``low. pop.``) is looked up
+#: here too, though, by ``Placement.LONG_TERM_COLLAPSED`` below -- and every stripped
+#: form is already a plain key in this same table.
 _LEAF_HUMAN = {
     "groundwater": "ground water",
     "river": "fresh water",
@@ -90,6 +141,42 @@ _LEAF_HUMAN = {
     "fossilwater": "ground water",
     "indoor": "air, indoor",
 }
+
+
+def _unspecified_caveat(subcategory: str) -> str:
+    """The caveat for landing on the bucket-level unspecified fallback leaf.
+
+    Shared by the ordinary ``Placement.UNSPECIFIED`` branch (``subcategory`` is the
+    flow's own) and ``Placement.LONG_TERM_COLLAPSED``'s own stripped-fallback branch
+    (``subcategory`` is the ``, long-term``-stripped form) -- both phrase the same
+    fact the same way, so this is the one place that wording lives.
+    """
+    human = _LEAF_HUMAN.get(subcategory, subcategory)
+    return f"EF has no {human} flow for this substance; the unspecified context is used"
+
+
+#: Suffix a BAFU emission sub-compartment carries when it is the long-term variant of
+#: a plainer one; ``Placement.LONG_TERM_COLLAPSED`` strips it and retries placement.
+_LONG_TERM_SUFFIX = ", long-term"
+_LONG_TERM_CAVEAT = (
+    "EF has no long-term leaf for this substance; the immediate-emission flow is used "
+    "(decision 2026-09-13)"
+)
+#: Round 4, decision 2026-09-13: the one EF leaf a bucket's ``unspecified`` BAFU source
+#: falls back onto (``Placement.DEFAULT_LEAF``) when EF has neither the unspecified nor
+#: the unspecified (long-term) leaf for the substance. Only ``water`` gets one -- fresh
+#: water is the obvious default body of water; air, soil and resource have no equally
+#: obvious single default leaf, so they get none.
+DEFAULT_LEAF: dict[str, str] = {"water": "emissions to fresh water"}
+_DEFAULT_LEAF_CAVEAT = (
+    "EF has no unspecified leaf for this substance; fresh water is used (decision 2026-09-13)"
+)
+#: Round 4, decision 2026-09-13: a refrigerant code BAFU trails a substance name with
+#: (``Methane, tetrachloro-, CFC-10``), checked by ``MatchPipeline._pick`` when several
+#: same-leaf candidates carry different CF identities and one of them is named exactly
+#: by the code -- the code is the most specific synonym BAFU gives, and singles out the
+#: EF flow that keeps its own factor apart from the substance's more generic name.
+_REFRIGERANT_CODE_RE = re.compile(r"^(CFC|HCFC|HFC|HFE|PFC|Halon)-\S+$", re.IGNORECASE)
 #: ``no_ef_flow`` detail template, picked by ``EfFlowIndex.includes_uncharacterised``:
 #: a characterised-only index really did restrict the search to factor-bearing flows,
 #: so it is honest to say so; the inclusive index (rank 8) searched uncharacterised
@@ -159,22 +246,51 @@ class MatchPipeline:
         """Resolve ``flow`` (with an optional ``cas`` number) to one EF flow, or report why not.
 
         Guards the flow's compartment and sub-compartment, then tries each matcher in
-        tier order, handing its candidates to ``_resolve``: the first matcher whose
-        candidates resolve to anything (a ``Match`` or an ``Unmatched``, never
-        ``None``) decides the outcome -- a later tier never rescues a placement
-        failure of an earlier one, because "the exact-name EF flow exists but only in
-        another sub-compartment" is information, not a miss.
+        tier order, handing its candidates to ``_resolve``. The first ``Match`` any
+        tier produces wins outright. An ``Unmatched`` other than
+        ``sub_compartment_absent`` stops the pipeline immediately too -- a later tier
+        never rescues, say, a genuine ``ambiguous_substances`` call. Round 4, decision
+        2026-09-13: ``sub_compartment_absent`` alone does not stop the pipeline; the
+        first one seen is remembered and later tiers still get a chance, since "the
+        exact-name EF flow exists but only in another sub-compartment" does not mean a
+        later tier's candidates (a synonym, an alias, the bare CAS number) cannot still
+        place correctly. If no tier ever produces a ``Match``, the first
+        ``sub_compartment_absent`` recorded is returned (the most informative of
+        however many dead tiers followed, since it names the substance); if none of the
+        tiers even produced that much, the generic ``no_ef_flow`` is returned instead.
+
+        When a ``Match`` is only reached after skipping at least one
+        ``sub_compartment_absent`` and its own tier is ``cas``, an extra caveat names
+        the CAS: CAS is name-blind, so the EF flow it lands on may carry a name that
+        does not resemble the source at all (module docstring).
         """
         bucket = bucket_of_bafu_category(flow.category)
         if bucket is None:
             return Unmatched("non_ef_compartment", flow.category)
         if flow.subcategory not in KNOWN_SUBCATEGORIES:
             return Unmatched("unknown_sub_compartment", flow.subcategory)
+        first_absent: Unmatched | None = None
         for matcher in self._matchers:
             candidates = matcher.candidates(flow, cas, self._index)
             outcome = self._resolve(candidates, flow, cas, matcher)
-            if outcome is not None:
+            if outcome is None:
+                continue
+            if isinstance(outcome, Match):
+                if first_absent is not None and outcome.tier == "cas":
+                    normalised_cas = normalise_cas(cas)
+                    caveat = (
+                        f"an earlier tier's match could not be placed in this "
+                        f"sub-compartment; resolved instead by CAS {normalised_cas}, "
+                        "whose EF target name may not resemble the source name"
+                    )
+                    outcome = replace(outcome, caveats=outcome.caveats + (caveat,))
                 return outcome
+            if outcome.reason != "sub_compartment_absent":
+                return outcome
+            if first_absent is None:
+                first_absent = outcome
+        if first_absent is not None:
+            return first_absent
         template = (
             _NO_MATCH_INCLUSIVE
             if self._index.includes_uncharacterised
@@ -203,9 +319,12 @@ class MatchPipeline:
         differ in identity and no CAS singles one out); failing that, and only when
         every remaining candidate is uncharacterised and the index includes
         uncharacterised flows (rank 8 only, decision (f)(1)), the relaxed nomenclature
-        placement (module docstring); otherwise ``sub_compartment_absent``, naming
-        every distinct candidate name and leaf so a reviewer can see what EF actually
-        offers.
+        placement (module docstring); failing that, and only when the BAFU
+        sub-compartment carries ``, long-term``, ``Placement.LONG_TERM_COLLAPSED``
+        (module docstring); failing that, and only for a ``water`` / ``unspecified``
+        source, ``Placement.DEFAULT_LEAF`` (module docstring); otherwise
+        ``sub_compartment_absent``, naming every distinct candidate name and leaf so a
+        reviewer can see what EF actually offers.
         """
         if not candidates:
             return None
@@ -228,8 +347,7 @@ class MatchPipeline:
             return self._pick(exact, flow, cas, matcher.tier, Placement.EXACT, ())
         fallback = [c for c, p in placed if p is Placement.UNSPECIFIED]
         if fallback and self._fallback:
-            human = _LEAF_HUMAN.get(flow.subcategory, flow.subcategory)
-            caveat = f"EF has no {human} flow for this substance; the unspecified context is used"
+            caveat = _unspecified_caveat(flow.subcategory)
             return self._pick(fallback, flow, cas, matcher.tier, Placement.UNSPECIFIED, (caveat,))
         leafs = sorted({c.flow.leaf for c in candidates})
         names = sorted({c.flow.name.lower() for c in candidates})
@@ -278,6 +396,66 @@ class MatchPipeline:
                 Placement.NOMENCLATURE,
                 (nomenclature_caveat,),
             )
+        # Ordered after NOMENCLATURE, not before: test_relaxed_placement_falls_back_
+        # to_the_alphabetically_first_leaf and test_relaxed_placement_prefers_the_
+        # non_long_term_unspecified_leaf_too both pin rank 8's own long-term/
+        # unspecified leaf preference among uncharacterised candidates, and neither
+        # LONG_TERM_COLLAPSED nor DEFAULT_LEAF (both characterised-or-not, unlike
+        # NOMENCLATURE) may pre-empt that.
+        if flow.subcategory.endswith(_LONG_TERM_SUFFIX):
+            stripped_sub = flow.subcategory[: -len(_LONG_TERM_SUFFIX)]
+            stripped_placed = [
+                (c, place(flow.category, stripped_sub, c.flow.context_path)) for c in candidates
+            ]
+            stripped_exact = [c for c, p in stripped_placed if p is Placement.EXACT]
+            if stripped_exact:
+                return self._pick(
+                    stripped_exact,
+                    flow,
+                    cas,
+                    matcher.tier,
+                    Placement.LONG_TERM_COLLAPSED,
+                    (_LONG_TERM_CAVEAT,),
+                )
+            stripped_fallback = [c for c, p in stripped_placed if p is Placement.UNSPECIFIED]
+            if stripped_fallback and self._fallback:
+                fallback_caveat = _unspecified_caveat(stripped_sub)
+                return self._pick(
+                    stripped_fallback,
+                    flow,
+                    cas,
+                    matcher.tier,
+                    Placement.LONG_TERM_COLLAPSED,
+                    (_LONG_TERM_CAVEAT, fallback_caveat),
+                )
+        if bucket in DEFAULT_LEAF and flow.subcategory == "unspecified":
+            # Gated on the FULL candidate set, not just the ones on the default leaf:
+            # a candidate already sitting on either unspecified leaf (plain or
+            # long-term) is a strictly better placement than the default-leaf guess,
+            # even though neither EXACT nor the ordinary UNSPECIFIED branch above
+            # caught it here -- EXACT only ever catches the plain (non-long-term)
+            # leaf for an "unspecified" source, and the ordinary UNSPECIFIED fallback
+            # above is keyed off the SAME plain leaf too, so a candidate that exists
+            # only on the long-term unspecified leaf slips past both unblocked.
+            blocking_leafs = {
+                leaf
+                for leaf in (
+                    unspecified_leaf(bucket, long_term=False),
+                    unspecified_leaf(bucket, long_term=True),
+                )
+                if leaf is not None
+            }
+            if not any(c.flow.leaf in blocking_leafs for c in candidates):
+                default_candidates = [c for c in candidates if c.flow.leaf == DEFAULT_LEAF[bucket]]
+                if default_candidates:
+                    return self._pick(
+                        default_candidates,
+                        flow,
+                        cas,
+                        matcher.tier,
+                        Placement.DEFAULT_LEAF,
+                        (_DEFAULT_LEAF_CAVEAT,),
+                    )
         return Unmatched(
             "sub_compartment_absent",
             f"EF has {', '.join(names)} only in: " + ", ".join(leafs),
@@ -310,8 +488,21 @@ class MatchPipeline:
            picked over (and, in the latter case, that the source CAS matched none);
         2. identities disagree, but the source carries a CAS number that singles out
            exactly one candidate by ``flow.cas`` -- pick that one (no extra caveat: a
-           matching CAS is positive evidence, not a guess);
-        3. otherwise, report ``Unmatched("ambiguous_substances", ...)``.
+           matching CAS is positive evidence, not a guess, and it is checked FIRST:
+           it must never be overridden by rule 3 below);
+        3. identities disagree and rule 2 did not single one out (no source CAS, or
+           the CAS matches none or several candidates), but the source name ends in a
+           refrigerant code (``, CFC-10``, ``, HCFC-140``, ...; round 4, decision
+           2026-09-13) that names exactly one candidate, AND that candidate's CF
+           identity characterises every impact-category method id at least one other
+           candidate does (coordinator decision, round 4 review: two EF flows sharing
+           a CAS can be genuinely complementary rather than duplicates -- ``HCFC-140``
+           carries climate/POF/ecotoxicity factors while ``1,1,1-trichloroethane``
+           carries ozone-depletion/human-toxicity ones for the same CAS, and picking
+           the code-named flow there would silently drop the other's impact
+           categories) -- pick that one, with a caveat naming the other candidate(s)
+           the code disambiguated against;
+        4. otherwise, report ``Unmatched("ambiguous_substances", ...)``.
         """
         chosen = sorted(candidates, key=lambda c: c.flow.code)
         identity_caveat: tuple[str, ...] = ()
@@ -321,12 +512,31 @@ class MatchPipeline:
             identities = {self._index.identity(c.flow.code) for c in candidates}
             normalised_cas = normalise_cas(cas)
             if len(identities) > 1:
-                if normalised_cas is None:
-                    return self._ambiguous(candidates, cas, tier)
-                cas_matches = [c for c in candidates if c.flow.cas == normalised_cas]
-                if len(cas_matches) != 1:
-                    return self._ambiguous(candidates, cas, tier)
-                chosen = cas_matches
+                cas_matches = (
+                    [c for c in candidates if c.flow.cas == normalised_cas]
+                    if normalised_cas is not None
+                    else []
+                )
+                if len(cas_matches) == 1:
+                    # a singled-out CAS is positive evidence and is never overridden
+                    # by the refrigerant-code tiebreak below.
+                    chosen = cas_matches
+                else:
+                    refrigerant = self._refrigerant_tiebreak(candidates, flow.name)
+                    if refrigerant is not None and self._refrigerant_covers_every_method(
+                        refrigerant, candidates
+                    ):
+                        chosen = [refrigerant]
+                        others = sorted(c.flow.name for c in candidates if c is not refrigerant)
+                        identity_caveat = (
+                            "EF carries a second flow for this CAS with different "
+                            f"factors ({', '.join(others)}); the flow named by the "
+                            "source's refrigerant code is used, it characterises "
+                            "every impact category the other does (decision "
+                            "2026-09-13)",
+                        )
+                    else:
+                        return self._ambiguous(candidates, cas, tier)
             else:
                 # identical factors: the choice is free. Prefer a candidate the
                 # source CAS actually names (if any does); among what's left, take
@@ -392,6 +602,52 @@ class MatchPipeline:
             candidates=len(candidates),
             caveats=caveats + extra,
         )
+
+    @staticmethod
+    def _refrigerant_tiebreak(candidates: list[Candidate], source_name: str) -> Candidate | None:
+        """The one candidate a trailing refrigerant code in ``source_name`` names, or ``None``.
+
+        BAFU sometimes trails a substance name with a refrigerant code as its last
+        comma segment (``Methane, tetrachloro-, CFC-10``, ``Ethane,
+        1,1,1-trichloro-, HCFC-140``); round 4, decision 2026-09-13: when that segment
+        matches ``_REFRIGERANT_CODE_RE`` and exactly one candidate's own name equals it
+        (case-insensitively), that candidate is the answer -- the code is the most
+        specific synonym BAFU gives for the substance, and singles out the EF flow
+        that keeps its own factor apart from the substance's more generic name. Any
+        other shape (no trailing code, or the code matching zero or several
+        candidates) yields ``None``, leaving ``_pick`` to fall through to its
+        CAS-based disambiguation unchanged.
+        """
+        code = source_name.rsplit(",", 1)[-1].strip()
+        if not _REFRIGERANT_CODE_RE.match(code):
+            return None
+        matches = [c for c in candidates if c.flow.name.strip().lower() == code.lower()]
+        return matches[0] if len(matches) == 1 else None
+
+    def _refrigerant_covers_every_method(
+        self, refrigerant: Candidate, candidates: list[Candidate]
+    ) -> bool:
+        """Whether ``refrigerant``'s CF identity drops no impact category the other
+        candidates alone would have supplied.
+
+        Coordinator decision, round 4 review: two EF flows sharing one CAS can be
+        genuinely complementary rather than duplicates of each other (one carries
+        climate/POF/ecotoxicity factors, the other ozone-depletion/human-toxicity
+        ones for the very same substance) -- picking the refrigerant-code-named flow
+        must never silently drop an impact category only the OTHER candidate(s)
+        characterise. Compares method ids only (``EfFlowIndex.identity`` pairs'
+        first element), never factor values: the two flows are expected to disagree
+        on values (that is exactly why ``_pick`` reached this branch at all), and
+        this check is about category *coverage*, not agreement.
+        """
+        covered = {method for method, _ in self._index.identity(refrigerant.flow.code)}
+        other_methods = {
+            method
+            for c in candidates
+            if c is not refrigerant
+            for method, _ in self._index.identity(c.flow.code)
+        }
+        return other_methods <= covered
 
     def _ambiguous(self, candidates: list[Candidate], cas: str | None, tier: str) -> Unmatched:
         """Report several candidates with different factors that no CAS singles out.
