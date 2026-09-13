@@ -304,6 +304,95 @@ def test_round_3_alias_targets_exist_in_the_inclusive_index():
     assert index.by_name("Water", "air")
 
 
+def test_shipped_alias_file_has_the_nineteen_entries_added_in_round_4():
+    # round 4, decision 2026-09-13: nine plain-spelling aliases (no caveat), four
+    # decision-carrying spellings, the two TiO2 -> Titanium ore-composite-shaped
+    # names OreCompositeMatcher itself does not decompose (see ef_units.STOICHIOMETRIC
+    # for the mass-fraction factor), and four land-use-class aliases onto the nearest
+    # EF land-use flow. "benzo(a)anthracene" replaces the earlier, dead
+    # "benzo[a]anthracene" (square brackets) target -- EF 3.1 has no such flow at all;
+    # "BENZ(a)ANTHRACENE" is the real, characterised pref_label.
+    aliases = load_aliases()
+    expected = {
+        "propane, 1,1,1,3,3-pentafluoro-, hfc-245fa": Alias(target="1,1,1,3,3-pentafluoropropane"),
+        "chlorosilane, trimethyl-": Alias(target="Chlorotrimethylsilane"),
+        "toluene, 2-chloro-": Alias(target="O-chlorotoluene"),
+        "thiazole, 2-(thiocyanatemethylthio)benzo-": Alias(
+            target="2-(Thiocyanomethylthio)benzothiazole"
+        ),
+        "disodium acid methane arsenate": Alias(target="Disodium Methylarsonate"),
+        "benzo(a)anthracene": Alias(target="BENZ(a)ANTHRACENE"),
+        "heat, waste": Alias(target="Waste Heat"),
+        "particulates, > 10 um": Alias(target="Particles (> PM10)"),
+        "energy, from hydro power": Alias(target="Primary Energy From Hydro Power"),
+        "chlormequat": Alias(
+            target="Chlormequat Chloride",
+            caveat="commercial chloride form of the same active ingredient (decision 2026-09-13)",
+        ),
+        "primisulfuron": Alias(
+            target="Primisulfuron-methyl",
+            caveat="methyl ester is the active ingredient as sold (decision 2026-09-13)",
+        ),
+        "tributylstannane": Alias(
+            target="Tributyltin",
+            caveat="tributyltin hydride taken as the tributyltin cation (decision 2026-09-13)",
+        ),
+        "benzene (as btex)": Alias(
+            target="Benzene",
+            caveat="BTEX reported as benzene taken as benzene (decision 2026-09-13)",
+        ),
+        "tio2, 54% in ilmenite, 2.6% in crude ore": Alias(target="Titanium"),
+        "tio2, 95% in rutile, 0.40% in crude ore": Alias(target="Titanium"),
+        "occupation, water courses, artificial": Alias(
+            target="Inland Water Bodies",
+            caveat="nearest EF land-use class (decision 2026-09-13)",
+        ),
+        "transformation, to water courses, artificial": Alias(
+            target="To Inland Water Bodies",
+            caveat="nearest EF land-use class (decision 2026-09-13)",
+        ),
+        "transformation, from sea and ocean": Alias(
+            target="From Seabed", caveat="nearest EF land-use class (decision 2026-09-13)"
+        ),
+        "transformation, to sea and ocean": Alias(
+            target="To Seabed", caveat="nearest EF land-use class (decision 2026-09-13)"
+        ),
+    }
+    assert len(expected) == 19
+    for key, alias in expected.items():
+        assert aliases[key] == alias
+
+
+@pytest.mark.skipif(
+    not (_REAL_CF.exists() and _REAL_VOCAB_DIR.exists()),
+    reason="real EF inputs not available",
+)
+def test_round_4_alias_targets_exist_in_the_inclusive_index():
+    # every distinct target among the nineteen new round-4 aliases must resolve in
+    # the inclusive (include_uncharacterised) index, in whichever bucket its BAFU name
+    # places in. "Titanium" and "BENZ(a)ANTHRACENE" are characterised (fire from rank
+    # 7); the rest are uncharacterised (rank 8 only).
+    index = EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
+    assert index.by_name("1,1,1,3,3-pentafluoropropane", "air")
+    assert index.by_name("Chlorotrimethylsilane", "air")
+    assert index.by_name("O-chlorotoluene", "air")
+    assert index.by_name("2-(Thiocyanomethylthio)benzothiazole", "air")
+    assert index.by_name("Disodium Methylarsonate", "air")
+    assert index.by_name("BENZ(a)ANTHRACENE", "air")
+    assert index.by_name("Waste Heat", "air")
+    assert index.by_name("Particles (> PM10)", "air")
+    assert index.by_name("Primary Energy From Hydro Power", "resource")
+    assert index.by_name("Chlormequat Chloride", "air")
+    assert index.by_name("Primisulfuron-methyl", "air")
+    assert index.by_name("Tributyltin", "air")
+    assert index.by_name("Benzene", "air")
+    assert index.by_name("Titanium", "resource")
+    assert index.by_name("Inland Water Bodies", "resource")
+    assert index.by_name("To Inland Water Bodies", "resource")
+    assert index.by_name("From Seabed", "resource")
+    assert index.by_name("To Seabed", "resource")
+
+
 def test_load_aliases_raises_on_missing_aliases_key(tmp_path):
     path = tmp_path / "aliases.yaml"
     path.write_text("not_aliases: {}\n", encoding="utf-8")

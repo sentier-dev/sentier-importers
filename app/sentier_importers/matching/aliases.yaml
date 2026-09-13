@@ -47,11 +47,6 @@ aliases:
   energy, from oil: Crude Oil
   energy, from peat: Peat
   energy, from uranium: Uranium
-  # yields no entry today: EF has this flow only under emissions to water,
-  # unspecified (long-term), and BAFU never files it there. Still worth keeping --
-  # it upgrades two rows (water/ocean, water/river) from no_ef_flow to the more
-  # informative sub_compartment_absent.
-  benzo(a)anthracene: benzo[a]anthracene
   butane, perfluorocyclo-, pfc-318: PFC-318
   ethane, 1,1,2-trifluoro-, hfc-143: HFC-143
   octene (mixture of isomers): Octene
@@ -84,7 +79,7 @@ aliases:
   # every wood alias fires only on rank 8) and two more water spellings onto EF's
   # "Water" ("water/m3" is an air-bucket emission onto the uncharacterised air "Water"
   # flow, rank 8 too). "Water, unspecified" yields no entry today -- no BAFU flow
-  # currently carries that exact name -- kept anyway, same as benzo(a)anthracene above.
+  # currently carries that exact name -- kept anyway.
   wood, soft, standing: Wood
   wood, hard, standing: Wood
   wood, primary forest, standing: Wood
@@ -92,3 +87,52 @@ aliases:
   wood, unspecified, standing/m3: Wood
   water/m3: Water
   water, unspecified: Water
+  # round 4: plain spelling differences (no caveat) that no generic tier recovers.
+  propane, 1,1,1,3,3-pentafluoro-, hfc-245fa: 1,1,1,3,3-pentafluoropropane
+  chlorosilane, trimethyl-: Chlorotrimethylsilane
+  toluene, 2-chloro-: O-chlorotoluene
+  thiazole, 2-(thiocyanatemethylthio)benzo-: 2-(Thiocyanomethylthio)benzothiazole
+  disodium acid methane arsenate: Disodium Methylarsonate
+  # replaces the earlier "benzo[a]anthracene" (square brackets) target, which does not
+  # exist in EF 3.1 at all and so never fired; "BENZ(a)ANTHRACENE" is EF's real
+  # pref_label and is characterised (fires from rank 7, not just rank 8).
+  benzo(a)anthracene: BENZ(a)ANTHRACENE
+  heat, waste: Waste Heat
+  particulates, > 10 um: Particles (> PM10)
+  energy, from hydro power: Primary Energy From Hydro Power
+  # round 4: spellings that also assert a decision, so each carries its own caveat.
+  chlormequat:
+    target: Chlormequat Chloride
+    caveat: commercial chloride form of the same active ingredient (decision 2026-09-13)
+  primisulfuron:
+    target: Primisulfuron-methyl
+    caveat: methyl ester is the active ingredient as sold (decision 2026-09-13)
+  tributylstannane:
+    target: Tributyltin
+    caveat: >-
+      tributyltin hydride taken as the tributyltin cation (decision 2026-09-13)
+  benzene (as btex):
+    target: Benzene
+    caveat: BTEX reported as benzene taken as benzene (decision 2026-09-13)
+  # round 4: the ore-composite-shaped TiO2 names OreCompositeMatcher does not
+  # decompose (a compound, not a bare element -- see matchers.py); the stoichiometric
+  # factor from the amount of TiO2 to the amount of titanium lives in
+  # ef_units.STOICHIOMETRIC, applied by conversion_for, not as a caveat here.
+  tio2, 54% in ilmenite, 2.6% in crude ore: Titanium
+  tio2, 95% in rutile, 0.40% in crude ore: Titanium
+  # round 4: BAFU land flows whose class has no EF equivalent at all; the nearest EF
+  # land-use class is used instead. All four are filed by BAFU under resources / land
+  # in the real ecoSpold data and place EXACT there. The EF targets are factorless
+  # land flows, so every one of these four fires only on rank 8.
+  occupation, water courses, artificial:
+    target: Inland Water Bodies
+    caveat: nearest EF land-use class (decision 2026-09-13)
+  transformation, to water courses, artificial:
+    target: To Inland Water Bodies
+    caveat: nearest EF land-use class (decision 2026-09-13)
+  transformation, from sea and ocean:
+    target: From Seabed
+    caveat: nearest EF land-use class (decision 2026-09-13)
+  transformation, to sea and ocean:
+    target: To Seabed
+    caveat: nearest EF land-use class (decision 2026-09-13)

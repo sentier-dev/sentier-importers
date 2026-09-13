@@ -4,6 +4,8 @@ from sentier_importers.matching.pipeline import Match
 from sentier_importers.sources.bafu.ef_units import (
     ENERGY_CONTENT,
     ENERGY_CONTENT_NOTES,
+    STOICHIOMETRIC,
+    STOICHIOMETRIC_NOTES,
     conversion_for,
     nomenclature_unit,
     unit_conversion,
@@ -125,6 +127,48 @@ def test_conversion_for_applies_every_energy_content_table_entry(
     if note:
         caveat = f"{caveat}; {note}"
     assert got == (factor, caveat)
+
+
+#: Hardcoded independently of STOICHIOMETRIC/STOICHIOMETRIC_NOTES themselves, same
+#: rationale as _ENERGY_CONTENT_CASES above.
+_STOICHIOMETRIC_CASES = [
+    (
+        "TiO2, 54% in ilmenite, 2.6% in crude ore",
+        "kg",
+        0.5995,
+        "amount is kg TiO2; 0.5995 is the titanium mass fraction of TiO2 (decision 2026-09-13)",
+    ),
+    (
+        "TiO2, 95% in rutile, 0.40% in crude ore",
+        "kg",
+        0.5995,
+        "amount is kg TiO2; 0.5995 is the titanium mass fraction of TiO2 (decision 2026-09-13)",
+    ),
+]
+
+
+def test_stoichiometric_table_has_exactly_these_two_entries():
+    assert dict(STOICHIOMETRIC) == {(n, u): f for n, u, f, _note in _STOICHIOMETRIC_CASES}
+
+
+def test_stoichiometric_notes_cover_exactly_the_same_two_keys():
+    assert dict(STOICHIOMETRIC_NOTES) == {(n, u): note for n, u, _f, note in _STOICHIOMETRIC_CASES}
+
+
+@pytest.mark.parametrize("name,unit,factor,note", _STOICHIOMETRIC_CASES)
+def test_conversion_for_applies_every_stoichiometric_table_entry(
+    tmp_path_factory, name, unit, factor, note
+):
+    cf = [cf_row("target", "titanium", RES_GROUND, value=1.0)]
+    vocab = [vocab_row("target", "Titanium")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("stoichiometric"), cf, vocab)
+    )
+    flow = BafuFlow(name, "resources", "in ground", unit)
+    match = Match(
+        code="target", tier="alias", placement="exact", location=None, candidates=1, caveats=()
+    )
+    assert conversion_for(flow, match, index) == (factor, note)
 
 
 def test_conversion_for_applies_the_water_density_special_case(tmp_path):
