@@ -59,8 +59,10 @@ _LAND_METHOD = "ef-3.1:land-use"
 #: an oil-sand or pit-methane flow) can never land on the right branch through this
 #: crosswalk, no matter which code placed it -- it is always on the wrong (element or
 #: material) leaf. Such a row is marked ``context_uncertain`` unconditionally, not just
-#: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``.
-_UNCERTAIN_RESOURCE_NAME = re.compile(r"^(Energy|Primary Energy|Oil Sand|Pit Methane)\b", re.I)
+#: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``; also imported by
+#: ``mappings_biosphere_matched._decide``, which withholds a rank-8 match onto one of
+#: these entirely (``context_unresolved``) rather than merely flag it uncertain.
+UNCERTAIN_RESOURCE_NAME = re.compile(r"^(Energy|Primary Energy|Oil Sand|Pit Methane)\b", re.I)
 
 
 def normalise_cas(cas: str | None) -> str | None:
@@ -215,11 +217,11 @@ class EfFlowIndex:
                 if path is None:
                     continue  # no EF leaf for this code, or no bw-context notation at all
                 name = (row.get("pref_label") or "").strip()
-                if bucket_of_ef_context(path) == "resource" and _UNCERTAIN_RESOURCE_NAME.match(
+                if bucket_of_ef_context(path) == "resource" and UNCERTAIN_RESOURCE_NAME.match(
                     name
                 ):
                     # the crosswalk cannot reach an energy resource leaf at all (see
-                    # _UNCERTAIN_RESOURCE_NAME) -- this placement is wrong regardless
+                    # UNCERTAIN_RESOURCE_NAME) -- this placement is wrong regardless
                     # of which code produced it.
                     uncertain = True
                 flows.append(

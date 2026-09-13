@@ -18,10 +18,16 @@ from sentier_importers.matching.compartments import (
     leaf_matches,
 )
 
-_DEFAULT_CF = "/home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-_DEFAULT_VOCAB_DIR = "/home/laurenz/dds/sentier-vocab/data/elementary-flows"
-_REAL_CF = Path(os.environ.get("SENTIER_METHODS_CF", _DEFAULT_CF))
-_REAL_VOCAB_DIR = Path(os.environ.get("SENTIER_VOCAB_FLOWS", _DEFAULT_VOCAB_DIR))
+#: Fallback guess only, never authoritative: the sibling sentier-methods/sentier-vocab
+#: checkouts, if any, sit next to this sentier-importers checkout -- ``parents[3]`` is
+#: that shared parent directory (tests/matching/test_bw_context.py -> tests ->
+#: sentier-importers -> its parent). Set ``SENTIER_METHODS_CF``/``SENTIER_VOCAB_FLOWS``
+#: to override for any other layout; no path here is specific to one machine or user.
+_CHECKOUTS_ROOT = Path(__file__).parents[3]
+_DEFAULT_CF = _CHECKOUTS_ROOT / "sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+_DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/data/elementary-flows"
+_REAL_CF = Path(os.environ.get("SENTIER_METHODS_CF", str(_DEFAULT_CF)))
+_REAL_VOCAB_DIR = Path(os.environ.get("SENTIER_VOCAB_FLOWS", str(_DEFAULT_VOCAB_DIR)))
 _EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
 
 #: BAFU has no subCategory at all for a "low stack" / "high stack" distinction (only

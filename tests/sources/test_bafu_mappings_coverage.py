@@ -379,3 +379,25 @@ def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path, monkeypatc
     monkeypatch.setattr(coverage_mod, "outcome_for", fake_outcome_for)
     with pytest.raises(RuntimeError, match="characterised match reached bridge 8"):
         _run(source, tmp_path)
+
+
+def test_energy_carrier_resource_name_is_reported_context_unresolved_not_bridge_8(tmp_path):
+    # decision 2026-09-13: an energy-carrier-shaped resource name the bw-context
+    # crosswalk can never place correctly is withheld outright, not just uncertain --
+    # the coverage sidecar must report it unmapped (context_unresolved), never bridge 8.
+    vocab = VOCAB + [
+        vocab_row("energy-geo-unchar", "Energy, geothermal, converted", bw="reso-grou")
+    ]
+    root = _stage(tmp_path, vocab=vocab)
+    source = _source(root)
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Energy, geothermal, converted", "resources", "land", "MJ")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Energy, geothermal, converted"]
+    assert row["status"] == "unmapped"
+    assert row["reason"] == "context_unresolved"
+    assert "bridge" not in row

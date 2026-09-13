@@ -66,7 +66,7 @@ _LEAF_HUMAN = {
     "industrial": "non-agricultural soil",
     "forestry": "non-agricultural soil",
     "fossilwater": "ground water",
-    "indoor": "indoor air",
+    "indoor": "air, indoor",
 }
 #: ``no_ef_flow`` detail template, picked by ``EfFlowIndex.includes_uncharacterised``:
 #: a characterised-only index really did restrict the search to factor-bearing flows,
@@ -74,11 +74,12 @@ _LEAF_HUMAN = {
 #: flows too, so the detail must not imply otherwise.
 _NO_MATCH_CHARACTERISED = (
     "no EF 3.1 flow with a factor matches by name, synonym, qualifier, land-use "
-    "class, alias, region-stripped name or CAS in the {bucket} compartment"
+    "class, ore composite, alias, region-stripped name or CAS in the {bucket} compartment"
 )
 _NO_MATCH_INCLUSIVE = (
     "no EF 3.1 flow, with or without a factor, matches by name, synonym, qualifier, "
-    "land-use class, alias, region-stripped name or CAS in the {bucket} compartment"
+    "land-use class, ore composite, alias, region-stripped name or CAS in the "
+    "{bucket} compartment"
 )
 
 

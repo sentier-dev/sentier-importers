@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 from sentier_importers.core.context import RunContext
 from sentier_importers.matching.ef_index import EfFlowIndex
-from sentier_importers.matching.pipeline import default_pipeline
+from sentier_importers.matching.pipeline import Match, default_pipeline
 from sentier_importers.sources.bafu.mappings_biosphere_matched import ParsedInputs
 from sentier_importers.sources.bafu.mappings_biosphere_nomenclature import BafuEfNomenclatureSource
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
@@ -94,13 +94,18 @@ def test_uncertain_suffix_is_absent_when_the_bw_context_code_is_unambiguous(tmp_
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [widget]))
     rows = source.transform([{"inputs": augmented}])
     (row,) = [r for r in rows if r["source"]["name"] == "Widget"]
-    assert row["comment"] == "uncharacterised in EF 3.1: no factor in any method"
+    assert row["comment"] == (
+        "uncharacterised in EF 3.1: no factor in any method; target unit is the "
+        "source unit's EF spelling (EF states no reference unit for this flow)"
+    )
 
 
-def test_becquerel_flow_lands_on_kilobecquerel_with_the_fixed_conversion(tmp_path):
-    # A synthetic Bq-denominated BAFU flow -- injected directly into the parsed BAFU
-    # universe, the same pattern the coverage tests use to add flows the fixture zip
-    # doesn't carry -- resolving by exact name onto an uncharacterised EF row.
+def test_becquerel_flow_keeps_its_own_unit_with_no_rescale(tmp_path):
+    # An uncharacterised target has no reference unit at all, so rank 8 must never
+    # rescale an amount: a BAFU Bq-denominated flow stays "Bq" (NOT respelled to kBq,
+    # unlike a characterised ionising-radiation match, which does rescale -- see the
+    # sibling matched-source test_becquerel_sources_land_on_kilobecquerel_with_a_
+    # conversion), and carries no conversion_factor at all.
     vocab = VOCAB + [vocab_row("kr85m-unchar", "Krypton-85m", bw="envi-air-hist15me")]
     root = _stage(tmp_path, vocab=vocab)
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
@@ -112,20 +117,45 @@ def test_becquerel_flow_lands_on_kilobecquerel_with_the_fixed_conversion(tmp_pat
     rows = source.transform([{"inputs": augmented}])
     (row,) = [r for r in rows if r["source"]["name"] == "Krypton-85m"]
     assert row["target"]["code"] == "kr85m-unchar"
-    assert row["target"]["unit"] == "kBq"
-    assert row["conversion_factor"] == 0.001
+    assert row["target"]["unit"] == "Bq"
+    assert "conversion_factor" not in row
     assert row["comment"].startswith("uncharacterised in EF 3.1: no factor in any method")
 
 
 def test_rank8_resource_branch_fallback_caveat_is_honest_about_uncharacterised(tmp_path):
-    # "Energy, geothermal, converted" is exactly the kind of BAFU/EF energy-resource
-    # name the bw-context crosswalk can never place correctly (see
-    # ef_index._UNCERTAIN_RESOURCE_NAME): filed by BAFU under the uninformative "land"
-    # sub-compartment, it resolves through the resource-branch fallback onto the one
-    # (uncharacterised) EF leaf reso-grou reaches -- the pipeline's own caveat wording
-    # ("EF has ... only as ...") would assert a fact about EF's characterised branches
-    # that does not hold for this target, so entry_for must replace it.
-    vocab = VOCAB + [vocab_row("energy-geo", "Energy, geothermal, converted", bw="reso-grou")]
+    # "Iridium" is filed by BAFU under the uninformative "unspecified" sub-compartment;
+    # it resolves through the resource-branch fallback onto the one (uncharacterised)
+    # EF leaf reso-grou reaches -- the pipeline's own caveat wording ("EF has ... only
+    # as ...") would assert a fact about EF's characterised branches that does not hold
+    # for this target, so entry_for must replace it. (Not an energy-carrier name, so
+    # rule 3 of _decide never withholds it -- that is covered separately.)
+    vocab = VOCAB + [vocab_row("iridium-unchar", "Iridium", bw="reso-grou")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Iridium", "resources", "unspecified", "kg")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Iridium"]
+    assert row["target"]["code"] == "iridium-unchar"
+    assert "EF has" not in row["comment"] and "only as" not in row["comment"]
+    assert (
+        "BAFU files this resource under unspecified; placed on the inferred EF "
+        "resource branch non-renewable element resources from ground (uncharacterised, "
+        "context from the Brightway code)" in row["comment"]
+    )
+
+
+def test_energy_carrier_resource_names_are_withheld_entirely_not_emitted(tmp_path):
+    # decision 2026-09-13 (energy-carrier withholding): the bw-context crosswalk has no
+    # code that reaches an EF energy-resource branch at all, so a Match onto one of
+    # these uncharacterised targets is not just uncertain, it is unresolvable -- _decide
+    # withholds it outright (context_unresolved) rather than emit it with any caveat.
+    vocab = VOCAB + [
+        vocab_row("energy-geo-unchar", "Energy, geothermal, converted", bw="reso-grou")
+    ]
     root = _stage(tmp_path, vocab=vocab)
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
@@ -134,15 +164,7 @@ def test_rank8_resource_branch_fallback_caveat_is_honest_about_uncharacterised(t
     flow = BafuFlow("Energy, geothermal, converted", "resources", "land", "MJ")
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
     rows = source.transform([{"inputs": augmented}])
-    (row,) = [r for r in rows if r["source"]["name"] == "Energy, geothermal, converted"]
-    assert row["target"]["code"] == "energy-geo"
-    assert "EF has" not in row["comment"] and "only as" not in row["comment"]
-    assert (
-        "BAFU files this resource under land; placed on the inferred EF resource "
-        "branch non-renewable element resources from ground (uncharacterised, "
-        "context from the Brightway code)" in row["comment"]
-    )
-    assert "branch/sub-compartment uncertain" in row["comment"]  # energy name forces it
+    assert not any(r["source"]["name"] == "Energy, geothermal, converted" for r in rows)
 
 
 def test_rank8_location_and_regional_aggregate_caveat_are_reported(tmp_path):
@@ -174,7 +196,10 @@ def test_rank8_location_and_regional_aggregate_caveat_are_reported(tmp_path):
 
     kr = by_name["Water, KR"]
     assert kr["target"]["location"] == "KR"
-    assert kr["comment"] == "uncharacterised in EF 3.1: no factor in any method"
+    assert kr["comment"] == (
+        "uncharacterised in EF 3.1: no factor in any method; target unit is the "
+        "source unit's EF spelling (EF states no reference unit for this flow)"
+    )
 
     europe = by_name["Water, Europe"]
     assert "location" not in europe["target"]
@@ -258,3 +283,32 @@ def test_no_intermediate_database_identifier_in_output(tmp_path):
 
     blob = json.dumps(rows).lower()
     assert "ecoinvent" not in blob and "biosphere3" not in blob
+
+
+def test_resource_correction_flow_carries_its_own_caveat_onto_an_uncharacterised_target(
+    tmp_path,
+):
+    # entry_for is exercised directly (a hand-built Match, like the sibling matched-
+    # source test): no matcher tier strips a ", resource correction" suffix by name, so
+    # this flow could not resolve through the real pipeline on its own -- the caveat
+    # itself, though, must still be added regardless of which tier/placement matched it.
+    vocab = VOCAB + [vocab_row("iron-unchar", "Iron", bw="reso-grou")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    index = records[0]["inputs"].index
+    flow = BafuFlow("Iron, resource correction", "resources", "unspecified", "kg")
+    match = Match(
+        code="iron-unchar",
+        tier="name",
+        placement="resource_branch_fallback",
+        location=None,
+        candidates=1,
+        caveats=("BAFU files this resource under unspecified; EF has iron only as x",),
+    )
+    entry = source.entry_for(flow, match, index)
+    assert (
+        "source is a resource-correction flow, mapped to the extraction of the same "
+        "element" in entry["comment"]
+    )

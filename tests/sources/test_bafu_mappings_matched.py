@@ -430,6 +430,30 @@ def test_uranium_resource_branch_fallback_converts_via_energy_content(tmp_path):
     assert URANIUM in {r["source"]["code"] for r in rows}
 
 
+def test_resource_correction_flow_carries_its_own_caveat_onto_a_characterised_target(
+    tmp_path,
+):
+    # a "..., resource correction" flow is a correction entry against a substance's own
+    # extraction, not a distinct resource -- entry_for appends a caveat saying so,
+    # regardless of which tier/placement actually resolved the match.
+    cf = CF + [cf_row("iron", "iron", RES_GROUND, value=1.0)]
+    vocab = VOCAB + [vocab_row("iron", "Iron")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    (r,) = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    flow = BafuFlow("Iron, resource correction", "resources", "in ground", "kg")
+    match = Match(
+        code="iron", tier="name", placement="exact", location=None, candidates=1, caveats=()
+    )
+    entry = source.entry_for(flow, match, r["inputs"].index)
+    assert (
+        "source is a resource-correction flow, mapped to the extraction of the same "
+        "element" in entry["comment"]
+    )
+
+
 def test_coal_hard_alias_converts_via_energy_content(tmp_path):
     # "Coal, hard" -> "Hard Coal" via the shipped alias; energy content 19.1 MJ/kg.
     cf = CF + [
@@ -669,8 +693,8 @@ def test_decide_reports_non_freshwater_for_both_match_and_unmatched_inputs(tmp_p
 
 def test_water_fossil_no_longer_non_freshwater_resolves_via_alias_instead(tmp_path):
     # Decision 2026-09-13 withdraws "Water, fossil" from _NON_FRESHWATER: it is taken
-    # as non-renewable groundwater and resolved through the shipped "water, fossil"
-    # alias onto "Ground Water" instead, carrying that decision as a caveat.
+    # as groundwater and resolved through the shipped "water, fossil" alias onto
+    # "Ground Water" instead, carrying that decision as a caveat.
     cf, vocab = write_ef_inputs(
         tmp_path,
         [cf_row("gw", "ground water", RES_WATER, method="ef-3.1:water-use", value=1.0)],
@@ -684,7 +708,8 @@ def test_water_fossil_no_longer_non_freshwater_resolves_via_alias_instead(tmp_pa
     outcome = _decide(flow, match, index)
     assert isinstance(outcome, Match) and outcome.code == "gw"
     assert outcome.caveats == (
-        "fossil water taken as non-renewable groundwater (decision 2026-09-13)",
+        "fossil water taken as groundwater (decision 2026-09-13; EF files all water "
+        "resources under renewable material resources from water)",
     )
 
 

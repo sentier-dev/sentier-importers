@@ -42,16 +42,16 @@ def test_unit_conversion_fixed_factors_and_cross_dimension_mismatches(
 @pytest.mark.parametrize(
     "bafu_unit,expected",
     [
-        ("kg", ("kilogram", None)),
-        ("Bq", ("kBq", 0.001)),
-        ("kBq", ("kBq", None)),
-        ("m3", ("cubic meter", None)),
-        ("Nm3", ("cubic meter", None)),
-        ("MJ", ("megajoule", None)),
-        ("kWh", ("megajoule", 3.6)),
-        ("m2", ("m2", None)),
-        ("m2a", ("m2*a", None)),
-        ("unknown-unit", ("unknown-unit", None)),  # passed through unchanged
+        ("kg", "kilogram"),
+        ("Bq", "Bq"),  # spelling only, same scale -- never rescaled to kBq
+        ("kBq", "kBq"),
+        ("m3", "cubic meter"),
+        ("Nm3", "cubic meter"),
+        ("MJ", "megajoule"),
+        ("kWh", "kWh"),  # spelling only, same scale -- never rescaled to megajoule
+        ("m2", "m2"),
+        ("m2a", "m2*a"),
+        ("unknown-unit", "unknown-unit"),  # passed through unchanged
     ],
 )
 def test_nomenclature_unit_covers_every_bafu_unit(bafu_unit, expected):

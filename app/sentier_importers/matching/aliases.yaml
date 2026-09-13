@@ -41,8 +41,9 @@ aliases:
   # fossil/biotic energy resources (MJ) -> EF resource-use-fossils flows (megajoule)
   energy, from coal: Hard Coal
   energy, from coal, brown: Brown Coal
-  # "Energy, from oil" is filed under resources / unspecified; still withheld there
-  # as sub_compartment_absent (EF has no unspecified energy-resource leaf) -- expected.
+  # "Energy, from oil" is filed under resources / unspecified (uninformative, decision
+  # (b)); with exactly one EF leaf reachable via this alias, it resolves through the
+  # resource-branch fallback onto Crude Oil, carrying that fallback's own caveat.
   energy, from oil: Crude Oil
   energy, from peat: Peat
   energy, from uranium: Uranium
@@ -54,12 +55,14 @@ aliases:
   butane, perfluorocyclo-, pfc-318: PFC-318
   ethane, 1,1,2-trifluoro-, hfc-143: HFC-143
   octene (mixture of isomers): Octene
-  # fossil groundwater: taken as non-renewable groundwater (decision 2026-09-13);
-  # "Water, fossil" is withdrawn from _NON_FRESHWATER accordingly (see
-  # mappings_biosphere_matched.py) so this alias actually gets a chance to fire.
+  # fossil groundwater: taken as groundwater (decision 2026-09-13); "Water, fossil" is
+  # withdrawn from _NON_FRESHWATER accordingly (see mappings_biosphere_matched.py) so
+  # this alias actually gets a chance to fire.
   water, fossil:
     target: Ground Water
-    caveat: "fossil water taken as non-renewable groundwater (decision 2026-09-13)"
+    caveat: >-
+      fossil water taken as groundwater (decision 2026-09-13; EF files all water
+      resources under renewable material resources from water)
   # "Nitrogen, Total (excluding N2)" asserts a chemical identity (total N), not a
   # spelling difference; taken as BAFU's "Nitrogen" to water by decision 2026-09-13.
   nitrogen:

@@ -270,7 +270,8 @@ def test_elemental_cas_does_not_collapse_speciation(pipeline):
     assert got == Unmatched(
         reason="no_ef_flow",
         detail="no EF 3.1 flow with a factor matches by name, synonym, qualifier, "
-        "land-use class, alias, region-stripped name or CAS in the water compartment",
+        "land-use class, ore composite, alias, region-stripped name or CAS in the "
+        "water compartment",
     )
 
 
@@ -286,8 +287,8 @@ def test_no_ef_flow_detail_says_with_or_without_a_factor_for_an_inclusive_index(
     assert got == Unmatched(
         reason="no_ef_flow",
         detail="no EF 3.1 flow, with or without a factor, matches by name, synonym, "
-        "qualifier, land-use class, alias, region-stripped name or CAS in the "
-        "water compartment",
+        "qualifier, land-use class, ore composite, alias, region-stripped name or CAS "
+        "in the water compartment",
     )
 
 

@@ -49,7 +49,7 @@ _SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoul
 
 #: ecoinvent v2 net calorific values, MJ per BAFU unit, keyed by (BAFU name, BAFU unit) so a
 #: conversion is never applied by accident. These are the resource-flow definitions the
-#: BAFU-2026 inventory is built from. Decision Laurenz 2026-09-13. `Gas, natural/m3` exists in
+#: BAFU-2026 inventory is built from. Decision 2026-09-13. `Gas, natural/m3` exists in
 #: both m3 and Nm3 in BAFU; both are treated as normal cubic metres.
 ENERGY_CONTENT: dict[tuple[str, str], float] = {
     ("Coal, hard", "kg"): 19.1,
@@ -61,40 +61,44 @@ ENERGY_CONTENT: dict[tuple[str, str], float] = {
     ("Gas, natural/m3", "Nm3"): 38.3,
 }
 
-#: BAFU unit -> (EF spelling of that unit's physical dimension, factor onto it), used
-#: only for an uncharacterised EF target (rank 8, ``mappings_biosphere_nomenclature``):
-#: such a target carries no CF vector at all, so ``EfFlowIndex.reference_unit`` has
-#: nothing to infer a reference unit from, and the plain unit-string respelling below
-#: stands in for it. Impact is zero by construction regardless of the unit chosen, so
-#: this is a nomenclature courtesy, not a physical-scale assertion the way
-#: ``unit_conversion``/``ENERGY_CONTENT`` are. A unit not listed here is passed through
-#: unchanged with no factor.
-_NOMENCLATURE_UNITS: dict[str, tuple[str, float | None]] = {
-    "kg": ("kilogram", None),
-    "Bq": ("kBq", 0.001),
-    "kBq": ("kBq", None),
-    "m3": ("cubic meter", None),
-    "Nm3": ("cubic meter", None),
-    "MJ": ("megajoule", None),
-    "kWh": ("megajoule", 3.6),
-    "m2": ("m2", None),
-    "m2a": ("m2*a", None),
+#: BAFU unit -> EF spelling of the exact same physical scale, used only for an
+#: uncharacterised EF target (rank 8, ``mappings_biosphere_nomenclature``): such a
+#: target has no reference unit at all (``EfFlowIndex.reference_unit`` returns
+#: ``None`` for it, and there is no CF-method convention to read one off of), so rank
+#: 8 must never rescale an amount -- only respell the unit BAFU already reports, one
+#: for one. Every entry here is a same-scale spelling pair only (``kg``/``kilogram``,
+#: ``m3``/``Nm3``/``cubic meter``, ``m2a``/``m2*a``); ``Bq``, ``kBq``, ``kWh`` and
+#: ``m2`` map to themselves -- unlike ``unit_conversion``/``conversion_for``, this
+#: table carries no scaled pair at all (no Bq->kBq, no kWh->megajoule): those need a
+#: factor, and rank 8 has none to apply. A unit not listed here is passed through
+#: unchanged.
+_NOMENCLATURE_UNITS: dict[str, str] = {
+    "kg": "kilogram",
+    "Bq": "Bq",
+    "kBq": "kBq",
+    "m3": "cubic meter",
+    "Nm3": "cubic meter",
+    "MJ": "megajoule",
+    "kWh": "kWh",
+    "m2": "m2",
+    "m2a": "m2*a",
 }
 
 
-def nomenclature_unit(bafu_unit: str) -> tuple[str, float | None]:
-    """The EF spelling of ``bafu_unit``'s dimension, and a factor onto it (or ``None``).
+def nomenclature_unit(bafu_unit: str) -> str:
+    """The EF spelling of ``bafu_unit``, same physical scale, never a factor.
 
     Used only when the match target is uncharacterised (rank 8): such a target has no
     EF reference unit at all (``EfFlowIndex.reference_unit`` returns ``None`` for it),
-    so this is what ``entry_for`` uses to fill ``target["unit"]``/``conversion_factor``
-    instead. ``bafu_unit`` outside :data:`_NOMENCLATURE_UNITS` is returned unchanged
-    with no factor -- this is a labelling courtesy, not a claim of physical accuracy.
+    so this is what ``entry_for`` uses to fill ``target["unit"]`` instead --
+    ``entry_for`` never sets ``conversion_factor`` for one. ``bafu_unit`` outside
+    :data:`_NOMENCLATURE_UNITS` is returned unchanged -- this is a spelling courtesy,
+    not a claim of physical accuracy.
     """
-    return _NOMENCLATURE_UNITS.get(bafu_unit, (bafu_unit, None))
+    return _NOMENCLATURE_UNITS.get(bafu_unit, bafu_unit)
 
 
-def unit_conversion(bafu_unit: str, ef_unit: str) -> float | None:
+def unit_conversion(bafu_unit: str, ef_unit: str | None) -> float | None:
     """Fixed multiplier from ``bafu_unit`` onto EF's ``ef_unit``, or ``None`` when unsafe.
 
     The same unit spelling is trivially 1.0. Otherwise a conversion is only ever safe

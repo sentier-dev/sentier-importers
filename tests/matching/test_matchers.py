@@ -211,19 +211,22 @@ def test_shipped_alias_file_loads_lowercased_and_has_the_seed_entries():
 
 
 def test_shipped_alias_file_has_all_thirteen_entries_added_by_this_task():
-    # decisions (a) and (c) (Laurenz, 2026-09-13): fossil water taken as non-renewable
-    # groundwater, and BAFU "Nitrogen" taken as total nitrogen; both carry a caveat
-    # naming the decision. The other ten are plain spelling aliases (no caveat), plus
-    # the three oxygen-demand targets that carry no EF 3.1 factor today. The
-    # thirteenth (decision (b), Task 2) is the /kg twin of the existing "water,
-    # process, unspecified natural origin/m3" alias -- without it, the /kg flows'
-    # single EF leaf holds several differently-factored candidates and the
-    # resource-branch fallback reports them ambiguous_substances instead.
+    # decisions (c) (2026-09-13): fossil water taken as groundwater, and BAFU
+    # "Nitrogen" taken as total nitrogen; both carry a caveat naming the decision. The
+    # other ten are plain spelling aliases (no caveat), plus the three oxygen-demand
+    # targets that carry no EF 3.1 factor today. The thirteenth (decision (b), Task 2)
+    # is the /kg twin of the existing "water, process, unspecified natural origin/m3"
+    # alias -- without it, the /kg flows' single EF leaf holds several
+    # differently-factored candidates and the resource-branch fallback reports them
+    # ambiguous_substances instead.
     aliases = load_aliases()
     expected = {
         "water, fossil": Alias(
             target="Ground Water",
-            caveat="fossil water taken as non-renewable groundwater (decision 2026-09-13)",
+            caveat=(
+                "fossil water taken as groundwater (decision 2026-09-13; EF files all "
+                "water resources under renewable material resources from water)"
+            ),
         ),
         "nitrogen": Alias(
             target="Nitrogen, Total (excluding N2)",
