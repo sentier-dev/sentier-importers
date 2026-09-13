@@ -43,7 +43,7 @@ def _source(root):
 
 
 def test_every_universe_flow_has_exactly_one_row(tmp_path):
-    root = _stage(tmp_path, rank3=[CO2], rank6=[RADON])
+    root = _stage(tmp_path, curated=[CO2], inferred=[RADON])
     rows = _run(_source(root), tmp_path)
     assert len(rows) == 8
     by_code = {r["source"]["code"]: r for r in rows}
@@ -53,7 +53,8 @@ def test_every_universe_flow_has_exactly_one_row(tmp_path):
     # matched-source test), so it stays unmapped here too.
     assert by_code[URANIUM]["status"] == "unmapped"
     assert by_code[URANIUM]["reason"] == "no_ef_flow"
-    assert by_code[LAND]["status"] == "mapped" and by_code[LAND]["bridge"] == 7
+    assert by_code[LAND]["status"] == "mapped"
+    assert by_code[LAND]["package"] == "biosphere-3-matched"
     assert by_code[LAND]["tier"] == "landuse"
     assert by_code[CO2] == {
         "source": {
@@ -63,9 +64,10 @@ def test_every_universe_flow_has_exactly_one_row(tmp_path):
             "context": ["emissions to air", "unspecified"],
         },
         "status": "mapped",
-        "bridge": 3,
+        "package": "biosphere-1-curated",
     }
-    assert by_code[RADON]["status"] == "mapped" and by_code[RADON]["bridge"] == 6
+    assert by_code[RADON]["status"] == "mapped"
+    assert by_code[RADON]["package"] == "biosphere-2-inferred"
     assert by_code[WATER] == {
         "source": {
             "name": "Water, river",
@@ -74,17 +76,17 @@ def test_every_universe_flow_has_exactly_one_row(tmp_path):
             "context": ["resources", "in water"],
         },
         "status": "mapped",
-        "bridge": 7,
+        "package": "biosphere-3-matched",
         "tier": "alias",
         "placement": "exact",
     }
 
 
-def test_rank_3_wins_when_a_flow_is_named_by_both_rank_3_and_rank_6(tmp_path):
-    root = _stage(tmp_path, rank3=[CO2], rank6=[CO2])
+def test_curated_wins_when_a_flow_is_named_by_both_curated_and_inferred(tmp_path):
+    root = _stage(tmp_path, curated=[CO2], inferred=[CO2])
     rows = _run(_source(root), tmp_path)
     co2 = next(r for r in rows if r["source"]["code"] == CO2)
-    assert co2["status"] == "mapped" and co2["bridge"] == 3
+    assert co2["status"] == "mapped" and co2["package"] == "biosphere-1-curated"
 
 
 def test_rows_are_sorted_by_name_then_context(tmp_path):
@@ -122,7 +124,7 @@ def test_unmapped_rows_carry_reason_and_detail(tmp_path):
     gas = by_name["Gas, natural/m3"]
     assert gas["status"] == "unmapped" and gas["reason"] == "no_ef_flow"
     assert "resource compartment" in gas["detail"]
-    assert "bridge" not in gas and "tier" not in gas
+    assert "package" not in gas and "tier" not in gas
 
 
 def test_mine_gas_and_natural_gas_both_convert_via_energy_content(tmp_path):
@@ -152,21 +154,22 @@ def test_mine_gas_and_natural_gas_both_convert_via_energy_content(tmp_path):
     pq.write_table(pa.Table.from_pylist(vocab, schema=VOCAB_SCHEMA), vocab_path)
     rows = _run(_source(root), tmp_path)
     gas = next(r for r in rows if r["source"]["name"] == "Gas, natural/m3")
-    assert gas["status"] == "mapped" and gas["bridge"] == 7
+    assert gas["status"] == "mapped" and gas["package"] == "biosphere-3-matched"
     mine_gas = next(
         r for r in rows if r["source"]["name"] == "Gas, mine, off-gas, process, coal mining/m3"
     )
-    assert mine_gas["status"] == "mapped" and mine_gas["bridge"] == 7
+    assert mine_gas["status"] == "mapped" and mine_gas["package"] == "biosphere-3-matched"
 
 
-def test_location_and_caveats_are_absent_outside_a_rank7_match(tmp_path):
-    # the fixture's own rank-7 match (WATER, via alias) carries neither key; the positive
-    # case (location and/or caveats present on a real rank-7 match) is pinned by
-    # ``test_rank7_match_location_and_caveats_are_reported_when_present`` below.
+def test_location_and_caveats_are_absent_outside_a_matched_package_match(tmp_path):
+    # the fixture's own matched-package match (WATER, via alias) carries neither key;
+    # the positive case (location and/or caveats present on a real matched-package
+    # match) is pinned by
+    # ``test_matched_package_location_and_caveats_are_reported_when_present`` below.
     root = _stage(tmp_path)
     rows = _run(_source(root), tmp_path)
     for r in rows:
-        if not (r["status"] == "mapped" and r["bridge"] == 7):
+        if not (r["status"] == "mapped" and r["package"] == "biosphere-3-matched"):
             assert "location" not in r and "caveats" not in r
 
 
@@ -230,7 +233,7 @@ def test_no_intermediate_database_identifier_in_output(tmp_path):
     zinc = next(r for r in rows if r["source"]["name"].startswith("Zinc,"))
     assert zinc["status"] == "mapped" and any("ore composite" in c for c in zinc["caveats"])
     peat = next(r for r in rows if r["source"]["name"] == "Peat")
-    assert peat["status"] == "mapped" and peat["bridge"] == 7
+    assert peat["status"] == "mapped" and peat["package"] == "biosphere-3-matched"
 
     blob = json.dumps(rows).lower()
     assert "ecoinvent" not in blob and "biosphere3" not in blob
@@ -241,7 +244,7 @@ def test_no_intermediate_database_identifier_in_output(tmp_path):
         assert "ecoinvent" not in caveats.lower() and "biosphere3" not in caveats.lower()
 
 
-def test_rank7_match_location_and_caveats_are_reported_when_present(tmp_path):
+def test_matched_package_location_and_caveats_are_reported_when_present(tmp_path):
     # "Water, KR" resolves to a real EF water-use flow with a resolvable ISO location
     # (location present, no caveats); "Water, Europe" resolves to the same flow but as a
     # regional aggregate EF cannot place (caveats present, no location) -- see the sibling
@@ -272,16 +275,17 @@ def test_rank7_match_location_and_caveats_are_reported_when_present(tmp_path):
     by_name = {r["source"]["name"]: r for r in rows}
 
     kr = by_name["Water, KR"]
-    assert kr["bridge"] == 7 and kr["location"] == "KR" and "caveats" not in kr
+    assert kr["package"] == "biosphere-3-matched" and kr["location"] == "KR"
+    assert "caveats" not in kr
 
     europe = by_name["Water, Europe"]
-    assert europe["bridge"] == 7 and "location" not in europe
+    assert europe["package"] == "biosphere-3-matched" and "location" not in europe
     assert europe["caveats"] == [
         "regional aggregate Europe in the source name; EF applies the global default factor"
     ]
 
 
-def test_bridge_8_row_reports_tier_placement_and_characterised_false(tmp_path):
+def test_nomenclature_row_reports_tier_placement_and_characterised_false(tmp_path):
     # "Mine gas" carries no CF-table factor at all but a synonym that exactly names the
     # otherwise-unmapped mine off-gas BAFU flow, placed via the reso-grou bw-context
     # crosswalk (same fixture as the sibling matched-source test).
@@ -297,19 +301,19 @@ def test_bridge_8_row_reports_tier_placement_and_characterised_false(tmp_path):
     rows = _run(_source(root), tmp_path)
     mine_gas = next(r for r in rows if r["source"]["code"] == MINE_GAS)
     assert mine_gas["status"] == "mapped"
-    assert mine_gas["bridge"] == 8
+    assert mine_gas["package"] == "biosphere-4-nomenclature"
     assert mine_gas["characterised"] is False
     assert mine_gas["tier"] == "synonym"
     assert mine_gas["placement"] == "exact"
     assert "reason" not in mine_gas and "detail" not in mine_gas
 
 
-def test_a_flow_mapped_in_pass_1_never_also_appears_as_bridge_8(tmp_path):
-    # LAND resolves via rank 7 (land-use class tier) in the plain fixture; it must never
-    # also be reconsidered by bridge 8's second pass.
+def test_a_flow_mapped_in_pass_1_never_also_appears_as_nomenclature(tmp_path):
+    # LAND resolves via the matched package (land-use class tier) in the plain fixture;
+    # it must never also be reconsidered by the nomenclature package's second pass.
     rows = _run(_source(_stage(tmp_path)), tmp_path)
     land = next(r for r in rows if r["source"]["code"] == LAND)
-    assert land["bridge"] == 7
+    assert land["package"] == "biosphere-3-matched"
     assert "characterised" not in land
 
 
@@ -320,13 +324,14 @@ def test_unmapped_rows_still_come_from_pass_2_when_nothing_resolves_there_either
     rows = _run(_source(root), tmp_path)
     gas = next(r for r in rows if r["source"]["code"] == GAS)
     assert gas["status"] == "unmapped" and gas["reason"] == "no_ef_flow"
-    assert "bridge" not in gas
+    assert "package" not in gas
 
 
-def test_bridge_8_location_and_caveats_are_reported_when_present(tmp_path):
-    # Same "Water, KR" / "Water, Europe" region-strip scenario as the rank-7 test above,
-    # but onto an uncharacterised "Water" vocab row (no CF row at all): bridge 8's
-    # location/caveats reporting must work exactly the same way rank 7's does.
+def test_nomenclature_location_and_caveats_are_reported_when_present(tmp_path):
+    # Same "Water, KR" / "Water, Europe" region-strip scenario as the matched-package
+    # test above, but onto an uncharacterised "Water" vocab row (no CF row at all):
+    # the nomenclature package's location/caveats reporting must work exactly the same
+    # way the matched package's does.
     vocab = VOCAB + [vocab_row("water-em-unchar", "Water", cas="7732-18-5", bw="envi-wate-unkn")]
     root = _stage(tmp_path, vocab=vocab)
     source = _source(root)
@@ -343,11 +348,11 @@ def test_bridge_8_location_and_caveats_are_reported_when_present(tmp_path):
     by_name = {r["source"]["name"]: r for r in rows}
 
     kr = by_name["Water, KR"]
-    assert kr["bridge"] == 8 and kr["characterised"] is False
+    assert kr["package"] == "biosphere-4-nomenclature" and kr["characterised"] is False
     assert kr["location"] == "KR" and "caveats" not in kr
 
     europe = by_name["Water, Europe"]
-    assert europe["bridge"] == 8 and "location" not in europe
+    assert europe["package"] == "biosphere-4-nomenclature" and "location" not in europe
     assert europe["caveats"] == [
         "regional aggregate Europe in the source name; EF applies the global default factor"
     ]
@@ -355,8 +360,8 @@ def test_bridge_8_location_and_caveats_are_reported_when_present(tmp_path):
 
 def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path, monkeypatch):
     # Pass 2 must never resolve onto a characterised target -- that would mean the
-    # inclusive index changed a characterised rank-7 outcome. Force it via a fake
-    # ``outcome_for`` monkeypatched onto the coverage module's own name (the module
+    # inclusive index changed a characterised matched-package outcome. Force it via a
+    # fake ``outcome_for`` monkeypatched onto the coverage module's own name (the module
     # ``BafuEfMatchedSource.outcomes`` calls its *own* module-level ``outcome_for``
     # unaffected, so pass 1 -- which uses that name -- still runs for real; only the
     # coverage module's pass-2 call sees the fake), returning a match onto "co2-fos"
@@ -378,17 +383,17 @@ def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path, monkeypatc
         return outcome_for(flow, cas, pipeline, index)
 
     monkeypatch.setattr(coverage_mod, "outcome_for", fake_outcome_for)
-    with pytest.raises(RuntimeError, match="characterised match reached bridge 8"):
+    with pytest.raises(RuntimeError, match="characterised match reached biosphere-4-nomenclature"):
         _run(source, tmp_path)
 
 
-def test_energy_carrier_resource_name_is_reported_as_bridge_8(tmp_path):
+def test_energy_carrier_resource_name_is_reported_as_nomenclature(tmp_path):
     # decision (f)(2), 2026-09-13: an energy-carrier-shaped resource name the
     # bw-context crosswalk can never place correctly is now emitted, not withheld --
-    # the coverage sidecar reports it mapped, bridge 8, with the placement the
-    # pipeline actually computed (``resource_branch_fallback`` here: "land" carries no
-    # extraction-medium information and the alias/exact-name candidate lands on
-    # exactly one EF leaf).
+    # the coverage sidecar reports it mapped, biosphere-4-nomenclature, with the
+    # placement the pipeline actually computed (``resource_branch_fallback`` here:
+    # "land" carries no extraction-medium information and the alias/exact-name
+    # candidate lands on exactly one EF leaf).
     vocab = VOCAB + [
         vocab_row("energy-geo-unchar", "Energy, geothermal, converted", bw="reso-grou")
     ]
@@ -403,7 +408,7 @@ def test_energy_carrier_resource_name_is_reported_as_bridge_8(tmp_path):
     rows = source.transform([{"inputs": augmented}])
     (row,) = [r for r in rows if r["source"]["name"] == "Energy, geothermal, converted"]
     assert row["status"] == "mapped"
-    assert row["bridge"] == 8
+    assert row["package"] == "biosphere-4-nomenclature"
     assert row["characterised"] is False
     assert row["placement"] == "resource_branch_fallback"
     assert "reason" not in row and "detail" not in row

@@ -18,9 +18,9 @@ so it is the most informative of however many dead tiers followed). Every other
 ``Unmatched`` reason (``ambiguous_substances`` included) still stops the pipeline
 outright, exactly as before. When a ``Match`` is only reached this way and its own
 tier is ``cas``, an extra caveat names the CAS used, since the EF target's own name
-found by CAS may not resemble the source name at all (BAFU ``2-Methyl-4-
-chlorophenoxyacetic acid`` onto EF's ``(4-Chloro-2-methylphenoxy)acetic acid`` --
-CAS 94-74-6, MCPA -- is exactly such a case).
+found by CAS may not resemble the source name at all (BAFU
+``2-Methyl-4-chlorophenoxyacetic acid`` onto EF's
+``(4-Chloro-2-methylphenoxy)acetic acid``, CAS 94-74-6, MCPA, is exactly such a case).
 
 After a matcher's candidates fail both EXACT and UNSPECIFIED placement, one more
 placement is tried before giving up: the resource-branch fallback (decision (b),
@@ -31,7 +31,7 @@ matcher found lands on the very same EF leaf -- if the candidates spread over mo
 than one leaf, there is nothing to choose between and the flow stays
 ``sub_compartment_absent``.
 
-Rank 8 only (decision (f)(1), 2026-09-13): when every remaining candidate is
+Nomenclature package only (decision (f)(1), 2026-09-13): when every remaining candidate is
 uncharacterised (``not Candidate.flow.characterised``) and the index was built with
 ``include_uncharacterised=True``, one more placement -- ``Placement.NOMENCLATURE`` --
 is tried before ``sub_compartment_absent``: the candidates carry no factor in any
@@ -46,14 +46,14 @@ candidate in practice, so a ``*, long-term`` source still lands on the ordinary
 unspecified leaf when that is what the candidates offer, rather than skipping straight
 to an arbitrary alphabetical pick. The caveat names every leaf the name was found in
 when there is more than one, and which one was picked, so it never overstates
-"only" when several exist. This never fires for rank 7's characterised-only index:
-that index carries no uncharacterised flow at all, so the ``not characterised``
-condition can never hold for it.
+"only" when several exist. This never fires for the matched package's
+(biosphere-3-matched) characterised-only index: that index carries no uncharacterised
+flow at all, so the ``not characterised`` condition can never hold for it.
 
 Round 4, decision 2026-09-13, two more placements, tried in this order, both after
 NOMENCLATURE and before giving up as ``sub_compartment_absent`` (so they never steal
-the eight existing rank-8 ``groundwater, long-term`` -> ``Placement.NOMENCLATURE`` rows,
-which are settled before either ever runs):
+the eight existing nomenclature-package ``groundwater, long-term`` ->
+``Placement.NOMENCLATURE`` rows, which are settled before either ever runs):
 
 - ``Placement.LONG_TERM_COLLAPSED``: whenever the BAFU sub-compartment carries
   ``, long-term`` and nothing has placed yet, placement is retried with that suffix
@@ -179,8 +179,8 @@ _DEFAULT_LEAF_CAVEAT = (
 _REFRIGERANT_CODE_RE = re.compile(r"^(CFC|HCFC|HFC|HFE|PFC|Halon)-\S+$", re.IGNORECASE)
 #: ``no_ef_flow`` detail template, picked by ``EfFlowIndex.includes_uncharacterised``:
 #: a characterised-only index really did restrict the search to factor-bearing flows,
-#: so it is honest to say so; the inclusive index (rank 8) searched uncharacterised
-#: flows too, so the detail must not imply otherwise.
+#: so it is honest to say so; the inclusive index (nomenclature package) searched
+#: uncharacterised flows too, so the detail must not imply otherwise.
 _NO_MATCH_CHARACTERISED = (
     "no EF 3.1 flow with a factor matches by name, synonym, qualifier, carbon-oxide, "
     "ion-strip, land-use class, ore composite, alias, region-stripped name or CAS in "
@@ -318,8 +318,8 @@ class MatchPipeline:
         can still turn this into ``ambiguous_substances`` when those candidates
         differ in identity and no CAS singles one out); failing that, and only when
         every remaining candidate is uncharacterised and the index includes
-        uncharacterised flows (rank 8 only, decision (f)(1)), the relaxed nomenclature
-        placement (module docstring); failing that, and only when the BAFU
+        uncharacterised flows (nomenclature package only, decision (f)(1)), the relaxed
+        nomenclature placement (module docstring); failing that, and only when the BAFU
         sub-compartment carries ``, long-term``, ``Placement.LONG_TERM_COLLAPSED``
         (module docstring); failing that, and only for a ``water`` / ``unspecified``
         source, ``Placement.DEFAULT_LEAF`` (module docstring); otherwise
@@ -398,8 +398,8 @@ class MatchPipeline:
             )
         # Ordered after NOMENCLATURE, not before: test_relaxed_placement_falls_back_
         # to_the_alphabetically_first_leaf and test_relaxed_placement_prefers_the_
-        # non_long_term_unspecified_leaf_too both pin rank 8's own long-term/
-        # unspecified leaf preference among uncharacterised candidates, and neither
+        # non_long_term_unspecified_leaf_too both pin the nomenclature package's own
+        # long-term/unspecified leaf preference among uncharacterised candidates, and neither
         # LONG_TERM_COLLAPSED nor DEFAULT_LEAF (both characterised-or-not, unlike
         # NOMENCLATURE) may pre-empt that.
         if flow.subcategory.endswith(_LONG_TERM_SUFFIX):
@@ -531,7 +531,7 @@ class MatchPipeline:
                         identity_caveat = (
                             "EF carries a second flow for this CAS with different "
                             f"factors ({', '.join(others)}); the flow named by the "
-                            "source's refrigerant code is used, it characterises "
+                            "source's refrigerant code is used; it characterises "
                             "every impact category the other does (decision "
                             "2026-09-13)",
                         )

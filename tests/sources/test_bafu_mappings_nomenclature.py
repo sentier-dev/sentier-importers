@@ -23,34 +23,35 @@ from tests.sources.test_bafu_mappings_matched import (
     _stage,
 )
 
-#: What ``BafuEfMatchedSource`` (rank 7) actually maps over the plain fixture (no
-#: rank3/rank6 exclusions, default CF/VOCAB) -- see
+#: What ``BafuEfMatchedSource`` (biosphere-3-matched) actually maps over the plain
+#: fixture (no curated/inferred exclusions, default CF/VOCAB) -- see
 #: ``test_bafu_mappings_matched.
 #: test_emits_entries_with_flow_ids_ef_units_and_no_comment_for_clean_matches``.
-#: The nomenclature source (rank 8) must receive this same set as its own ``rank7``
-#: input in every test below, exactly as the real registry pipeline would feed it the
-#: just-written rank-7 payload -- otherwise these always-matching, characterised BAFU
-#: flows would reach rank 8's inclusive pipeline unexcluded and trip its
-#: never-a-characterised-match guard.
-_BASE_RANK7 = (CO2, WATER, RADON, LAND)
+#: The nomenclature source (biosphere-4-nomenclature) must receive this same set as
+#: its own ``matched`` input in every test below, exactly as the real registry
+#: pipeline would feed it the just-written biosphere-3-matched payload -- otherwise
+#: these always-matching, characterised BAFU flows would reach the nomenclature
+#: package's inclusive pipeline unexcluded and trip its never-a-characterised-match
+#: guard.
+_BASE_MATCHED = (CO2, WATER, RADON, LAND)
 
 
-def _config_nomenclature(root, rank7=_BASE_RANK7):
-    """Like ``_config``, but for the nomenclature source, with a ``rank7`` payload input."""
+def _config_nomenclature(root, matched=_BASE_MATCHED):
+    """Like ``_config``, but for the nomenclature source, with a ``matched`` payload input."""
     cfg = _config(
         root,
         name="bafu-ef-biosphere-nomenclature",
         module="sentier_importers.sources.bafu.mappings_biosphere_nomenclature",
         verb="replace",
-        emit="biosphere",
+        emit="biosphere-4-nomenclature",
     )
     payload = {
         "name": "x",
         "version": "0",
-        "replace": [{"source": {"code": c}, "target": {"code": "t"}} for c in rank7],
+        "replace": [{"source": {"code": c}, "target": {"code": "t"}} for c in matched],
     }
-    (root / "rank7.json").write_text(json.dumps(payload))
-    return replace(cfg, inputs={**cfg.inputs, "rank7": f"file://{root}/rank7.json"})
+    (root / "matched.json").write_text(json.dumps(payload))
+    return replace(cfg, inputs={**cfg.inputs, "matched": f"file://{root}/matched.json"})
 
 
 def test_emits_the_uncharacterised_match_with_the_fixed_comment_and_uncertain_suffix(tmp_path):
@@ -101,8 +102,9 @@ def test_uncertain_suffix_is_absent_when_the_bw_context_code_is_unambiguous(tmp_
 
 
 def test_becquerel_flow_keeps_its_own_unit_with_no_rescale(tmp_path):
-    # An uncharacterised target has no reference unit at all, so rank 8 must never
-    # rescale an amount: a BAFU Bq-denominated flow stays "Bq" (NOT respelled to kBq,
+    # An uncharacterised target has no reference unit at all, so the nomenclature
+    # package must never rescale an amount: a BAFU Bq-denominated flow stays "Bq" (NOT
+    # respelled to kBq,
     # unlike a characterised ionising-radiation match, which does rescale -- see the
     # sibling matched-source test_becquerel_sources_land_on_kilobecquerel_with_a_
     # conversion), and carries no conversion_factor at all.
@@ -122,7 +124,7 @@ def test_becquerel_flow_keeps_its_own_unit_with_no_rescale(tmp_path):
     assert row["comment"].startswith("uncharacterised in EF 3.1: no factor in any method")
 
 
-def test_rank8_resource_branch_fallback_caveat_is_honest_about_uncharacterised(tmp_path):
+def test_nomenclature_resource_branch_fallback_caveat_is_honest_about_uncharacterised(tmp_path):
     # "Iridium" is filed by BAFU under the uninformative "unspecified" sub-compartment;
     # it resolves through the resource-branch fallback onto the one (uncharacterised)
     # EF leaf reso-grou reaches -- the pipeline's own caveat wording ("EF has ... only
@@ -215,7 +217,7 @@ def test_relaxed_placement_drops_the_leaf_naming_caveat_for_an_energy_carrier(tm
     # two uncharacterised candidates for an energy-carrier-shaped resource name,
     # spread over two distinct (wrong-anyway) leafs, with a sub-compartment
     # ("in water") that is neither EXACT nor uninformative -- this reaches the
-    # relaxed rank-8 nomenclature placement (Placement.NOMENCLATURE), whose own
+    # relaxed nomenclature-package placement (Placement.NOMENCLATURE), whose own
     # first caveat names the leafs it chose between. For an energy carrier, that
     # leaf-naming caveat must be dropped just like resource_branch_fallback's is --
     # the comment discloses non-recoverability instead, never a specific leaf.
@@ -235,12 +237,13 @@ def test_relaxed_placement_drops_the_leaf_naming_caveat_for_an_energy_carrier(tm
     assert "placed on" not in row["comment"]
 
 
-def test_rank8_location_and_regional_aggregate_caveat_are_reported(tmp_path):
+def test_nomenclature_location_and_regional_aggregate_caveat_are_reported(tmp_path):
     # Same "Water, KR" / "Water, Europe" region-strip scenario the matched source's own
     # test_location_and_caveats_are_carried and the coverage sidecar's
-    # test_rank7_match_location_and_caveats_are_reported_when_present pin for rank 7,
-    # but onto an uncharacterised "Water" vocab row: a real match.caveats entry (the
-    # regional-aggregate one, untouched -- only a resource_branch_fallback caveat is
+    # test_matched_package_location_and_caveats_are_reported_when_present pin for the
+    # matched package, but onto an uncharacterised "Water" vocab row: a real
+    # match.caveats entry (the regional-aggregate one, untouched -- only a
+    # resource_branch_fallback caveat is
     # ever rewritten) must still land in the comment, after the fixed prefix, and
     # target["location"] must still be set for the flow the pipeline resolves an ISO
     # location for.
@@ -278,7 +281,7 @@ def test_rank8_location_and_regional_aggregate_caveat_are_reported(tmp_path):
     assert europe["comment"].startswith("uncharacterised in EF 3.1: no factor in any method")
 
 
-def test_flows_already_in_rank_3_6_or_7_are_excluded(tmp_path):
+def test_flows_already_in_curated_inferred_or_matched_are_excluded(tmp_path):
     vocab = VOCAB + [
         vocab_row(
             "mine-gas-unchar",
@@ -288,14 +291,17 @@ def test_flows_already_in_rank_3_6_or_7_are_excluded(tmp_path):
         )
     ]
     root = _stage(tmp_path, vocab=vocab)
-    source = BafuEfNomenclatureSource(_config_nomenclature(root, rank7=(*_BASE_RANK7, MINE_GAS)))
+    source = BafuEfNomenclatureSource(
+        _config_nomenclature(root, matched=(*_BASE_MATCHED, MINE_GAS))
+    )
     rows = _run(source, tmp_path)
     assert MINE_GAS not in {r["source"]["code"] for r in rows}
 
 
 def test_no_uncharacterised_match_means_no_rows_for_untouched_fixture_flows(tmp_path):
     # sanity: with no uncharacterised vocab row added at all, nothing in the default
-    # fixture is emitted -- GAS (natural gas, m3) stays unmapped by both rank 7 and rank 8.
+    # fixture is emitted -- GAS (natural gas, m3) stays unmapped by both the matched and
+    # nomenclature packages.
     root = _stage(tmp_path)
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
     rows = _run(source, tmp_path)
@@ -305,7 +311,7 @@ def test_no_uncharacterised_match_means_no_rows_for_untouched_fixture_flows(tmp_
 def test_characterised_match_reaching_transform_raises_runtime_error(tmp_path):
     # Hand-built inputs whose (inclusive) index carries a normally-characterised flow
     # reachable by exact name -- transform()'s own guard must never let a characterised
-    # match slip through as a rank-8 nomenclature entry.
+    # match slip through as a nomenclature-package entry.
     cf = [cf_row("target", "widget", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=1.0)]
     vocab = [vocab_row("target", "Widget")]
     index = EfFlowIndex.from_tables(cf, vocab, include_uncharacterised=True)
@@ -315,8 +321,8 @@ def test_characterised_match_reaching_transform_raises_runtime_error(tmp_path):
         bafu=BafuFlowIndex.from_flows([flow]),
         cas={},
         cas_conflicts={},
-        rank3_codes=frozenset(),
-        rank6_codes=frozenset(),
+        curated_codes=frozenset(),
+        inferred_codes=frozenset(),
         index=index,
         pipeline=pipeline,
     )

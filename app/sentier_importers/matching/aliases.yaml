@@ -76,9 +76,10 @@ aliases:
   cod, chemical oxygen demand: Chemical Oxygen Demand
   toc, total organic carbon: Total Organic Carbon
   # decision (f)(3), 2026-09-13: standing wood ("Wood" carries no EF 3.1 factor, so
-  # every wood alias fires only on rank 8) and two more water spellings onto EF's
-  # "Water" ("water/m3" is an air-bucket emission onto the uncharacterised air "Water"
-  # flow, rank 8 too). "Water, unspecified" yields no entry today -- no BAFU flow
+  # every wood alias fires only on the nomenclature package) and two more water
+  # spellings onto EF's "Water" ("water/m3" is an air-bucket emission onto the
+  # uncharacterised air "Water" flow, nomenclature package too). "Water, unspecified"
+  # yields no entry today -- no BAFU flow
   # currently carries that exact name -- kept anyway.
   wood, soft, standing: Wood
   wood, hard, standing: Wood
@@ -95,7 +96,8 @@ aliases:
   disodium acid methane arsenate: Disodium Methylarsonate
   # replaces the earlier "benzo[a]anthracene" (square brackets) target, which does not
   # exist in EF 3.1 at all and so never fired; "BENZ(a)ANTHRACENE" is EF's real
-  # pref_label and is characterised (fires from rank 7, not just rank 8).
+  # pref_label and is characterised (fires from the matched package, not just the
+  # nomenclature package).
   benzo(a)anthracene: BENZ(a)ANTHRACENE
   heat, waste: Waste Heat
   particulates, > 10 um: Particles (> PM10)
@@ -123,7 +125,7 @@ aliases:
   # round 4: BAFU land flows whose class has no EF equivalent at all; the nearest EF
   # land-use class is used instead. All four are filed by BAFU under resources / land
   # in the real ecoSpold data and place EXACT there. The EF targets are factorless
-  # land flows, so every one of these four fires only on rank 8.
+  # land flows, so every one of these four fires only on the nomenclature package.
   occupation, water courses, artificial:
     target: Inland Water Bodies
     caveat: nearest EF land-use class (decision 2026-09-13)

@@ -269,8 +269,8 @@ def test_shipped_alias_file_has_all_thirteen_entries_added_by_this_task():
 
 def test_shipped_alias_file_has_the_seven_wood_and_water_entries_added_in_round_3():
     # decision (f)(3), 2026-09-13: five standing-wood spellings onto EF's "Wood"
-    # resource flow (uncharacterised in EF 3.1, so these fire only on rank 8), plus
-    # two more "Water" spellings ("water, unspecified" yields no entry today -- no
+    # resource flow (uncharacterised in EF 3.1, so these fire only on the nomenclature
+    # package), plus two more "Water" spellings ("water, unspecified" yields no entry today -- no
     # BAFU flow currently carries that exact name -- kept anyway, same as the
     # pre-existing benzo(a)anthracene alias).
     aliases = load_aliases()
@@ -296,8 +296,8 @@ def test_round_3_alias_targets_exist_in_the_inclusive_index():
     # "Wood" and "Water" (the only two distinct targets among the seven new round-3
     # aliases) must both actually resolve in the inclusive (include_uncharacterised)
     # index, in whichever bucket their BAFU names place in -- "Wood" and "water/m3"
-    # are uncharacterised (rank 8 only); "water, unspecified" targets the same
-    # characterised resource "Water" flow the pre-existing water aliases already use.
+    # are uncharacterised (nomenclature package only); "water, unspecified" targets the
+    # same characterised resource "Water" flow the pre-existing water aliases already use.
     index = EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
     assert index.by_name("Wood", "resource")
     assert index.by_name("Water", "resource")
@@ -370,8 +370,9 @@ def test_shipped_alias_file_has_the_nineteen_entries_added_in_round_4():
 def test_round_4_alias_targets_exist_in_the_inclusive_index():
     # every distinct target among the nineteen new round-4 aliases must resolve in
     # the inclusive (include_uncharacterised) index, in whichever bucket its BAFU name
-    # places in. "Titanium" and "BENZ(a)ANTHRACENE" are characterised (fire from rank
-    # 7); the rest are uncharacterised (rank 8 only).
+    # places in. Only "Waste Heat", "Particles (> PM10)", "Primary Energy From Hydro
+    # Power" and the four land-use targets are uncharacterised (nomenclature package
+    # only); the other eleven carry factors and fire from the matched package.
     index = EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
     assert index.by_name("1,1,1,3,3-pentafluoropropane", "air")
     assert index.by_name("Chlorotrimethylsilane", "air")

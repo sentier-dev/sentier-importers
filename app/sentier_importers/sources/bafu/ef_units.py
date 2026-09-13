@@ -2,10 +2,10 @@
 
 Split out of ``mappings_biosphere_matched`` so the unit-conversion domain (physical
 dimensions, the ecoinvent v2 energy-content table, the stoichiometric factor table,
-the water-density special case, and the nomenclature-only unit respelling rank 8 uses
-for an uncharacterised target) has its own home apart from the matching/decision
-pipeline itself. Everything here is a pure function or lookup table; nothing touches
-``BafuFlow``/EF index construction.
+the water-density special case, and the nomenclature-only unit respelling the
+nomenclature package uses for an uncharacterised target) has its own home apart from
+the matching/decision pipeline itself. Everything here is a pure function or lookup
+table; nothing touches ``BafuFlow``/EF index construction.
 """
 
 from __future__ import annotations
@@ -110,15 +110,16 @@ STOICHIOMETRIC_NOTES: dict[tuple[str, str], str] = {
 }
 
 #: BAFU unit -> EF spelling of the exact same physical scale, used only for an
-#: uncharacterised EF target (rank 8, ``mappings_biosphere_nomenclature``): such a
-#: target has no reference unit at all (``EfFlowIndex.reference_unit`` returns
-#: ``None`` for it, and there is no CF-method convention to read one off of), so rank
-#: 8 must never rescale an amount -- only respell the unit BAFU already reports, one
-#: for one. Every entry here is a same-scale spelling pair only (``kg``/``kilogram``,
-#: ``m3``/``Nm3``/``cubic meter``, ``m2a``/``m2*a``); ``Bq``, ``kBq``, ``kWh`` and
-#: ``m2`` map to themselves -- unlike ``unit_conversion``/``conversion_for``, this
-#: table carries no scaled pair at all (no Bq->kBq, no kWh->megajoule): those need a
-#: factor, and rank 8 has none to apply. A unit not listed here is passed through
+#: uncharacterised EF target (the nomenclature package,
+#: ``mappings_biosphere_nomenclature``): such a target has no reference unit at all
+#: (``EfFlowIndex.reference_unit`` returns ``None`` for it, and there is no CF-method
+#: convention to read one off of), so the nomenclature package must never rescale an
+#: amount -- only respell the unit BAFU already reports, one for one. Every entry here
+#: is a same-scale spelling pair only (``kg``/``kilogram``, ``m3``/``Nm3``/
+#: ``cubic meter``, ``m2a``/``m2*a``); ``Bq``, ``kBq``, ``kWh`` and ``m2`` map to
+#: themselves -- unlike ``unit_conversion``/``conversion_for``, this table carries no
+#: scaled pair at all (no Bq->kBq, no kWh->megajoule): those need a factor, and the
+#: nomenclature package has none to apply. A unit not listed here is passed through
 #: unchanged.
 _NOMENCLATURE_UNITS: dict[str, str] = {
     "kg": "kilogram",
@@ -136,10 +137,11 @@ _NOMENCLATURE_UNITS: dict[str, str] = {
 def nomenclature_unit(bafu_unit: str) -> str:
     """The EF spelling of ``bafu_unit``, same physical scale, never a factor.
 
-    Used only when the match target is uncharacterised (rank 8): such a target has no
-    EF reference unit at all (``EfFlowIndex.reference_unit`` returns ``None`` for it),
-    so this is what ``entry_for`` uses to fill ``target["unit"]`` instead --
-    ``entry_for`` never sets ``conversion_factor`` for one. ``bafu_unit`` outside
+    Used only when the match target is uncharacterised (the nomenclature package):
+    such a target has no EF reference unit at all (``EfFlowIndex.reference_unit``
+    returns ``None`` for it), so this is what ``entry_for`` uses to fill
+    ``target["unit"]`` instead -- ``entry_for`` never sets ``conversion_factor`` for
+    one. ``bafu_unit`` outside
     :data:`_NOMENCLATURE_UNITS` is returned unchanged -- this is a spelling courtesy,
     not a claim of physical accuracy.
     """

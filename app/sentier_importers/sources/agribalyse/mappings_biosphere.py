@@ -1,7 +1,7 @@
 """Agribalyse 3.2 → EF 3.1 biosphere crosswalk as a randonneur mapping package.
 
 Source: the built ``registry/mappings_biosphere.parquet``. Emits a randonneur ``replace``
-package for the ``02-agribalyse-3.2__ef-3.1`` bridge in ``sentier-mappings``.
+package for the ``agribalyse-3.2__ef-3.1`` pair in ``sentier-mappings``.
 
 Scope guardrail (2026-07-10 decision — ignore ecoinvent nomenclature):
 - keep only ``target_db in {"ef", "biosphere3"}`` (no ecoinvent-biosphere targets exist);

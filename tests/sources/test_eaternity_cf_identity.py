@@ -198,8 +198,7 @@ _SUB_MATCH_LABELS = EfLabels.from_rows(
             "flow": "ef-ground",
             "flow_name": "iron",
             "flow_context": (
-                "Resources / Resources from ground / "
-                "Non-renewable element resources from ground"
+                "Resources / Resources from ground / Non-renewable element resources from ground"
             ),
         },
         {
