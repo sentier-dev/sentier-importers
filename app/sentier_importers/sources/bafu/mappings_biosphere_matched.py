@@ -2,9 +2,10 @@
 
 For every BAFU-2026 v1 elementary flow that neither the rank-3 nor the rank-6 bridge
 maps, run ``matching.pipeline.default_pipeline`` (name, land-use class, ore composite,
-synonym, qualifier, alias, region-stripped name, CAS) against the public EF flow index
-and emit one ``replace`` entry per match. Withheld flows are emitted by the sibling
-coverage source.
+synonym, qualifier, carbon-oxide, ion-strip, alias, the same eight tiers again on the
+region-stripped name, CAS last) against the public EF flow index and emit one
+``replace`` entry per match. Withheld flows are emitted by the sibling coverage
+source.
 
 Inputs: the ecoSpold zip (primary), ``rank3`` and ``rank6`` payloads (exclusion) and
 ``ef_cfs`` (sentier-methods CF table) all go through the content-addressed fetch
@@ -44,27 +45,12 @@ _REQUIRED = ("rank3", "rank6", "ef_cfs")
 _BIOSPHERE_GROUP = 4
 
 #: Ion / oxidation-state markers BAFU bakes into a name: a trailing ``, ion`` /
-#: `` ion``, a trailing roman numeral (``II``-``VI``), or a trailing ``+``. EF 3.1
-#: does not carry per-species factors for these; collapsing them onto the element
-#: would silently assert a factor for the wrong chemical species.
+#: `` ion``, a trailing roman numeral (``II``-``VI``), or a trailing ``+``. Used only
+#: by ``_refine_unmatched`` now: an ion-shaped name WITH an EF match is emitted, not
+#: withheld (decision (d), 2026-09-13, ``matching.matchers.IonStripMatcher``); this
+#: pattern still refines the case where EF carries no matching flow at all into the
+#: more specific ``speciation`` reason.
 _ION = re.compile(r"(,\s?ion$|\sion$|\s(II|III|IV|V|VI)$|\+$)")
-
-#: Species markers EF itself uses in an *EF* flow name (a bracketed roman numeral
-#: oxidation state, a bracketed charge like ``(6+)``/``(2+)``/``(2-)``, or the bare
-#: word ``ion``): when the EF target already names a specific species this way, a
-#: same-shaped BAFU ion name is not a species-collapsing guess, it is the right match.
-_EF_SPECIES = re.compile(
-    r"\((?:i{1,3}|iv|v|vi)\)|\(\d\+\)|\bion\b|\d\+\)|\(\d[+-]\)", re.IGNORECASE
-)
-
-#: Match tiers considered curated (a human checked the BAFU name against the EF
-#: preferred label by hand -- see ``matching/aliases.yaml``); the speciation guard
-#: (Decision 4) defers to that judgement rather than second-guessing it.
-_CURATED_TIERS = {"alias", "region/alias"}
-
-#: EF characterises carbon oxides only with a qualifier (fossil/biogenic/land use
-#: change); a bare BAFU name with none can never resolve, no matter the sub-compartment.
-_CARBON_OXIDES = {"Carbon dioxide", "Carbon monoxide"}
 
 #: EF's water-use method characterises freshwater deprivation only: a BAFU salt-water
 #: resource flow can never receive an EF water factor, even when the pipeline finds a
@@ -178,10 +164,18 @@ def _refine_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
 
     A reason other than ``no_ef_flow`` is left alone -- it is already the most
     informative reason the pipeline could give. Only a plain "nothing matched" is
-    refined, into ``speciation`` (an ion/oxidation-state name) or
-    ``qualifier_missing`` (a bare carbon oxide with no fossil/biogenic/land-use-change
-    qualifier). The non-freshwater decision does NOT live here: it applies to a real
-    ``Match`` too (see ``_decide``), so it is handled once, ahead of this function.
+    refined, into ``speciation`` (an ion/oxidation-state name EF has no matching
+    flow for at all -- decision (d), 2026-09-13: when EF DOES have one,
+    ``matching.matchers.IonStripMatcher`` finds it and this function never runs, since
+    the pipeline outcome is a ``Match``, not an ``Unmatched``, before ``_decide`` ever
+    calls this). ``qualifier_missing`` (Decision 3) no longer originates here: decision
+    (e), 2026-09-13's ``matching.matchers.CarbonOxideMatcher`` matches a bare
+    ``Carbon dioxide``/``Carbon monoxide`` onto EF's fossil spelling whenever the air
+    bucket has ANY qualified variant at all, which every EF 3.1 shard does -- so the
+    pipeline never returns a plain ``no_ef_flow`` for one of these names any more, and
+    this function has nothing left to refine that reason into. The non-freshwater
+    decision does NOT live here: it applies to a real ``Match`` too (see ``_decide``),
+    so it is handled once, ahead of this function.
     """
     if outcome.reason != "no_ef_flow":
         return outcome
@@ -189,11 +183,6 @@ def _refine_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
         return Unmatched(
             "speciation",
             f"{flow.name!r} names an ion or oxidation state; not collapsed onto an EF species",
-        )
-    if flow.name in _CARBON_OXIDES and flow.category == "emissions to air":
-        return Unmatched(
-            "qualifier_missing",
-            "EF characterises carbon oxides only as (fossil), (biogenic) or (land use change)",
         )
     return outcome
 
@@ -214,23 +203,7 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
        likewise never right -- EF's water-use method never characterises sea-water
        discharge. Must run before the unit check below: a kg-denominated ocean flow
        would otherwise pass the water-density special case and be wrongly emitted;
-    3. context_unresolved (rank 8 only): a ``Match`` onto an uncharacterised,
-       resource-bucket target whose name is energy-carrier-shaped
-       (``ef_index.UNCERTAIN_RESOURCE_NAME`` -- an ecoinvent-style "Energy, <form>,
-       converted", a "Primary Energy ..." label, an oil-sand or pit-methane flow) is
-       withheld outright, not merely flagged uncertain: the bw-context crosswalk has
-       no code that reaches an EF energy-resource branch at all, so the branch this
-       match landed on is known wrong, not just unverified -- there is nothing rank 8
-       can honestly assert here, not even with a caveat;
-    4. speciation (Decision 4): a ``Match`` for an ion/oxidation-state-shaped BAFU
-       name (``_ION``) is withheld -- EF 3.1 does not carry per-species factors, so
-       collapsing e.g. ``Copper ion`` onto plain ``Copper`` would silently assert a
-       factor for the wrong chemical species. Two escapes: a curated tier
-       (``alias``/``region/alias``, see ``_CURATED_TIERS``) means a human already
-       checked this exact pairing by hand; an EF target name that itself carries a
-       species marker (``_EF_SPECIES``, e.g. ``Chromium(6+)``, ``Copper (II)``) means
-       the match is onto the right species, not a collapse onto the bare element;
-    5. unit_mismatch (Task 6 correction (1)): applies only when the match target is
+    3. unit_mismatch (Task 6 correction (1)): applies only when the match target is
        characterised (``EfFlow.characterised``) -- an uncharacterised target has no EF
        reference unit at all (``EfFlowIndex.reference_unit`` returns ``None`` for it),
        so ``conversion_for`` would always report a mismatch for it; rank 8
@@ -239,10 +212,18 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
        a characterised target: a real ``Match`` with no fixed unit conversion
        (``conversion_for``) onto the EF flow's reference unit is withheld rather than
        emitted with a fabricated factor;
-    6. everything else: a ``Match`` is returned as-is; an ``Unmatched`` is refined by
+    4. everything else: a ``Match`` is returned as-is; an ``Unmatched`` is refined by
        ``_refine_unmatched`` into ``speciation`` (Decision 4, the ``no_ef_flow`` twin
-       of step 4 above) or ``qualifier_missing`` (Decision 3, unqualified carbon
-       oxides).
+       of ion-shaped names EF has no match for at all).
+
+    Decision (d), 2026-09-13, removed two withholding rules this chain used to carry
+    for a ``Match``: the ion/oxidation-state speciation guard (an ion-shaped BAFU name
+    is now emitted, in whatever rank its target lives, with a caveat --
+    ``matching.matchers.IonStripMatcher`` is what actually produces such a ``Match``
+    now) and, decision (f)(2), the rank-8 energy-carrier ``context_unresolved``
+    withholding (such a ``Match`` is now emitted too; ``entry_for`` omits the
+    unrecoverable ``target["context"]`` and says so in the comment instead of
+    asserting a branch the bw-context crosswalk cannot actually place).
 
     Rules 1 and 2 are both, in spirit, EF-water-use guards, but they behave
     differently for an uncharacterised target (``EfFlow.characterised=False``, no CF
@@ -258,14 +239,20 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
     already reached, never lets a real "Water, salt" flow through as rank 8's Match.
 
     Key, phase 1 -> the plan's numbered Decisions and phase 2 -> the 2026-09-13
-    lettered decisions: Decision 3 = ``qualifier_missing`` (bare carbon oxides),
-    Decision 4 = ``speciation`` (ion/oxidation guard, rule 4 above), Decision 5 =
-    ``non_freshwater`` (salt water, rule 1 above); decision (a) = the energy-content
-    and ore-composite conversions (``ef_units.py``, ``matching/matchers.py``),
-    decision (b) = the resource-branch fallback
+    lettered decisions: Decision 3 = ``qualifier_missing`` (bare carbon oxides, now
+    superseded by decision (e)'s ``CarbonOxideMatcher``), Decision 4 = ``speciation``
+    (ion/oxidation guard, now superseded by decision (d)'s ``IonStripMatcher``),
+    Decision 5 = ``non_freshwater`` (salt water, rule 1 above); decision (a) = the
+    energy-content and ore-composite conversions (``ef_units.py``,
+    ``matching/matchers.py``), decision (b) = the resource-branch fallback
     (``compartments.is_uninformative_resource_sub``), decision (c) = the fossil-water
     (taken as groundwater) and "Nitrogen" (taken as total nitrogen) aliases
-    (``matching/aliases.yaml``).
+    (``matching/aliases.yaml``), decision (d) = ion collapse (``IonStripMatcher``),
+    decision (e) = unqualified carbon oxides (``CarbonOxideMatcher``), decision (f) =
+    rank-8-only relaxed placement (``pipeline.Placement.NOMENCLATURE``), energy-carrier
+    context omission (``entry_for``) and the wood/water aliases
+    (``matching/aliases.yaml``), decision (g) = the mine-gas energy content
+    (``ef_units.ENERGY_CONTENT``/``ENERGY_CONTENT_NOTES``).
     """
     if flow.name.startswith(_NON_FRESHWATER):
         return Unmatched(
@@ -279,27 +266,10 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
         ):
             return Unmatched("no_ef_flow", "EF water use has no sea-water discharge flow")
         ef_flow = index.get(outcome.code)
-        if (
-            not ef_flow.characterised
-            and ef_flow.bucket == "resource"
-            and UNCERTAIN_RESOURCE_NAME.match(ef_flow.name)
-        ):
-            return Unmatched(
-                "context_unresolved",
-                "EF resource branch for an energy carrier is not recoverable from the "
-                "source context code",
-            )
-        if outcome.tier not in _CURATED_TIERS and _ION.search(flow.name):
-            if not _EF_SPECIES.search(ef_flow.name):
-                return Unmatched(
-                    "speciation",
-                    f"{flow.name!r} names an ion or oxidation state; "
-                    f"EF target {ef_flow.name!r} does not",
-                )
         # only the None-ness matters here; the caveat conversion_for also returns is
         # discarded and recomputed by entry_for when the entry is actually built. An
         # uncharacterised target has no EF reference unit for conversion_for to check
-        # against at all (see the docstring point 5), so this step is skipped for one.
+        # against at all (see the docstring point 3), so this step is skipped for one.
         if ef_flow.characterised and conversion_for(flow, outcome, index) is None:
             ef_unit = index.reference_unit(outcome.code)
             return Unmatched(
@@ -397,16 +367,34 @@ class BafuEfMatchedSource(Source):
         here for the default, characterised-only source), there is no EF reference
         unit at all, and rank 8 never rescales an amount: the target unit is just
         ``nomenclature_unit``'s same-scale respelling of the BAFU unit, and
-        ``conversion_factor`` is never set. The comment always starts with a fixed
-        disclosure that the target carries no factor in any EF 3.1 method and that the
-        target unit is only the source unit's EF spelling, followed by a
-        branch/sub-compartment caveat when the target's context itself was uncertain
-        (``EfFlow.context_uncertain``), then the match's own caveats -- except a
-        ``resource_branch_fallback`` caveat, which is never honest to repeat verbatim
-        for an uncharacterised target: the pipeline's own wording
-        ("EF has ... only as ...") asserts a fact about EF's *characterised* branches
-        that has no bearing here, so it is replaced with a caveat that instead says
-        plainly that this is an inferred placement on an uncharacterised flow.
+        ``conversion_factor`` is never set. When the target is a resource-bucket flow
+        whose name is energy-carrier-shaped (``ef_flow.bucket == "resource"`` and
+        ``ef_index.UNCERTAIN_RESOURCE_NAME`` matches, decision (f)(2), 2026-09-13),
+        ``target["context"]`` is omitted entirely -- the bw-context crosswalk cannot
+        reach an EF energy-resource branch at all (see
+        ``ef_index.UNCERTAIN_RESOURCE_NAME``'s own docstring, which is specifically
+        about the *resource* branch the crosswalk cannot reach; an emission-bucket
+        flow that happens to share an energy-shaped name is unaffected and keeps its
+        context), so asserting one, even as "uncertain", would overstate what is
+        known -- and the comment says so instead of the usual
+        branch/sub-compartment-uncertain wording. Any of the three placements whose
+        own first caveat names a specific EF leaf/branch (``resource_branch_fallback``,
+        ``unspecified_fallback``, ``nomenclature_placement``) drops that caveat for one
+        of these energy carriers, since naming a specific leaf would contradict the
+        "not recoverable" disclosure just given -- only trailing (non-placement)
+        caveats, if any, are kept; ``resource_branch_fallback`` also drops its own
+        "placed on the inferred EF resource branch ..." wording (below) for the same
+        reason. Otherwise the comment always starts with a fixed disclosure that the
+        target carries no factor in any EF 3.1 method and that the target unit is
+        only the source
+        unit's EF spelling, followed by a branch/sub-compartment caveat when the
+        target's context itself was uncertain (``EfFlow.context_uncertain``), then the
+        match's own caveats -- except a ``resource_branch_fallback`` caveat, which is
+        never honest to repeat verbatim for an uncharacterised target: the pipeline's
+        own wording ("EF has ... only as ...") asserts a fact about EF's
+        *characterised* branches that has no bearing here, so it is replaced with a
+        caveat that instead says plainly that this is an inferred placement on an
+        uncharacterised flow.
 
         Either way, a BAFU ``..., resource correction`` flow (a correction entry
         against a substance's own extraction, not a distinct resource) gets one more
@@ -419,16 +407,22 @@ class BafuEfMatchedSource(Source):
         if flow.context:
             source["context"] = flow.context
 
+        uncertain_energy = (
+            not ef_flow.characterised
+            and ef_flow.bucket == "resource"
+            and bool(UNCERTAIN_RESOURCE_NAME.match(ef_flow.name))
+        )
+
         target: Record = {"code": match.code}
         if ef_flow.name:
             target["name"] = ef_flow.name
-        if ef_flow.context:
+        if ef_flow.context and not uncertain_energy:
             target["context"] = list(ef_flow.context)
         if match.location:
             target["location"] = match.location
 
         resource_correction_caveat = (
-            "source is a resource-correction flow, mapped to the extraction of the " "same element"
+            "source is a resource-correction flow, mapped to the extraction of the same element"
             if flow.name.endswith(", resource correction")
             else None
         )
@@ -441,17 +435,32 @@ class BafuEfMatchedSource(Source):
                 "the source unit's EF spelling (EF states no reference unit for this "
                 "flow)"
             ]
-            if ef_flow.context_uncertain:
+            if uncertain_energy:
+                comments.append("EF context not recoverable from the source context code")
+            elif ef_flow.context_uncertain:
                 comments.append(
                     "EF context inferred from the Brightway context code, "
                     "branch/sub-compartment uncertain"
                 )
-            if match.placement == "resource_branch_fallback":
+            if match.placement == "resource_branch_fallback" and not uncertain_energy:
+                # naming a specific inferred branch would contradict the
+                # "not recoverable" disclosure just above for an energy carrier
                 comments.append(
                     f"BAFU files this resource under {flow.subcategory}; placed on "
                     f"the inferred EF resource branch {ef_flow.leaf} (uncharacterised, "
                     "context from the Brightway code)"
                 )
+            # every one of these three placements' own caveats[0] names a specific EF
+            # leaf/branch (the pipeline's "only as ..."/"EF has no ... flow"/"EF has
+            # this name only in ..." wording); for an energy carrier whose context we
+            # have just disclosed as unrecoverable, keeping that leaf-naming claim
+            # would contradict the disclosure, so it is dropped -- only caveats
+            # beyond it (region caveats, etc.) are kept.
+            drops_leaf_naming_caveat = match.placement == "resource_branch_fallback" or (
+                uncertain_energy
+                and match.placement in ("unspecified_fallback", "nomenclature_placement")
+            )
+            if drops_leaf_naming_caveat:
                 comments.extend(match.caveats[1:])
             else:
                 comments.extend(match.caveats)

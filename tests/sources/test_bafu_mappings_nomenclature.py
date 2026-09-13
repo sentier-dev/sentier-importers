@@ -148,11 +148,12 @@ def test_rank8_resource_branch_fallback_caveat_is_honest_about_uncharacterised(t
     )
 
 
-def test_energy_carrier_resource_names_are_withheld_entirely_not_emitted(tmp_path):
-    # decision 2026-09-13 (energy-carrier withholding): the bw-context crosswalk has no
-    # code that reaches an EF energy-resource branch at all, so a Match onto one of
-    # these uncharacterised targets is not just uncertain, it is unresolvable -- _decide
-    # withholds it outright (context_unresolved) rather than emit it with any caveat.
+def test_energy_carrier_resource_names_are_emitted_without_a_target_context(tmp_path):
+    # decision (f)(2), 2026-09-13: the bw-context crosswalk has no code that reaches
+    # an EF energy-resource branch at all, so the branch a Match lands on is known
+    # wrong, not just unverified -- but the Match itself is now emitted (not withheld):
+    # entry_for omits target["context"] entirely and says so in the comment, instead
+    # of asserting (even uncertainly) a branch that cannot be right.
     vocab = VOCAB + [
         vocab_row("energy-geo-unchar", "Energy, geothermal, converted", bw="reso-grou")
     ]
@@ -164,7 +165,74 @@ def test_energy_carrier_resource_names_are_withheld_entirely_not_emitted(tmp_pat
     flow = BafuFlow("Energy, geothermal, converted", "resources", "land", "MJ")
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
     rows = source.transform([{"inputs": augmented}])
-    assert not any(r["source"]["name"] == "Energy, geothermal, converted" for r in rows)
+    (row,) = [r for r in rows if r["source"]["name"] == "Energy, geothermal, converted"]
+    assert row["target"]["code"] == "energy-geo-unchar"
+    assert "context" not in row["target"]
+    assert "EF context not recoverable from the source context code" in row["comment"]
+    assert "branch/sub-compartment uncertain" not in row["comment"]
+    # "land" is itself an uninformative resource sub-compartment (decision (b)): this
+    # flow also resolves through the resource_branch_fallback placement, whose own
+    # "placed on the inferred EF resource branch ..." wording must NOT appear here --
+    # naming a specific branch would contradict "not recoverable" just above.
+    assert "placed on the inferred EF resource branch" not in row["comment"]
+
+
+def test_energy_shaped_emission_flow_keeps_its_context(tmp_path):
+    # "uncertain_energy" is gated on ef_flow.bucket == "resource" (matching
+    # ef_index.UNCERTAIN_RESOURCE_NAME's own scope: the bw-context crosswalk cannot
+    # reach an EF energy-*resource* branch at all, but says nothing about emissions).
+    # An uncharacterised EMISSION-bucket flow that merely happens to share an
+    # energy-shaped name must keep its target context and the ordinary
+    # branch/sub-compartment-uncertain wording, not the energy-carrier omission.
+    vocab = VOCAB + [vocab_row("energy-emission-unchar", "Energy, waste heat", bw="envi-air-unkn")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Energy, waste heat", "emissions to air", "unspecified", "MJ")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Energy, waste heat"]
+    assert row["target"]["code"] == "energy-emission-unchar"
+    assert row["target"]["context"] == [
+        "Emissions",
+        "Emissions to air",
+        "Emissions to air, unspecified",
+    ]
+    assert "EF context not recoverable from the source context code" not in row["comment"]
+
+
+_ENERGY_TWO_LEAF_VOCAB = [
+    # neither leaf is "resources from water", so "in water" below is not uninformative
+    # (decision (b)) and the resource-branch fallback never intercepts this flow.
+    vocab_row("energy-tidal-ground", "Energy, tidal, converted", bw="reso-grou"),
+    vocab_row("energy-tidal-air", "Energy, tidal, converted", bw="reso-air"),
+]
+
+
+def test_relaxed_placement_drops_the_leaf_naming_caveat_for_an_energy_carrier(tmp_path):
+    # two uncharacterised candidates for an energy-carrier-shaped resource name,
+    # spread over two distinct (wrong-anyway) leafs, with a sub-compartment
+    # ("in water") that is neither EXACT nor uninformative -- this reaches the
+    # relaxed rank-8 nomenclature placement (Placement.NOMENCLATURE), whose own
+    # first caveat names the leafs it chose between. For an energy carrier, that
+    # leaf-naming caveat must be dropped just like resource_branch_fallback's is --
+    # the comment discloses non-recoverability instead, never a specific leaf.
+    vocab = VOCAB + _ENERGY_TWO_LEAF_VOCAB
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Energy, tidal, converted", "resources", "in water", "MJ")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Energy, tidal, converted"]
+    assert "context" not in row["target"]
+    assert "EF context not recoverable from the source context code" in row["comment"]
+    assert "EF has this name only in" not in row["comment"]
+    assert "placed on" not in row["comment"]
 
 
 def test_rank8_location_and_regional_aggregate_caveat_are_reported(tmp_path):

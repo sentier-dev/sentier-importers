@@ -60,8 +60,10 @@ _LAND_METHOD = "ef-3.1:land-use"
 #: crosswalk, no matter which code placed it -- it is always on the wrong (element or
 #: material) leaf. Such a row is marked ``context_uncertain`` unconditionally, not just
 #: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``; also imported by
-#: ``mappings_biosphere_matched._decide``, which withholds a rank-8 match onto one of
-#: these entirely (``context_unresolved``) rather than merely flag it uncertain.
+#: ``mappings_biosphere_matched.BafuEfMatchedSource.entry_for`` (decision (f)(2),
+#: 2026-09-13), which -- rather than withhold a rank-8 match onto one of these --
+#: omits ``target["context"]`` entirely from the emitted entry and discloses that the
+#: EF context is not recoverable from the source context code in the comment instead.
 UNCERTAIN_RESOURCE_NAME = re.compile(r"^(Energy|Primary Energy|Oil Sand|Pit Methane)\b", re.I)
 
 

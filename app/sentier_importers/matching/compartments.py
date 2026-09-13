@@ -126,6 +126,11 @@ class Placement(Enum):
     EXACT = "exact"
     UNSPECIFIED = "unspecified_fallback"
     RESOURCE_BRANCH = "resource_branch_fallback"
+    #: Rank 8 only (decision (f)(1), 2026-09-13): every remaining candidate is
+    #: uncharacterised and the flow is placed on the EF leaf they exist in anyway --
+    #: a nomenclature alignment only, never a factor claim. See
+    #: ``pipeline.MatchPipeline._resolve``.
+    NOMENCLATURE = "nomenclature_placement"
     NONE = "none"
 
 

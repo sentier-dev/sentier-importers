@@ -125,12 +125,14 @@ def test_unmapped_rows_carry_reason_and_detail(tmp_path):
     assert "bridge" not in gas and "tier" not in gas
 
 
-def test_unit_mismatch_is_reported_as_unmapped(tmp_path):
+def test_mine_gas_and_natural_gas_both_convert_via_energy_content(tmp_path):
     root = _stage(tmp_path)
     # an EF natural-gas flow in MJ, reachable from both BAFU gas flows by alias/synonym,
     # so the pipeline resolves a real Match for each. "Gas, natural/m3" has a fixed
-    # energy-content factor (decision 2026-09-13) and converts; the mine off-gas flow's
-    # name is not in that table, so it is still withheld as unit_mismatch.
+    # energy-content factor (decision 2026-09-13) and converts; decision (g),
+    # 2026-09-13 gives the mine off-gas flow its own dedicated energy-content key too
+    # (the natural-gas value, approximated), so it now converts rather than staying
+    # unit_mismatch.
     extra_cf = [
         cf_row("gas", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
     ]
@@ -154,8 +156,7 @@ def test_unit_mismatch_is_reported_as_unmapped(tmp_path):
     mine_gas = next(
         r for r in rows if r["source"]["name"] == "Gas, mine, off-gas, process, coal mining/m3"
     )
-    assert mine_gas["status"] == "unmapped" and mine_gas["reason"] == "unit_mismatch"
-    assert "megajoule" in mine_gas["detail"]
+    assert mine_gas["status"] == "mapped" and mine_gas["bridge"] == 7
 
 
 def test_location_and_caveats_are_absent_outside_a_rank7_match(tmp_path):
@@ -381,10 +382,13 @@ def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path, monkeypatc
         _run(source, tmp_path)
 
 
-def test_energy_carrier_resource_name_is_reported_context_unresolved_not_bridge_8(tmp_path):
-    # decision 2026-09-13: an energy-carrier-shaped resource name the bw-context
-    # crosswalk can never place correctly is withheld outright, not just uncertain --
-    # the coverage sidecar must report it unmapped (context_unresolved), never bridge 8.
+def test_energy_carrier_resource_name_is_reported_as_bridge_8(tmp_path):
+    # decision (f)(2), 2026-09-13: an energy-carrier-shaped resource name the
+    # bw-context crosswalk can never place correctly is now emitted, not withheld --
+    # the coverage sidecar reports it mapped, bridge 8, with the placement the
+    # pipeline actually computed (``resource_branch_fallback`` here: "land" carries no
+    # extraction-medium information and the alias/exact-name candidate lands on
+    # exactly one EF leaf).
     vocab = VOCAB + [
         vocab_row("energy-geo-unchar", "Energy, geothermal, converted", bw="reso-grou")
     ]
@@ -398,6 +402,8 @@ def test_energy_carrier_resource_name_is_reported_context_unresolved_not_bridge_
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
     rows = source.transform([{"inputs": augmented}])
     (row,) = [r for r in rows if r["source"]["name"] == "Energy, geothermal, converted"]
-    assert row["status"] == "unmapped"
-    assert row["reason"] == "context_unresolved"
-    assert "bridge" not in row
+    assert row["status"] == "mapped"
+    assert row["bridge"] == 8
+    assert row["characterised"] is False
+    assert row["placement"] == "resource_branch_fallback"
+    assert "reason" not in row and "detail" not in row
