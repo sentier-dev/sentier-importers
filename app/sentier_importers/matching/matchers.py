@@ -118,6 +118,18 @@ def _lookup(flows: Sequence[EfFlow], tier: str) -> list[Candidate]:
     return [Candidate(f, tier=tier) for f in sorted(flows, key=lambda f: f.code)]
 
 
+def _by_name_in_leaf(index: EfFlowIndex, name: str, leaf: str) -> list[EfFlow]:
+    """Resource-bucket EF flows named ``name``, restricted to ``leaf`` and code-sorted.
+
+    Shared by ``LandUseMatcher._by_class`` and ``OreCompositeMatcher``: both need a
+    same-named EF flow filtered down to one specific leaf family, since ``by_name``
+    alone can return same-named flows filed under an unrelated resource leaf (e.g. an
+    element and an energy resource both called ``Zinc``).
+    """
+    found = [f for f in index.by_name(name, "resource") if f.leaf == leaf]
+    return sorted(found, key=lambda f: f.code)
+
+
 class ExactNameMatcher:
     """Matches on the BAFU flow name against the EF preferred label, bucket-scoped."""
 
@@ -262,8 +274,7 @@ class LandUseMatcher:
         always the same flow the first returned ``Candidate`` wraps.
         """
         ef_name = cls if kind == "occupation" else f"{kind} {cls}"
-        found = [f for f in index.by_name(ef_name, "resource") if f.leaf == leaf]
-        return sorted(found, key=lambda f: f.code)
+        return _by_name_in_leaf(index, ef_name, leaf)
 
 
 class OreCompositeMatcher:
@@ -293,12 +304,9 @@ class OreCompositeMatcher:
         if match is None:
             return []
         element = match.group("element")
-        found = [f for f in index.by_name(element, "resource") if f.leaf == _ORE_LEAF]
+        found = _by_name_in_leaf(index, element, _ORE_LEAF)
         caveat = f"ecoinvent v2 ore composite; the amount is kg of {element}"
-        return [
-            Candidate(f, tier=self.tier, caveat=caveat)
-            for f in sorted(found, key=lambda f: f.code)
-        ]
+        return [Candidate(f, tier=self.tier, caveat=caveat) for f in found]
 
 
 class AliasMatcher:

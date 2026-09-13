@@ -210,20 +210,39 @@ def test_shipped_alias_file_loads_lowercased_and_has_the_seed_entries():
     assert aliases["particulates, < 10 um"].caveat is not None
 
 
-def test_shipped_alias_file_has_the_decision_a_and_c_entries():
+def test_shipped_alias_file_has_all_twelve_entries_added_by_this_task():
     # decisions (a) and (c) (Laurenz, 2026-09-13): fossil water taken as non-renewable
     # groundwater, and BAFU "Nitrogen" taken as total nitrogen; both carry a caveat
-    # naming the decision. "coal, hard" is a plain spelling alias (no caveat needed).
+    # naming the decision. The other ten are plain spelling aliases (no caveat), plus
+    # the three oxygen-demand targets that carry no EF 3.1 factor today.
     aliases = load_aliases()
-    assert aliases["water, fossil"] == Alias(
-        target="Ground Water",
-        caveat="fossil water taken as non-renewable groundwater (decision 2026-09-13)",
-    )
-    assert aliases["nitrogen"] == Alias(
-        target="Nitrogen, Total (excluding N2)",
-        caveat="BAFU 'Nitrogen' emitted to water taken as total nitrogen (decision 2026-09-13)",
-    )
-    assert aliases["coal, hard"] == Alias(target="Hard Coal")
+    expected = {
+        "water, fossil": Alias(
+            target="Ground Water",
+            caveat="fossil water taken as non-renewable groundwater (decision 2026-09-13)",
+        ),
+        "nitrogen": Alias(
+            target="Nitrogen, Total (excluding N2)",
+            caveat=(
+                "BAFU 'Nitrogen' emitted to water taken as total nitrogen (decision 2026-09-13)"
+            ),
+        ),
+        "coal, brown": Alias(target="Brown Coal"),
+        "coal, hard": Alias(target="Hard Coal"),
+        "oil, crude": Alias(target="Crude Oil"),
+        "1-butanol": Alias(target="Butanol"),
+        "azadirachtin a+b": Alias(target="Azadirachtin"),
+        "benzo(g,h,i)perylene": Alias(target="Benzo(ghi)perylene"),
+        "propylene glycol methyl ether acetate": Alias(
+            target="Propylene Glycol Monomethyl Ether Acetate"
+        ),
+        "bod5, biological oxygen demand": Alias(target="Biological Oxygen Demand"),
+        "cod, chemical oxygen demand": Alias(target="Chemical Oxygen Demand"),
+        "toc, total organic carbon": Alias(target="Total Organic Carbon"),
+    }
+    assert len(expected) == 12
+    for key, alias in expected.items():
+        assert aliases[key] == alias
 
 
 def test_load_aliases_raises_on_missing_aliases_key(tmp_path):
@@ -600,3 +619,46 @@ def test_synonym_matcher_does_not_steal_a_land_use_name(tmp_path_factory):
     got = pipeline.match(BafuFlow("Occupation, dump site", "resources", "land", "m2a"), None)
     assert isinstance(got, Match)
     assert got.tier == "landuse" and got.code == "dump-site"
+
+
+def test_synonym_matcher_does_not_steal_an_ore_composite_name(tmp_path_factory):
+    # a hypothetical EF resource flow whose alt_label happens to collide with the ore
+    # composite's own name: SynonymMatcher must not resolve it before
+    # OreCompositeMatcher gets a chance. OreCompositeMatcher is ordered right after
+    # LandUseMatcher (before SynonymMatcher) in default_pipeline's ``named`` list for
+    # exactly this reason -- it would return tier "synonym" (onto the wrong,
+    # non-decomposed flow) instead of "ore" (onto the bare element) otherwise.
+    name = "Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore"
+    cf = [
+        cf_row("zinc", "zinc", RES_GROUND, value=1.0),
+        cf_row("hijack", "hijack resource", RES_GROUND, value=1.0),
+    ]
+    vocab = [
+        vocab_row("zinc", "Zinc"),
+        vocab_row("hijack", "Hijack Resource", alt=[name]),
+    ]
+    idx = EfFlowIndex.from_files(*write_ef_inputs(tmp_path_factory.mktemp("ore-order"), cf, vocab))
+    pipeline = default_pipeline(idx, {})
+    got = pipeline.match(BafuFlow(name, "resources", "in ground", "kg"), None)
+    assert isinstance(got, Match)
+    assert got.tier == "ore" and got.code == "zinc"
+
+
+def test_ore_composite_matcher_restricts_to_the_element_resources_leaf(tmp_path_factory):
+    # two EF flows named "Zinc" in the resource bucket on different leafs: the
+    # decomposition must resolve onto the element-resources leaf only, never onto a
+    # same-named flow filed under an unrelated resource leaf (e.g. energy resources).
+    cf = [
+        cf_row("zinc-element", "zinc", RES_GROUND, value=1.0),
+        cf_row(
+            "zinc-energy",
+            "zinc",
+            "Resources / Resources from ground / Non-renewable energy resources from ground",
+            value=1.0,
+        ),
+    ]
+    vocab = [vocab_row("zinc-element", "Zinc"), vocab_row("zinc-energy", "Zinc")]
+    idx = EfFlowIndex.from_files(*write_ef_inputs(tmp_path_factory.mktemp("ore-leaf"), cf, vocab))
+    flow = _ground_resource("Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore")
+    got = OreCompositeMatcher().candidates(flow, None, idx)
+    assert [c.flow.code for c in got] == ["zinc-element"]

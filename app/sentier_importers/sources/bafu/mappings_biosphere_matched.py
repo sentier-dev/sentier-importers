@@ -241,7 +241,7 @@ def conversion_for(
     if index.reference_unit(match.code) == "megajoule":
         energy = ENERGY_CONTENT.get((flow.name, flow.unit))
         if energy is not None:
-            caveat = f"energy content {energy} MJ/{flow.unit} (ecoinvent v2 net calorific value)"
+            caveat = f"energy content {energy:g} MJ/{flow.unit} (ecoinvent v2 net calorific value)"
             return energy, caveat
     if flow.unit == "kg" and set(index.vector(match.code)) == {_WATER_USE}:
         # water is the only substance with a fixed mass -> volume factor (density);
@@ -328,6 +328,8 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
                     f"{flow.name!r} names an ion or oxidation state; "
                     f"EF target {ef_name!r} does not",
                 )
+        # only the None-ness matters here; the caveat conversion_for also returns is
+        # discarded and recomputed by entry_for when the entry is actually built.
         if conversion_for(flow, outcome, index) is None:
             ef_unit = index.reference_unit(outcome.code)
             return Unmatched(
