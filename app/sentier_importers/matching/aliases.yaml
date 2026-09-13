@@ -30,6 +30,12 @@ aliases:
   water, cooling, unspecified natural origin: Water to Cooling
   water, turbine use, unspecified natural origin: Water to turbine
   water, process, unspecified natural origin/m3: Water
+  # its /kg twin: without this alias the three "resources / unspecified|land|in
+  # ground" rows land on one EF leaf (renewable material resources from water) but
+  # spread across three distinct EF flows (Ground Water / Water / Water to Cooling)
+  # with different factors -- ambiguous_substances. "Water" is the only defensible
+  # generic target; the kg -> m3 water-density conversion then applies as usual.
+  water, process, unspecified natural origin/kg: Water
   # surface water is river/lake water, not EF's unspecified-origin "Water"
   water, process, surface: River water
   # fossil/biotic energy resources (MJ) -> EF resource-use-fossils flows (megajoule)

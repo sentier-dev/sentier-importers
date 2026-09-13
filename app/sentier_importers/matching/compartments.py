@@ -120,10 +120,11 @@ _UNINFORMATIVE_RESOURCE_SUBS = frozenset({"unspecified", "land", "biotic"})
 
 
 def is_uninformative_resource_sub(category: str, subcategory: str, name: str) -> bool:
-    """Whether a BAFU resource flow's sub-compartment carries no extraction-medium
-    information, so it may be placed on the one EF resource branch that holds the
-    substance instead of being reported ``sub_compartment_absent`` (Laurenz's decision
-    (b), 2026-09-13).
+    """Whether this BAFU resource sub-compartment carries no extraction-medium information.
+
+    Such a flow may be placed on the one EF resource branch that holds the substance
+    instead of being reported ``sub_compartment_absent`` (Laurenz's decision (b),
+    2026-09-13).
 
     ``True`` when ``category`` is ``resources`` and ``subcategory`` is one of
     ``unspecified``, ``land`` or ``biotic`` (none of these name a medium at all), or

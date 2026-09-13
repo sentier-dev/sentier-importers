@@ -126,14 +126,12 @@ class MatchPipeline:
     def match(self, flow: BafuFlow, cas: str | None) -> Match | Unmatched:
         """Resolve ``flow`` (with an optional ``cas`` number) to one EF flow, or report why not.
 
-        Per matcher, in tier order: EXACT placement wins outright; failing that,
-        UNSPECIFIED placement (the bucket-level fallback, ``unspecified_fallback``
-        permitting); failing that too, and only for the ``resource`` bucket, the
-        resource-branch fallback (``resource_fallback`` permitting, and only when
-        ``compartments.is_uninformative_resource_sub`` says the sub-compartment is
-        uninformative and every candidate lands on the same EF leaf); otherwise
-        ``sub_compartment_absent``, naming every distinct candidate name and leaf so a
-        reviewer can see what EF actually offers.
+        Guards the flow's compartment and sub-compartment, then tries each matcher in
+        tier order, handing its candidates to ``_resolve``: the first matcher whose
+        candidates resolve to anything (a ``Match`` or an ``Unmatched``, never
+        ``None``) decides the outcome -- a later tier never rescues a placement
+        failure of an earlier one, because "the exact-name EF flow exists but only in
+        another sub-compartment" is information, not a miss.
         """
         bucket = bucket_of_bafu_category(flow.category)
         if bucket is None:
@@ -142,57 +140,77 @@ class MatchPipeline:
             return Unmatched("unknown_sub_compartment", flow.subcategory)
         for matcher in self._matchers:
             candidates = matcher.candidates(flow, cas, self._index)
-            if not candidates:
-                continue
-            # a list of (candidate, placement) pairs, not a dict keyed by candidate:
-            # Candidate is a frozen dataclass, so distinct-but-equal candidates could
-            # otherwise collapse and silently drop a duplicate.
-            placed = [
-                (
-                    c,
-                    place(
-                        flow.category,
-                        c.subcategory_override or flow.subcategory,
-                        c.flow.context_path,
-                    ),
-                )
-                for c in candidates
-            ]
-            exact = [c for c, p in placed if p is Placement.EXACT]
-            if exact:
-                return self._pick(exact, flow, cas, matcher.tier, Placement.EXACT, ())
-            fallback = [c for c, p in placed if p is Placement.UNSPECIFIED]
-            if fallback and self._fallback:
-                human = _LEAF_HUMAN.get(flow.subcategory, flow.subcategory)
-                caveat = (
-                    f"EF has no {human} flow for this substance; the unspecified context is used"
-                )
-                return self._pick(
-                    fallback, flow, cas, matcher.tier, Placement.UNSPECIFIED, (caveat,)
-                )
-            if (
-                self._resource_fallback
-                and bucket_of_bafu_category(flow.category) == "resource"
-                and is_uninformative_resource_sub(flow.category, flow.subcategory, flow.name)
-            ):
-                leafs = {c.flow.leaf for c in candidates}
-                if len(leafs) == 1:
-                    leaf = next(iter(leafs))
-                    name = sorted({c.flow.name.lower() for c in candidates})[0]
-                    caveat = (
-                        f"BAFU files this resource under {flow.subcategory}; "
-                        f"EF has {name} only as {leaf}"
-                    )
-                    return self._pick(
-                        candidates, flow, cas, matcher.tier, Placement.RESOURCE_BRANCH, (caveat,)
-                    )
-            leafs = sorted({c.flow.leaf for c in candidates})
-            names = sorted({c.flow.name.lower() for c in candidates})
-            return Unmatched(
-                "sub_compartment_absent",
-                f"EF has {', '.join(names)} only in: " + ", ".join(leafs),
-            )
+            outcome = self._resolve(candidates, flow, cas, matcher)
+            if outcome is not None:
+                return outcome
         return Unmatched("no_ef_flow", _NO_MATCH.format(bucket=bucket))
+
+    def _resolve(
+        self,
+        candidates: list[Candidate],
+        flow: BafuFlow,
+        cas: str | None,
+        matcher: Matcher,
+    ) -> Match | Unmatched | None:
+        """Place and disambiguate one matcher's ``candidates``, or ``None`` to try the
+        next matcher (an empty ``candidates`` list -- this matcher found nothing in
+        the flow's compartment at all).
+
+        In order: EXACT placement wins outright; failing that, UNSPECIFIED placement
+        (the bucket-level fallback, ``unspecified_fallback`` permitting); failing
+        that too, and only for the ``resource`` bucket, the resource-branch fallback
+        (``resource_fallback`` permitting, and only when
+        ``compartments.is_uninformative_resource_sub`` says the sub-compartment is
+        uninformative and every candidate lands on the same EF leaf -- disambiguation
+        can still turn this into ``ambiguous_substances`` when those candidates
+        differ in identity and no CAS singles one out); otherwise
+        ``sub_compartment_absent``, naming every distinct candidate name and leaf so a
+        reviewer can see what EF actually offers.
+        """
+        if not candidates:
+            return None
+        # a list of (candidate, placement) pairs, not a dict keyed by candidate:
+        # Candidate is a frozen dataclass, so distinct-but-equal candidates could
+        # otherwise collapse and silently drop a duplicate.
+        placed = [
+            (
+                c,
+                place(
+                    flow.category,
+                    c.subcategory_override or flow.subcategory,
+                    c.flow.context_path,
+                ),
+            )
+            for c in candidates
+        ]
+        exact = [c for c, p in placed if p is Placement.EXACT]
+        if exact:
+            return self._pick(exact, flow, cas, matcher.tier, Placement.EXACT, ())
+        fallback = [c for c, p in placed if p is Placement.UNSPECIFIED]
+        if fallback and self._fallback:
+            human = _LEAF_HUMAN.get(flow.subcategory, flow.subcategory)
+            caveat = f"EF has no {human} flow for this substance; the unspecified context is used"
+            return self._pick(fallback, flow, cas, matcher.tier, Placement.UNSPECIFIED, (caveat,))
+        leafs = sorted({c.flow.leaf for c in candidates})
+        names = sorted({c.flow.name.lower() for c in candidates})
+        bucket = bucket_of_bafu_category(flow.category)
+        if (
+            self._resource_fallback
+            and bucket == "resource"
+            and len(leafs) == 1
+            and is_uninformative_resource_sub(flow.category, flow.subcategory, flow.name)
+        ):
+            caveat = (
+                f"BAFU files this resource under {flow.subcategory}; "
+                f"EF has {', '.join(names)} only as {leafs[0]}"
+            )
+            return self._pick(
+                candidates, flow, cas, matcher.tier, Placement.RESOURCE_BRANCH, (caveat,)
+            )
+        return Unmatched(
+            "sub_compartment_absent",
+            f"EF has {', '.join(names)} only in: " + ", ".join(leafs),
+        )
 
     def _pick(
         self,

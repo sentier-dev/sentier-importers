@@ -421,6 +421,11 @@ _RB_CF = [
     # exactly one leaf) can pick between them.
     cf_row("aluminium-ground", "aluminium", RES_GROUND, value=1.0),
     cf_row("aluminium-water", "aluminium", RES_WATER, value=1.0),
+    # a name that lands on exactly one leaf, but two flows with different factors and
+    # no CAS on either: the resource-branch fallback commits to this candidate set,
+    # then _pick's ordinary disambiguation must still be free to report ambiguity.
+    cf_row("silver-a", "silver", RES_GROUND, value=1.0),
+    cf_row("silver-b", "silver", RES_GROUND, value=2.0),
 ]
 _RB_VOCAB = [
     vocab_row("ground-water", "Ground Water"),
@@ -428,6 +433,8 @@ _RB_VOCAB = [
     vocab_row("bromine", "Bromine"),
     vocab_row("aluminium-ground", "Aluminium"),
     vocab_row("aluminium-water", "Aluminium"),
+    vocab_row("silver-a", "Silver"),
+    vocab_row("silver-b", "Silver"),
 ]
 _RB_ALIASES = {"water, well": "Ground Water"}
 
@@ -482,6 +489,18 @@ def test_candidates_spread_over_two_resource_leafs_stay_absent(rb_pipeline):
     # (ground and water): the resource-branch fallback requires exactly one.
     got = rb_pipeline.match(BafuFlow("Aluminium", "resources", "land", "kg"), None)
     assert got.reason == "sub_compartment_absent"
+
+
+def test_resource_branch_fallback_can_be_ambiguous(rb_pipeline):
+    # "Silver" reaches the resource-branch fallback (single leaf, "unspecified" is
+    # uninformative), but its two candidates carry different factors and neither
+    # carries a CAS to single one out; _pick reports ambiguous_substances rather than
+    # silently picking one, exactly as it would for any other tier.
+    got = rb_pipeline.match(BafuFlow("Silver", "resources", "unspecified", "kg"), None)
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="name match finds 2 EF flows with different factors for silver; no source CAS",
+    )
 
 
 def test_resource_fallback_can_be_disabled(rb_index):

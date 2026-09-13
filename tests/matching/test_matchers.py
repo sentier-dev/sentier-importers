@@ -210,11 +210,15 @@ def test_shipped_alias_file_loads_lowercased_and_has_the_seed_entries():
     assert aliases["particulates, < 10 um"].caveat is not None
 
 
-def test_shipped_alias_file_has_all_twelve_entries_added_by_this_task():
+def test_shipped_alias_file_has_all_thirteen_entries_added_by_this_task():
     # decisions (a) and (c) (Laurenz, 2026-09-13): fossil water taken as non-renewable
     # groundwater, and BAFU "Nitrogen" taken as total nitrogen; both carry a caveat
     # naming the decision. The other ten are plain spelling aliases (no caveat), plus
-    # the three oxygen-demand targets that carry no EF 3.1 factor today.
+    # the three oxygen-demand targets that carry no EF 3.1 factor today. The
+    # thirteenth (decision (b), Task 2) is the /kg twin of the existing "water,
+    # process, unspecified natural origin/m3" alias -- without it, the /kg flows'
+    # single EF leaf holds several differently-factored candidates and the
+    # resource-branch fallback reports them ambiguous_substances instead.
     aliases = load_aliases()
     expected = {
         "water, fossil": Alias(
@@ -239,8 +243,9 @@ def test_shipped_alias_file_has_all_twelve_entries_added_by_this_task():
         "bod5, biological oxygen demand": Alias(target="Biological Oxygen Demand"),
         "cod, chemical oxygen demand": Alias(target="Chemical Oxygen Demand"),
         "toc, total organic carbon": Alias(target="Total Organic Carbon"),
+        "water, process, unspecified natural origin/kg": Alias(target="Water"),
     }
-    assert len(expected) == 12
+    assert len(expected) == 13
     for key, alias in expected.items():
         assert aliases[key] == alias
 
