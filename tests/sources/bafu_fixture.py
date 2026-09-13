@@ -11,7 +11,8 @@ Elementary flows carried by the electricity plant dataset: Carbon dioxide, fossi
 Radon-222 (emissions to air / low. pop. / Bq), Gas, natural/m3 (resources / in
 ground / m3), Peat (resources / in ground / kg), Gas, mine, off-gas, process,
 coal mining/m3 (resources / in ground / Nm3), Occupation, industrial area
-(resources / unspecified / m2a).
+(resources / unspecified / m2a), Uranium (resources / land / kg -- decision (b)'s
+resource-branch fallback fixture).
 """
 
 import io
@@ -80,6 +81,11 @@ _ELEC = """<?xml version='1.0' encoding='UTF-8'?>
       <exchange category="resources" subCategory="unspecified"
         meanValue="0.05" name="Occupation, industrial area" number="206"
         uncertaintyType="0" unit="m2a">
+        <inputGroup>4</inputGroup>
+      </exchange>
+      <exchange category="resources" subCategory="land"
+        meanValue="0.001" name="Uranium" number="208"
+        uncertaintyType="0" unit="kg">
         <inputGroup>4</inputGroup>
       </exchange>
     </flowData>

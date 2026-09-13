@@ -65,7 +65,7 @@ def test_processes_obsolete_sector_flags_comment():
 def test_exchanges_filters_to_sector_processes():
     rows = _exchanges()
     assert {r["process_id"] for r in rows} == {UUID_ELEC}
-    assert len(rows) == 9
+    assert len(rows) == 10
 
 
 def test_exchanges_flow_ids_and_types():

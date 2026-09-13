@@ -317,8 +317,26 @@ def test_unknown_bafu_subcategory_is_reported_not_silently_empty(pipeline):
     assert got == Unmatched(reason="unknown_sub_compartment", detail="puddle")
 
 
-def test_resource_flow_in_unspecified_sub_compartment_is_absent_not_fallback(pipeline):
+def test_resource_flow_in_unspecified_sub_compartment_falls_back_to_the_resource_branch(pipeline):
+    # decision (b): "unspecified" carries no extraction-medium information, and the
+    # alias singles out exactly one EF resource leaf (river-res), so the flow now
+    # resolves through the resource-branch fallback instead of staying absent.
     got = pipeline.match(BafuFlow("Water, river", "resources", "unspecified", "m3"), None)
+    assert got.code == "river-res" and got.placement == "resource_branch_fallback"
+    assert got.caveats == (
+        "BAFU files this resource under unspecified; EF has river water only as "
+        "renewable material resources from water",
+    )
+
+
+def test_resource_flow_in_unspecified_sub_compartment_stays_absent_when_resource_fallback_disabled(
+    index,
+):
+    # the bucket-level Placement.UNSPECIFIED fallback never applies to resources
+    # (unchanged); with the new resource-branch fallback also disabled, the flow is
+    # reported sub_compartment_absent exactly as before decision (b).
+    pipe = default_pipeline(index, ALIASES, resource_fallback=False)
+    got = pipe.match(BafuFlow("Water, river", "resources", "unspecified", "m3"), None)
     assert got.reason == "sub_compartment_absent"
 
 
@@ -343,7 +361,10 @@ def test_subcategory_override_changes_where_a_candidate_places(index):
     got = with_override.match(flow, None)
     assert got.code == "industrial-area" and got.placement == "exact"
 
-    without_override = MatchPipeline([_StubOverrideMatcher(None)], index)
+    # decision (b) would otherwise recover this very candidate set through the
+    # resource-branch fallback ("unspecified" is itself uninformative, single leaf) --
+    # disabled here so this test isolates what the override alone is responsible for.
+    without_override = MatchPipeline([_StubOverrideMatcher(None)], index, resource_fallback=False)
     got = without_override.match(flow, None)
     assert got.reason == "sub_compartment_absent"
 
@@ -387,3 +408,94 @@ def test_ore_composite_match_at_pipeline_level(tmp_path_factory):
         caveats=("ecoinvent v2 ore composite; the amount is kg of Zinc",),
     )
     assert idx.reference_unit(got.code) == "kilogram"
+
+
+#: A second index dedicated to decision (b) (resource-branch fallback) scenarios, so
+#: they do not have to share leaf/candidate shapes with the rest of this module's CF.
+_RB_CF = [
+    cf_row("ground-water", "ground water", RES_WATER, method="ef-3.1:water-use", value=37.8),
+    cf_row("uranium", "uranium", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0),
+    cf_row("bromine", "bromine", RES_GROUND, value=1.0),
+    # a name spread over two distinct resource leafs: neither UNSPECIFIED placement
+    # (never valid for resources) nor the resource-branch fallback (which requires
+    # exactly one leaf) can pick between them.
+    cf_row("aluminium-ground", "aluminium", RES_GROUND, value=1.0),
+    cf_row("aluminium-water", "aluminium", RES_WATER, value=1.0),
+]
+_RB_VOCAB = [
+    vocab_row("ground-water", "Ground Water"),
+    vocab_row("uranium", "Uranium"),
+    vocab_row("bromine", "Bromine"),
+    vocab_row("aluminium-ground", "Aluminium"),
+    vocab_row("aluminium-water", "Aluminium"),
+]
+_RB_ALIASES = {"water, well": "Ground Water"}
+
+
+@pytest.fixture(scope="module")
+def rb_index(tmp_path_factory):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("resource-branch"), _RB_CF, _RB_VOCAB)
+    )
+
+
+@pytest.fixture(scope="module")
+def rb_pipeline(rb_index):
+    return default_pipeline(rb_index, _RB_ALIASES)
+
+
+def test_uninformative_water_alias_falls_back_to_the_resource_branch(rb_pipeline):
+    # "Water, well" is filed by BAFU under "unspecified" (no medium information); the
+    # curated alias singles out exactly one EF leaf (Ground Water), so it resolves.
+    got = rb_pipeline.match(BafuFlow("Water, well", "resources", "unspecified", "m3"), None)
+    assert got.code == "ground-water"
+    assert got.tier == "alias"
+    assert got.placement == "resource_branch_fallback"
+    assert got.caveats == (
+        "BAFU files this resource under unspecified; EF has ground water only as "
+        "renewable material resources from water",
+    )
+
+
+def test_uninformative_land_subcategory_falls_back_to_the_resource_branch(rb_pipeline):
+    # "Uranium" filed under "land" (BAFU's land-family token, not a real land-use
+    # class here) carries no extraction-medium information either; it decomposes to
+    # exactly one EF leaf by plain name match.
+    got = rb_pipeline.match(BafuFlow("Uranium", "resources", "land", "kg"), None)
+    assert got.code == "uranium"
+    assert got.placement == "resource_branch_fallback"
+
+
+def test_in_water_is_not_uninformative_stays_absent(rb_pipeline):
+    # "in water" is never uninformative for a non-water name (Bromine/Iodine/
+    # Magnesium: EF only characterises these from ground, and a sea-water extraction
+    # is not the same medium) -- the resource-branch fallback must not paper over it.
+    got = rb_pipeline.match(BafuFlow("Bromine", "resources", "in water", "kg"), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has bromine only in: non-renewable element resources from ground",
+    )
+
+
+def test_candidates_spread_over_two_resource_leafs_stay_absent(rb_pipeline):
+    # "land" is uninformative, but the candidate set spans two distinct EF leafs
+    # (ground and water): the resource-branch fallback requires exactly one.
+    got = rb_pipeline.match(BafuFlow("Aluminium", "resources", "land", "kg"), None)
+    assert got.reason == "sub_compartment_absent"
+
+
+def test_resource_fallback_can_be_disabled(rb_index):
+    pipe = default_pipeline(rb_index, _RB_ALIASES, resource_fallback=False)
+    got = pipe.match(BafuFlow("Uranium", "resources", "land", "kg"), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has uranium only in: non-renewable element resources from ground",
+    )
+
+
+def test_emissions_unspecified_fallback_is_unaffected_by_resource_fallback(pipeline):
+    # a plain emissions-bucket flow never even reaches the resource-branch check
+    # (bucket_of_bafu_category != "resource"); the pre-existing bucket-level
+    # UNSPECIFIED fallback still behaves exactly as it always has.
+    got = pipeline.match(water("Zinc", "groundwater"), None)
+    assert got.placement == "unspecified_fallback"

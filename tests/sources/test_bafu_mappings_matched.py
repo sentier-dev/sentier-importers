@@ -72,6 +72,7 @@ GAS = flow_id("Gas, natural/m3", "resources", "in ground", "m3")
 PEAT = flow_id("Peat", "resources", "in ground", "kg")
 MINE_GAS = flow_id("Gas, mine, off-gas, process, coal mining/m3", "resources", "in ground", "Nm3")
 LAND = flow_id("Occupation, industrial area", "resources", "unspecified", "m2a")
+URANIUM = flow_id("Uranium", "resources", "land", "kg")
 #: _decide never touches its ``index`` argument for a pure Unmatched-in/Unmatched-out
 #: call (the freshwater check and _refine_unmatched are both index-free); an empty
 #: index documents that rather than passing None.
@@ -344,6 +345,33 @@ def test_peat_energy_content_converts_onto_the_fossil_resource_flow(tmp_path):
     assert PEAT in {r["source"]["code"] for r in rows}
 
 
+def test_uranium_resource_branch_fallback_converts_via_energy_content(tmp_path):
+    # decision (b): "Uranium" is filed by BAFU under "land" (no extraction-medium
+    # information); with exactly one EF leaf reachable by plain name, it resolves
+    # through the resource-branch fallback, and Task 1's energy-content factor
+    # (560000 MJ/kg) still applies onto EF's megajoule reference unit.
+    cf = CF + [
+        cf_row("uranium", "uranium", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
+    ]
+    vocab = VOCAB + [vocab_row("uranium", "Uranium")]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfMatchedSource(_config(root))
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    outcomes = dict(source.outcomes(records))
+    flow = next(f for f in outcomes if f.code == URANIUM)
+    outcome = outcomes[flow]
+    assert isinstance(outcome, Match) and outcome.placement == "resource_branch_fallback"
+    entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
+    assert entry["target"]["unit"] == "megajoule"
+    assert entry["conversion_factor"] == 560_000
+    assert "BAFU files this resource under land" in entry["comment"]
+    assert "energy content 560000 MJ/kg" in entry["comment"]
+    rows = source.transform(records)
+    assert URANIUM in {r["source"]["code"] for r in rows}
+
+
 def test_coal_hard_alias_converts_via_energy_content(tmp_path):
     # "Coal, hard" -> "Hard Coal" via the shipped alias; energy content 19.1 MJ/kg.
     cf = CF + [
@@ -465,14 +493,23 @@ def test_outcomes_returns_one_tuple_per_non_excluded_fixture_flow(tmp_path):
         source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
     )
     outcomes = source.outcomes(records)
-    assert {flow.code for flow, _ in outcomes} == {WATER, RADON, GAS, PEAT, MINE_GAS, LAND}
+    assert {flow.code for flow, _ in outcomes} == {
+        WATER,
+        RADON,
+        GAS,
+        PEAT,
+        MINE_GAS,
+        LAND,
+        URANIUM,
+    }
     assert all(isinstance(o, (Match, Unmatched)) for _, o in outcomes)
-    # Gas, Peat and the mine off-gas have no matching EF flow in the default fixture
-    # CF/VOCAB at all
+    # Gas, Peat, the mine off-gas and Uranium have no matching EF flow in the default
+    # fixture CF/VOCAB at all
     by_code = {flow.code: outcome for flow, outcome in outcomes}
     assert by_code[GAS].reason == "no_ef_flow"
     assert by_code[PEAT].reason == "no_ef_flow"
     assert by_code[MINE_GAS].reason == "no_ef_flow"
+    assert by_code[URANIUM].reason == "no_ef_flow"
     assert isinstance(by_code[LAND], Match) and by_code[LAND].tier == "landuse"
 
 

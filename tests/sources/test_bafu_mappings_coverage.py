@@ -17,6 +17,7 @@ from tests.sources.test_bafu_mappings_matched import (
     MINE_GAS,
     PEAT,
     RADON,
+    URANIUM,
     VOCAB,
     WATER,
     _config,
@@ -40,9 +41,14 @@ def _source(root):
 def test_every_universe_flow_has_exactly_one_row(tmp_path):
     root = _stage(tmp_path, rank3=[CO2], rank6=[RADON])
     rows = _run(_source(root), tmp_path)
-    assert len(rows) == 7
+    assert len(rows) == 8
     by_code = {r["source"]["code"]: r for r in rows}
-    assert set(by_code) == {CO2, WATER, RADON, GAS, PEAT, MINE_GAS, LAND}
+    assert set(by_code) == {CO2, WATER, RADON, GAS, PEAT, MINE_GAS, LAND, URANIUM}
+    # Uranium has no matching EF flow in the default fixture CF/VOCAB at all (its
+    # resource-branch fallback is exercised with a dedicated CF row in the sibling
+    # matched-source test), so it stays unmapped here too.
+    assert by_code[URANIUM]["status"] == "unmapped"
+    assert by_code[URANIUM]["reason"] == "no_ef_flow"
     assert by_code[LAND]["status"] == "mapped" and by_code[LAND]["bridge"] == 7
     assert by_code[LAND]["tier"] == "landuse"
     assert by_code[CO2] == {
@@ -183,7 +189,7 @@ def test_assembled_package_uses_the_coverage_verb(tmp_path):
     )
     package = _assemble(_run(BafuEfCoverageSource(config), tmp_path), config)
     assert set(package) == {"name", "version", "coverage"}
-    assert len(package["coverage"]) == 7
+    assert len(package["coverage"]) == 8
     json.dumps(package)  # JSON-serialisable (no sets, no tuples that matter)
 
 
