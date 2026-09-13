@@ -274,6 +274,23 @@ def test_elemental_cas_does_not_collapse_speciation(pipeline):
     )
 
 
+def test_no_ef_flow_detail_says_with_or_without_a_factor_for_an_inclusive_index(tmp_path):
+    # same fixture and pipeline shape as the plain (characterised-only) case above, but
+    # built with include_uncharacterised=True: the "no_ef_flow" detail must say the
+    # search covered uncharacterised flows too, not just factor-bearing ones.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, CF, VOCAB), include_uncharacterised=True
+    )
+    pipe = default_pipeline(index, ALIASES)
+    got = pipe.match(water("Chromium", "river"), "7440-47-3")
+    assert got == Unmatched(
+        reason="no_ef_flow",
+        detail="no EF 3.1 flow, with or without a factor, matches by name, synonym, "
+        "qualifier, land-use class, alias, region-stripped name or CAS in the "
+        "water compartment",
+    )
+
+
 def test_alias_caveat_and_tier_are_carried(pipeline):
     got = pipeline.match(air("Particulates, < 10 um", "low. pop."), None)
     assert got.code == "pm10" and got.tier == "alias" and got.placement == "exact"

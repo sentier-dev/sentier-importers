@@ -74,7 +74,7 @@ def test_emits_the_uncharacterised_match_with_the_fixed_comment_and_uncertain_su
     assert "conversion_factor" not in row
     assert row["comment"].startswith("uncharacterised in EF 3.1: no factor in any method")
     assert (
-        "EF context inferred from the Brightway context code, sub-compartment uncertain"
+        "EF context inferred from the Brightway context code, branch/sub-compartment uncertain"
         in row["comment"]
     )
 
@@ -115,6 +115,74 @@ def test_becquerel_flow_lands_on_kilobecquerel_with_the_fixed_conversion(tmp_pat
     assert row["target"]["unit"] == "kBq"
     assert row["conversion_factor"] == 0.001
     assert row["comment"].startswith("uncharacterised in EF 3.1: no factor in any method")
+
+
+def test_rank8_resource_branch_fallback_caveat_is_honest_about_uncharacterised(tmp_path):
+    # "Energy, geothermal, converted" is exactly the kind of BAFU/EF energy-resource
+    # name the bw-context crosswalk can never place correctly (see
+    # ef_index._UNCERTAIN_RESOURCE_NAME): filed by BAFU under the uninformative "land"
+    # sub-compartment, it resolves through the resource-branch fallback onto the one
+    # (uncharacterised) EF leaf reso-grou reaches -- the pipeline's own caveat wording
+    # ("EF has ... only as ...") would assert a fact about EF's characterised branches
+    # that does not hold for this target, so entry_for must replace it.
+    vocab = VOCAB + [vocab_row("energy-geo", "Energy, geothermal, converted", bw="reso-grou")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Energy, geothermal, converted", "resources", "land", "MJ")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Energy, geothermal, converted"]
+    assert row["target"]["code"] == "energy-geo"
+    assert "EF has" not in row["comment"] and "only as" not in row["comment"]
+    assert (
+        "BAFU files this resource under land; placed on the inferred EF resource "
+        "branch non-renewable element resources from ground (uncharacterised, "
+        "context from the Brightway code)" in row["comment"]
+    )
+    assert "branch/sub-compartment uncertain" in row["comment"]  # energy name forces it
+
+
+def test_rank8_location_and_regional_aggregate_caveat_are_reported(tmp_path):
+    # Same "Water, KR" / "Water, Europe" region-strip scenario the matched source's own
+    # test_location_and_caveats_are_carried and the coverage sidecar's
+    # test_rank7_match_location_and_caveats_are_reported_when_present pin for rank 7,
+    # but onto an uncharacterised "Water" vocab row: a real match.caveats entry (the
+    # regional-aggregate one, untouched -- only a resource_branch_fallback caveat is
+    # ever rewritten) must still land in the comment, after the fixed prefix, and
+    # target["location"] must still be set for the flow the pipeline resolves an ISO
+    # location for.
+    # envi-wate-suwa -> "fresh water" is NOT ambiguous (unlike envi-wate-unkn), so the
+    # comment carries no uncertain suffix either -- only the fixed prefix and the
+    # region caveat/location, keeping this test's assertions unambiguous about which
+    # part of entry_for's output each one is pinning.
+    vocab = VOCAB + [vocab_row("water-em-unchar", "Water", cas="7732-18-5", bw="envi-wate-suwa")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    extra = [
+        BafuFlow("Water, KR", "emissions to water", "river", "m3"),
+        BafuFlow("Water, Europe", "emissions to water", "river", "m3"),
+    ]
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + extra))
+    rows = source.transform([{"inputs": augmented}])
+    by_name = {r["source"]["name"]: r for r in rows}
+
+    kr = by_name["Water, KR"]
+    assert kr["target"]["location"] == "KR"
+    assert kr["comment"] == "uncharacterised in EF 3.1: no factor in any method"
+
+    europe = by_name["Water, Europe"]
+    assert "location" not in europe["target"]
+    assert (
+        "regional aggregate Europe in the source name; EF applies the global default "
+        "factor" in europe["comment"]
+    )
+    assert europe["comment"].startswith("uncharacterised in EF 3.1: no factor in any method")
 
 
 def test_flows_already_in_rank_3_6_or_7_are_excluded(tmp_path):

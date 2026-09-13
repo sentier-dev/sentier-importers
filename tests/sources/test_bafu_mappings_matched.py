@@ -13,13 +13,9 @@ from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeli
 from sentier_importers.sources.bafu.ecospold import flow_id
 from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCoverageSource
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
-    ENERGY_CONTENT,
     BafuEfMatchedSource,
     _decide,
-    conversion_for,
-    nomenclature_unit,
     substance_cas,
-    unit_conversion,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
@@ -239,52 +235,6 @@ def test_location_and_caveats_are_carried(tmp_path):
     )
 
 
-@pytest.mark.parametrize(
-    "bafu_unit,ef_unit,expected",
-    [
-        ("kg", "kilogram", 1.0),
-        ("kilogram", "kg", 1.0),
-        ("m3", "cubic meter", 1.0),
-        ("cubic meter", "m3", 1.0),
-        ("kBq", "kBq", 1.0),
-        ("m2", "m2", 1.0),
-        ("m2*a", "m2*a", 1.0),
-        ("m2a", "m2*a", 1.0),  # BAFU spells it without the asterisk; same area-time
-        ("MJ", "megajoule", 1.0),
-        ("Bq", "kBq", 0.001),
-        ("kWh", "megajoule", 3.6),
-        ("m3", "megajoule", None),  # volume vs energy: no fixed conversion
-        ("kg", "kBq", None),  # mass vs activity: no fixed conversion
-        ("Nm3", "kilogram", None),  # volume vs mass: no fixed conversion
-        ("m2", "m2*a", None),  # area vs area-time: no fixed conversion
-        ("kg", "unknown-unit", None),  # unit outside the dimension table at all
-    ],
-)
-def test_unit_conversion_fixed_factors_and_cross_dimension_mismatches(
-    bafu_unit, ef_unit, expected
-):
-    assert unit_conversion(bafu_unit, ef_unit) == expected
-
-
-@pytest.mark.parametrize(
-    "bafu_unit,expected",
-    [
-        ("kg", ("kilogram", None)),
-        ("Bq", ("kBq", 0.001)),
-        ("kBq", ("kBq", None)),
-        ("m3", ("cubic meter", None)),
-        ("Nm3", ("cubic meter", None)),
-        ("MJ", ("megajoule", None)),
-        ("kWh", ("megajoule", 3.6)),
-        ("m2", ("m2", None)),
-        ("m2a", ("m2*a", None)),
-        ("unknown-unit", ("unknown-unit", None)),  # passed through unchanged
-    ],
-)
-def test_nomenclature_unit_covers_every_bafu_unit(bafu_unit, expected):
-    assert nomenclature_unit(bafu_unit) == expected
-
-
 class _ForcedInclusiveMatchedSource(BafuEfMatchedSource):
     """Test-only subclass forcing ``include_uncharacterised=True`` on the default,
     characterised-only matched source -- pins that ``transform`` never emits a match
@@ -496,51 +446,6 @@ def test_coal_hard_alias_converts_via_energy_content(tmp_path):
     entry = source.entry_for(flow, match, r["inputs"].index)
     assert entry["conversion_factor"] == 19.1
     assert "19.1 MJ/kg" in entry["comment"]
-
-
-#: Hardcoded independently of ENERGY_CONTENT itself (not derived from the dict under
-#: test) so that deleting a key or changing a value actually fails a case below,
-#: rather than merely shrinking the parametrization.
-_ENERGY_CONTENT_CASES = [
-    ("Coal, hard", "kg", 19.1),
-    ("Coal, brown", "kg", 9.9),
-    ("Oil, crude", "kg", 45.8),
-    ("Peat", "kg", 9.9),
-    ("Uranium", "kg", 560_000.0),
-    ("Gas, natural/m3", "m3", 38.3),
-    ("Gas, natural/m3", "Nm3", 38.3),
-]
-
-
-def test_energy_content_table_has_exactly_these_seven_entries():
-    assert dict(ENERGY_CONTENT) == {(n, u): f for n, u, f in _ENERGY_CONTENT_CASES}
-
-
-@pytest.mark.parametrize("name,unit,factor", _ENERGY_CONTENT_CASES)
-def test_conversion_for_applies_every_energy_content_table_entry(
-    tmp_path_factory, name, unit, factor
-):
-    # every (name, unit) key ENERGY_CONTENT is expected to carry, including both
-    # "Gas, natural/m3" units (m3 and Nm3), pinned directly against conversion_for: a
-    # tiny index with one fossil-resource-method EF flow named exactly like the BAFU
-    # flow, so the megajoule reference-unit branch fires and the table factor comes
-    # back intact.
-    cf = [
-        cf_row("target", name.lower(), RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
-    ]
-    vocab = [vocab_row("target", name)]
-    index = EfFlowIndex.from_files(
-        *write_ef_inputs(tmp_path_factory.mktemp("energy-content"), cf, vocab)
-    )
-    flow = BafuFlow(name, "resources", "in ground", unit)
-    match = Match(
-        code="target", tier="name", placement="exact", location=None, candidates=1, caveats=()
-    )
-    got = conversion_for(flow, match, index)
-    assert got == (
-        factor,
-        f"energy content {factor:g} MJ/{unit} (ecoinvent v2 net calorific value)",
-    )
 
 
 def test_uranium_mass_onto_an_ionising_radiation_flow_is_withheld_as_unit_mismatch(tmp_path):

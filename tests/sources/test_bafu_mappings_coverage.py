@@ -7,8 +7,9 @@ import pytest
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.pipeline import _assemble
 from sentier_importers.matching.pipeline import Match
+from sentier_importers.sources.bafu import mappings_biosphere_coverage as coverage_mod
 from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCoverageSource
-from sentier_importers.sources.bafu.mappings_biosphere_matched import BafuEfMatchedSource
+from sentier_importers.sources.bafu.mappings_biosphere_matched import outcome_for
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 from tests.matching.ef_fixtures import CF_SCHEMA, RES_GROUND, VOCAB_SCHEMA, cf_row, vocab_row
@@ -313,21 +314,20 @@ def test_bridge_8_location_and_caveats_are_reported_when_present(tmp_path):
     ]
 
 
-def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path):
+def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path, monkeypatch):
     # Pass 2 must never resolve onto a characterised target -- that would mean the
     # inclusive index changed a characterised rank-7 outcome. Force it via a fake
-    # ``outcome_for`` that only overrides the pass-2 call (identified by ``index`` not
-    # being the pass-1 index the real pipeline built), returning a match onto "co2-fos"
+    # ``outcome_for`` monkeypatched onto the coverage module's own name (the module
+    # ``BafuEfMatchedSource.outcomes`` calls its *own* module-level ``outcome_for``
+    # unaffected, so pass 1 -- which uses that name -- still runs for real; only the
+    # coverage module's pass-2 call sees the fake), returning a match onto "co2-fos"
     # (characterised in the default fixture CF/VOCAB) for GAS, which pass 1 leaves
     # Unmatched in the plain fixture.
     root = _stage(tmp_path)
     source = _source(root)
-    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
-    records = source.parse(source.fetch(ctx))
-    pass1_index = records[0]["inputs"].index
 
     def fake_outcome_for(flow, cas, pipeline, index):
-        if index is not pass1_index and flow.code == GAS:
+        if flow.code == GAS:
             return Match(
                 code="co2-fos",
                 tier="name",
@@ -336,8 +336,8 @@ def test_characterised_match_in_pass_2_raises_runtime_error(tmp_path):
                 candidates=1,
                 caveats=(),
             )
-        return BafuEfMatchedSource.outcome_for(flow, cas, pipeline, index)
+        return outcome_for(flow, cas, pipeline, index)
 
-    source.outcome_for = fake_outcome_for
+    monkeypatch.setattr(coverage_mod, "outcome_for", fake_outcome_for)
     with pytest.raises(RuntimeError, match="characterised match reached bridge 8"):
-        source.transform(records)
+        _run(source, tmp_path)

@@ -68,9 +68,17 @@ _LEAF_HUMAN = {
     "fossilwater": "ground water",
     "indoor": "indoor air",
 }
-_NO_MATCH = (
+#: ``no_ef_flow`` detail template, picked by ``EfFlowIndex.includes_uncharacterised``:
+#: a characterised-only index really did restrict the search to factor-bearing flows,
+#: so it is honest to say so; the inclusive index (rank 8) searched uncharacterised
+#: flows too, so the detail must not imply otherwise.
+_NO_MATCH_CHARACTERISED = (
     "no EF 3.1 flow with a factor matches by name, synonym, qualifier, land-use "
     "class, alias, region-stripped name or CAS in the {bucket} compartment"
+)
+_NO_MATCH_INCLUSIVE = (
+    "no EF 3.1 flow, with or without a factor, matches by name, synonym, qualifier, "
+    "land-use class, alias, region-stripped name or CAS in the {bucket} compartment"
 )
 
 
@@ -143,7 +151,12 @@ class MatchPipeline:
             outcome = self._resolve(candidates, flow, cas, matcher)
             if outcome is not None:
                 return outcome
-        return Unmatched("no_ef_flow", _NO_MATCH.format(bucket=bucket))
+        template = (
+            _NO_MATCH_INCLUSIVE
+            if self._index.includes_uncharacterised
+            else _NO_MATCH_CHARACTERISED
+        )
+        return Unmatched("no_ef_flow", template.format(bucket=bucket))
 
     def _resolve(
         self,

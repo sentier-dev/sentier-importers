@@ -44,7 +44,8 @@ class BafuEfNomenclatureSource(BafuEfMatchedSource):
             if target.characterised:
                 raise RuntimeError(
                     f"characterised match reached the nomenclature source: "
-                    f"{flow.name} -> {outcome.code}"
+                    f"{flow.name} -> {outcome.code}; check that the rank7 input is "
+                    "the current rank-7 payload"
                 )
             rows.append(self.entry_for(flow, outcome, index))
         return rows

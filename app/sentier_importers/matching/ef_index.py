@@ -49,6 +49,19 @@ _KBQ_METHOD = "ef-3.1:ionising-radiation-human-health"
 _M3_METHOD = "ef-3.1:water-use"
 _LAND_METHOD = "ef-3.1:land-use"
 
+#: An uncharacterised vocab row's context comes only from the ``bw-context`` crosswalk
+#: (``matching.bw_context.BW_CONTEXT_PATH``), and that crosswalk has no code at all for
+#: EF's ``Non-renewable energy resources from ground`` leaf or for any renewable-energy
+#: resource branch (its resource codes only ever reach the element/material leaves --
+#: ``reso-grou``'s own leaf is literally "...element resources...", see
+#: ``bw_context.py``). So a BAFU/EF resource flow that is actually an ENERGY resource by
+#: name (an ecoinvent-style "Energy, <form>, converted", a "Primary Energy ..." label,
+#: an oil-sand or pit-methane flow) can never land on the right branch through this
+#: crosswalk, no matter which code placed it -- it is always on the wrong (element or
+#: material) leaf. Such a row is marked ``context_uncertain`` unconditionally, not just
+#: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``.
+_UNCERTAIN_RESOURCE_NAME = re.compile(r"^(Energy|Primary Energy|Oil Sand|Pit Methane)\b", re.I)
+
 
 def normalise_cas(cas: str | None) -> str | None:
     """``007440-50-8`` -> ``7440-50-8``; blank -> None."""
@@ -108,7 +121,19 @@ class EfFlowIndex:
     or mutate any of these results without affecting the index.
     """
 
-    def __init__(self, flows: Iterable[EfFlow], vectors: dict[str, dict[str, float]]) -> None:
+    def __init__(
+        self,
+        flows: Iterable[EfFlow],
+        vectors: dict[str, dict[str, float]],
+        *,
+        includes_uncharacterised: bool = False,
+    ) -> None:
+        #: Mirrors the ``include_uncharacterised`` flag this index was built with (see
+        #: ``from_tables``) -- not whether any uncharacterised flow actually ended up
+        #: indexed, just what the index was asked to include. ``MatchPipeline`` reads
+        #: this to phrase a ``no_ef_flow`` detail honestly: "with a factor" only makes
+        #: sense to say when the search really was restricted to factor-bearing flows.
+        self.includes_uncharacterised = includes_uncharacterised
         self._flows: dict[str, EfFlow] = {}
         self._vectors: dict[str, dict[str, float]] = {code: dict(v) for code, v in vectors.items()}
         by_name: dict[tuple[str, str | None], list[EfFlow]] = {}
@@ -189,10 +214,18 @@ class EfFlowIndex:
                 path, uncertain = context_for(row.get("additional_notations") or [])
                 if path is None:
                     continue  # no EF leaf for this code, or no bw-context notation at all
+                name = (row.get("pref_label") or "").strip()
+                if bucket_of_ef_context(path) == "resource" and _UNCERTAIN_RESOURCE_NAME.match(
+                    name
+                ):
+                    # the crosswalk cannot reach an energy resource leaf at all (see
+                    # _UNCERTAIN_RESOURCE_NAME) -- this placement is wrong regardless
+                    # of which code produced it.
+                    uncertain = True
                 flows.append(
                     EfFlow(
                         code=code,
-                        name=(row.get("pref_label") or "").strip(),
+                        name=name,
                         context=tuple(p.strip() for p in path.split("/") if p.strip()),
                         synonyms=tuple(str(s) for s in (row.get("alt_labels") or [])),
                         cas=normalise_cas(row.get("cas_number")),
@@ -203,7 +236,11 @@ class EfFlowIndex:
         # a characterised flow only exists once it has a context; drop any vector
         # accumulated for a context-less CF row so it cannot outlive the flow it
         # would have belonged to
-        return cls(flows, {code: v for code, v in vectors.items() if code in contexts})
+        return cls(
+            flows,
+            {code: v for code, v in vectors.items() if code in contexts},
+            includes_uncharacterised=include_uncharacterised,
+        )
 
     @classmethod
     def from_files(

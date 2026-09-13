@@ -382,3 +382,63 @@ def test_characterised_row_keeps_cf_context_despite_a_conflicting_bw_notation(tm
     assert flow.context_uncertain is False
     assert flow.context_path == AIR_URBAN
     assert index.vector("dual-ctx") == {"ef-3.1:human-toxicity-cancer": 1.0}
+
+
+def test_includes_uncharacterised_flag_mirrors_the_build_argument(tmp_path):
+    cf, vocab = write_ef_inputs(tmp_path, CF, UNCHAR_VOCAB)
+    assert EfFlowIndex.from_files(cf, vocab).includes_uncharacterised is False
+    assert EfFlowIndex.from_files(cf, vocab, include_uncharacterised=True).includes_uncharacterised
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Energy, geothermal, converted",
+        "Energy, kinetic (in wind), converted",
+        "Energy, solar, converted",
+        "Energy, potential (in hydropower reservoir), converted",
+        "Energy, gross calorific value, in biomass, primary forest",
+        "Primary Energy From Geothermics",
+        "Oil Sand (10% Bitumen)",
+        "Pit Methane",
+        "energy, tidal, converted",  # case-insensitive
+    ],
+)
+def test_energy_shaped_resource_names_are_forced_uncertain_regardless_of_code(tmp_path, name):
+    # reso-wate is NOT in bw_context.AMBIGUOUS_CODES on its own -- an ordinary
+    # (non-energy) row placed via it stays context_uncertain=False (see the sibling
+    # negative-control test below). The crosswalk simply has no code that reaches EF's
+    # energy-resource leaves at all, so any of these names must come back uncertain
+    # even via this otherwise-unambiguous code.
+    vocab = [vocab_row("un-energy", name, bw="reso-wate")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+    flow = index.get("un-energy")
+    assert flow is not None
+    assert flow.bucket == "resource"
+    assert flow.context_uncertain is True
+
+
+def test_non_energy_resource_name_on_the_same_code_stays_certain(tmp_path):
+    vocab = [vocab_row("un-material", "Wood", bw="reso-wate")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+    flow = index.get("un-material")
+    assert flow is not None
+    assert flow.bucket == "resource"
+    assert flow.context_uncertain is False
+
+
+def test_energy_shaped_name_outside_the_resource_bucket_is_not_forced_uncertain(tmp_path):
+    # the override is scoped to the resource bucket only: an "Energy ..." name placed
+    # via an air bw-context code is left alone (envi-air-unkn is unambiguous already).
+    vocab = [vocab_row("un-energy-air", "Energy something", bw="envi-air-unkn")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+    flow = index.get("un-energy-air")
+    assert flow is not None
+    assert flow.bucket == "air"
+    assert flow.context_uncertain is False
