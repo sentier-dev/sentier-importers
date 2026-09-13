@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import pytest
 from sentier_importers.core.errors import ParseError
 from sentier_importers.matching.ef_index import EfFlowIndex
@@ -5,8 +8,10 @@ from sentier_importers.matching.matchers import (
     Alias,
     AliasMatcher,
     Candidate,
+    CarbonOxideMatcher,
     CasMatcher,
     ExactNameMatcher,
+    IonStripMatcher,
     LandUseMatcher,
     OreCompositeMatcher,
     QualifierMatcher,
@@ -30,6 +35,15 @@ from tests.matching.ef_fixtures import (
     vocab_row,
     write_ef_inputs,
 )
+
+#: Fallback guess only, never authoritative -- same layout assumption as
+#: test_bw_context.py's own real-data constants. Set ``SENTIER_METHODS_CF``/
+#: ``SENTIER_VOCAB_FLOWS`` to override.
+_CHECKOUTS_ROOT = Path(__file__).parents[3]
+_DEFAULT_CF = _CHECKOUTS_ROOT / "sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+_DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/data/elementary-flows"
+_REAL_CF = Path(os.environ.get("SENTIER_METHODS_CF", str(_DEFAULT_CF)))
+_REAL_VOCAB_DIR = Path(os.environ.get("SENTIER_VOCAB_FLOWS", str(_DEFAULT_VOCAB_DIR)))
 
 CF = [
     cf_row("co2-bio", "carbon dioxide (biogenic)", AIR_RURAL),
@@ -253,6 +267,43 @@ def test_shipped_alias_file_has_all_thirteen_entries_added_by_this_task():
         assert aliases[key] == alias
 
 
+def test_shipped_alias_file_has_the_seven_wood_and_water_entries_added_in_round_3():
+    # decision (f)(3), 2026-09-13: five standing-wood spellings onto EF's "Wood"
+    # resource flow (uncharacterised in EF 3.1, so these fire only on rank 8), plus
+    # two more "Water" spellings ("water, unspecified" yields no entry today -- no
+    # BAFU flow currently carries that exact name -- kept anyway, same as the
+    # pre-existing benzo(a)anthracene alias).
+    aliases = load_aliases()
+    expected = {
+        "wood, soft, standing": Alias(target="Wood"),
+        "wood, hard, standing": Alias(target="Wood"),
+        "wood, primary forest, standing": Alias(target="Wood"),
+        "wood, unspecified, standing/kg": Alias(target="Wood"),
+        "wood, unspecified, standing/m3": Alias(target="Wood"),
+        "water/m3": Alias(target="Water"),
+        "water, unspecified": Alias(target="Water"),
+    }
+    assert len(expected) == 7
+    for key, alias in expected.items():
+        assert aliases[key] == alias
+
+
+@pytest.mark.skipif(
+    not (_REAL_CF.exists() and _REAL_VOCAB_DIR.exists()),
+    reason="real EF inputs not available",
+)
+def test_round_3_alias_targets_exist_in_the_inclusive_index():
+    # "Wood" and "Water" (the only two distinct targets among the seven new round-3
+    # aliases) must both actually resolve in the inclusive (include_uncharacterised)
+    # index, in whichever bucket their BAFU names place in -- "Wood" and "water/m3"
+    # are uncharacterised (rank 8 only); "water, unspecified" targets the same
+    # characterised resource "Water" flow the pre-existing water aliases already use.
+    index = EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
+    assert index.by_name("Wood", "resource")
+    assert index.by_name("Water", "resource")
+    assert index.by_name("Water", "air")
+
+
 def test_load_aliases_raises_on_missing_aliases_key(tmp_path):
     path = tmp_path / "aliases.yaml"
     path.write_text("not_aliases: {}\n", encoding="utf-8")
@@ -294,7 +345,7 @@ def test_load_aliases_raises_on_unknown_mapping_key(tmp_path):
 def test_load_aliases_happy_path_with_string_and_mapping_values(tmp_path):
     path = tmp_path / "aliases.yaml"
     path.write_text(
-        "aliases:\n" "  Foo: Bar\n" "  Baz:\n" "    target: Qux\n" "    caveat: some caveat\n",
+        "aliases:\n  Foo: Bar\n  Baz:\n    target: Qux\n    caveat: some caveat\n",
         encoding="utf-8",
     )
     aliases = load_aliases(path)
@@ -676,3 +727,192 @@ def test_ore_composite_matcher_restricts_to_the_element_resources_leaf(tmp_path_
     flow = _ground_resource("Zinc, Zn 0.63%, Au 9.7E-4%, Ag 9.7E-4%, Cu 0.38%, Pb 0.014%, in ore")
     got = OreCompositeMatcher().candidates(flow, None, idx)
     assert [c.flow.code for c in got] == ["zinc-element"]
+
+
+# --- IonStripMatcher ---------------------------------------------------------------
+
+ION_CF = [
+    cf_row("arsenic", "arsenic", WATER_FRESH, value=1.0),
+    cf_row("calcium", "calcium", WATER_FRESH, value=1.0),
+    cf_row("copper", "copper", WATER_FRESH, value=1.0),
+    cf_row("perchlorate", "perchlorate", WATER_FRESH, value=1.0),
+    cf_row("cr6", "chromium(6+)", WATER_FRESH, value=50.0),
+]
+ION_VOCAB = [
+    vocab_row("arsenic", "Arsenic"),
+    vocab_row("calcium", "Calcium"),
+    vocab_row("copper", "Copper"),
+    vocab_row("perchlorate", "Perchlorate"),
+    vocab_row("cr6", "Chromium(6+)", alt=["Chromium VI"], cas="18540-29-9"),
+]
+
+
+@pytest.fixture(scope="module")
+def ion_index(tmp_path_factory):
+    """A tiny EF index of bare-element/anion water flows for IonStripMatcher."""
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("ion"), ION_CF, ION_VOCAB)
+    )
+
+
+def _water(name, sub="river", unit="kg"):
+    return BafuFlow(name, "emissions to water", sub, unit)
+
+
+def test_ion_strip_matcher_tier():
+    assert IonStripMatcher.tier == "ion"
+
+
+@pytest.mark.parametrize(
+    "name,code",
+    [
+        ("Arsenic, ion", "arsenic"),
+        ("Calcium II", "calcium"),
+        ("Copper ion", "copper"),
+        ("Perchlorate, ion", "perchlorate"),
+    ],
+)
+def test_ion_strip_matcher_strips_the_marker_and_matches_the_bare_stem(ion_index, name, code):
+    got = IonStripMatcher().candidates(_water(name), None, ion_index)
+    assert [c.flow.code for c in got] == [code]
+    assert got[0].tier == "ion"
+    assert got[0].caveat == (
+        "ion-form source name mapped onto the EF element flow (decision 2026-09-13)"
+    )
+
+
+def test_ion_strip_matcher_yields_nothing_for_a_name_with_no_marker(ion_index):
+    assert IonStripMatcher().candidates(_water("Copper"), None, ion_index) == []
+
+
+def test_ion_strip_matcher_yields_nothing_when_ef_has_no_matching_stem(ion_index):
+    assert IonStripMatcher().candidates(_water("Silver, ion"), None, ion_index) == []
+
+
+def test_ion_strip_matcher_defers_when_the_source_cas_names_a_species_specific_flow(ion_index):
+    # "Chromium VI" strips to "Chromium" just like any other ion-shaped name, but its
+    # CAS (18540-29-9, shared with EF's own "Chromium(6+)") already names a
+    # species-shaped EF flow in this bucket -- IonStripMatcher must defer (``[]``)
+    # rather than collapse onto plain "Chromium" and steal the better match away from
+    # CasMatcher, which runs later in the pipeline. This is the real BAFU-2026 shape:
+    # "Chromium VI" carries no synonym of its own onto "Chromium(6+)" in sentier-vocab,
+    # only a shared CAS.
+    got = IonStripMatcher().candidates(_water("Chromium VI"), "18540-29-9", ion_index)
+    assert got == []
+
+
+def test_ion_strip_matcher_does_not_defer_without_a_species_specific_cas_match(ion_index):
+    # "Copper ion"'s CAS (7440-50-8) names only the bare "Copper" flow (no species
+    # marker) -- nothing to defer to, so the collapse still happens.
+    got = IonStripMatcher().candidates(_water("Copper ion"), "7440-50-8", ion_index)
+    assert [c.flow.code for c in got] == ["copper"]
+
+
+#: The real BAFU-2026 shape: "Chromium VI" carries no synonym of its own in
+#: sentier-vocab onto "Chromium(6+)" -- only a shared CAS. A separate index (no
+#: ``alt=["Chromium VI"]``) so this scenario is not accidentally rescued by the
+#: synonym tier instead of the CAS-aware defer under test.
+_CR_CAS_ONLY_CF = [
+    cf_row("chromium", "chromium", WATER_FRESH, value=1.0),
+    cf_row("cr6-cas-only", "chromium(6+)", WATER_FRESH, value=50.0),
+]
+_CR_CAS_ONLY_VOCAB = [
+    vocab_row("chromium", "Chromium", cas="7440-47-3"),
+    vocab_row("cr6-cas-only", "Chromium(6+)", cas="18540-29-9"),
+]
+
+
+@pytest.fixture(scope="module")
+def cr_cas_only_index(tmp_path_factory):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(
+            tmp_path_factory.mktemp("cr-cas-only"), _CR_CAS_ONLY_CF, _CR_CAS_ONLY_VOCAB
+        )
+    )
+
+
+def test_chromium_vi_resolves_via_cas_not_ion_strip(cr_cas_only_index):
+    # decision (d)'s own worked example: at the full-pipeline level, "Chromium VI"
+    # (no exact/synonym route, only a shared CAS) must still resolve onto EF's
+    # species-specific "Chromium(6+)" via CasMatcher, not collapse onto plain
+    # "Chromium" via IonStripMatcher -- the CAS-aware defer above is what keeps this
+    # true now that ion-strip runs ahead of CasMatcher in tier order.
+    pipeline = default_pipeline(cr_cas_only_index, {})
+    got = pipeline.match(_water("Chromium VI"), "18540-29-9")
+    assert got.code == "cr6-cas-only" and got.tier == "cas"
+
+
+def test_chromium_vi_resolves_via_synonym_before_ion_strip_ever_runs(ion_index):
+    # when EF *does* carry "Chromium VI" as a synonym of a species-specific flow
+    # (unlike the real BAFU-2026 shape, tested above via CAS), the earlier
+    # SynonymMatcher tier wins even before CasMatcher, let alone ion-strip.
+    pipeline = default_pipeline(ion_index, {})
+    got = pipeline.match(_water("Chromium VI"), None)
+    assert got.code == "cr6" and got.tier == "synonym"
+
+
+# --- CarbonOxideMatcher --------------------------------------------------------------
+
+CO_CF = [
+    cf_row("co2-fos-air", "carbon dioxide (fossil)", AIR_UNSPEC, value=1.0),
+    cf_row("co-fos-air", "carbon monoxide (fossil)", AIR_UNSPEC, value=1.0),
+    cf_row("co2-bio-res", "carbon dioxide (biogenic)", RES_WATER, value=1.0),
+]
+CO_VOCAB = [
+    vocab_row("co2-fos-air", "Carbon dioxide (fossil)", cas="124-38-9"),
+    vocab_row("co-fos-air", "Carbon monoxide (fossil)", cas="630-08-0"),
+    vocab_row("co2-bio-res", "carbon dioxide (biogenic)", cas="124-38-9"),
+]
+
+
+@pytest.fixture(scope="module")
+def co_index(tmp_path_factory):
+    """A tiny EF index of qualified carbon-oxide flows for CarbonOxideMatcher."""
+    return EfFlowIndex.from_files(*write_ef_inputs(tmp_path_factory.mktemp("co"), CO_CF, CO_VOCAB))
+
+
+def test_carbon_oxide_matcher_tier():
+    assert CarbonOxideMatcher.tier == "carbon-oxide"
+
+
+def test_carbon_oxide_matcher_rewrites_bare_carbon_dioxide_emission_to_fossil(co_index):
+    flow = BafuFlow("Carbon dioxide", "emissions to air", "unspecified", "kg")
+    got = CarbonOxideMatcher().candidates(flow, None, co_index)
+    assert [c.flow.code for c in got] == ["co2-fos-air"]
+    assert got[0].caveat == "unqualified carbon oxide taken as fossil (decision 2026-09-13)"
+
+
+def test_carbon_oxide_matcher_rewrites_bare_carbon_monoxide_emission_to_fossil(co_index):
+    flow = BafuFlow("Carbon monoxide", "emissions to air", "high. pop.", "kg")
+    got = CarbonOxideMatcher().candidates(flow, None, co_index)
+    assert [c.flow.code for c in got] == ["co-fos-air"]
+    assert got[0].caveat == "unqualified carbon oxide taken as fossil (decision 2026-09-13)"
+
+
+def test_carbon_oxide_matcher_rewrites_co2_uptake_resource_flow_to_biogenic(co_index):
+    flow = BafuFlow("Carbon dioxide, in air", "resources", "unspecified", "kg")
+    got = CarbonOxideMatcher().candidates(flow, None, co_index)
+    assert [c.flow.code for c in got] == ["co2-bio-res"]
+    assert got[0].caveat == "CO2 uptake from air taken as biogenic (decision 2026-09-13)"
+
+
+def test_carbon_oxide_matcher_ignores_a_bare_carbon_dioxide_outside_the_air_bucket(co_index):
+    # a bare "Carbon dioxide" emission is only ever taken as fossil in the air bucket
+    # (decision (e)); the same bare name to water or soil must not be rewritten here.
+    flow = BafuFlow("Carbon dioxide", "emissions to water", "river", "kg")
+    assert CarbonOxideMatcher().candidates(flow, None, co_index) == []
+
+
+def test_carbon_oxide_matcher_ignores_an_already_qualified_name(co_index):
+    flow = BafuFlow("Carbon dioxide, fossil", "emissions to air", "unspecified", "kg")
+    assert CarbonOxideMatcher().candidates(flow, None, co_index) == []
+
+
+def test_carbon_oxide_matcher_ignores_co2_uptake_outside_the_resource_bucket(co_index):
+    flow = BafuFlow("Carbon dioxide, in air", "emissions to air", "unspecified", "kg")
+    assert CarbonOxideMatcher().candidates(flow, None, co_index) == []
+
+
+def test_carbon_oxide_matcher_ignores_unrelated_names(co_index):
+    flow = BafuFlow("Carbon tetrachloride", "emissions to air", "unspecified", "kg")
+    assert CarbonOxideMatcher().candidates(flow, None, co_index) == []

@@ -80,3 +80,15 @@ aliases:
   bod5, biological oxygen demand: Biological Oxygen Demand
   cod, chemical oxygen demand: Chemical Oxygen Demand
   toc, total organic carbon: Total Organic Carbon
+  # decision (f)(3), 2026-09-13: standing wood ("Wood" carries no EF 3.1 factor, so
+  # every wood alias fires only on rank 8) and two more water spellings onto EF's
+  # "Water" ("water/m3" is an air-bucket emission onto the uncharacterised air "Water"
+  # flow, rank 8 too). "Water, unspecified" yields no entry today -- no BAFU flow
+  # currently carries that exact name -- kept anyway, same as benzo(a)anthracene above.
+  wood, soft, standing: Wood
+  wood, hard, standing: Wood
+  wood, primary forest, standing: Wood
+  wood, unspecified, standing/kg: Wood
+  wood, unspecified, standing/m3: Wood
+  water/m3: Water
+  water, unspecified: Water

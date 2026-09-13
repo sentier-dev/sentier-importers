@@ -300,13 +300,14 @@ def test_natural_gas_volume_converts_via_energy_content_onto_the_fossil_resource
     assert GAS in {r["source"]["code"] for r in rows}
 
 
-def test_gas_mine_off_gas_volume_onto_the_fossil_resource_flow_is_withheld_as_unit_mismatch(
+def test_gas_mine_off_gas_volume_converts_via_the_approximated_energy_content(
     tmp_path,
 ):
-    # "Gas, mine, off-gas, process, coal mining/m3" (unit Nm3) also candidates onto
-    # "Natural gas", but the energy-content table is keyed on the exact BAFU (name,
-    # unit) pair -- this name is not "Gas, natural/m3", so no factor applies and the
-    # cross-dimension (volume -> energy) conversion is withheld as before.
+    # decision (g), 2026-09-13: "Gas, mine, off-gas, process, coal mining/m3" (unit
+    # Nm3) candidates onto "Natural gas" (as the real BAFU inventory's shared CAS
+    # 8006-14-2 also does); the energy-content table now carries a dedicated key for
+    # this exact (name, unit) pair (38.3 MJ/Nm3, the natural-gas value), so it
+    # converts instead of being withheld, and the caveat discloses the approximation.
     cf = CF + [
         cf_row(
             "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
@@ -327,10 +328,15 @@ def test_gas_mine_off_gas_volume_onto_the_fossil_resource_flow_is_withheld_as_un
     outcomes = dict(source.outcomes(records))
     flow = next(f for f in outcomes if f.code == MINE_GAS)
     outcome = outcomes[flow]
-    assert isinstance(outcome, Unmatched) and outcome.reason == "unit_mismatch"
-    assert "Nm3" in outcome.detail and "megajoule" in outcome.detail
+    assert isinstance(outcome, Match)
+    entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
+    assert entry["conversion_factor"] == 38.3
+    assert "38.3 MJ/Nm3" in entry["comment"]
+    assert (
+        "coal-mine off-gas approximated as natural gas (decision 2026-09-13)" in entry["comment"]
+    )
     rows = source.transform(records)
-    assert MINE_GAS not in {r["source"]["code"] for r in rows}
+    assert MINE_GAS in {r["source"]["code"] for r in rows}
 
 
 def test_uncharacterised_ef_flow_is_never_used_by_the_default_matched_source(tmp_path):
@@ -638,17 +644,23 @@ def test_decide_refines_unmatched_outcomes():
         ).reason
         == "speciation"
     )
+    # decision (e), 2026-09-13 removes the ``qualifier_missing`` refinement entirely:
+    # ``matching.matchers.CarbonOxideMatcher`` now resolves a bare carbon oxide before
+    # the pipeline could ever return a plain "no_ef_flow" for one (see
+    # mappings_biosphere_matched.py's ``_refine_unmatched`` docstring), so a synthetic
+    # ``no_ef_flow`` input for one of these names -- as this test constructs directly,
+    # bypassing the pipeline -- is simply left alone.
     assert (
         _decide(
             BafuFlow("Carbon dioxide", "emissions to air", "unspecified", "kg"), none, _EMPTY_INDEX
         ).reason
-        == "qualifier_missing"
+        == "no_ef_flow"
     )
     assert (
         _decide(
             BafuFlow("Carbon monoxide", "emissions to air", "high. pop.", "kg"), none, _EMPTY_INDEX
         ).reason
-        == "qualifier_missing"
+        == "no_ef_flow"
     )
     assert (
         _decide(
@@ -713,25 +725,32 @@ def test_water_fossil_no_longer_non_freshwater_resolves_via_alias_instead(tmp_pa
     )
 
 
-def test_decide_withholds_a_cas_match_for_an_ion_name_onto_a_bare_element():
-    # "Copper ion" matched by CAS onto plain "Copper": EF carries no per-species
-    # factor for copper ions, so the CAS match must be withheld, not silently emitted.
+def test_decide_no_longer_withholds_an_ion_shaped_match():
+    # decision (d), 2026-09-13 drops the speciation guard entirely on the Match side:
+    # even a hand-built Match onto a bare element for an ion-shaped BAFU name (as a
+    # pre-decision-(d) CAS match would have been) now passes through _decide
+    # untouched -- the withholding logic that used to live here is gone; the real
+    # emission path is matching.matchers.IonStripMatcher (see test_matchers.py /
+    # test_pipeline.py), not this fallback.
     cf = [cf_row("cu", "copper", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=1.0)]
     vocab = [vocab_row("cu", "Copper", cas="7440-50-8")]
     index = EfFlowIndex.from_tables(cf, vocab)
-    pipeline = default_pipeline(index, {})
-    flow = BafuFlow("Copper ion", "emissions to air", "unspecified", "kg")
-    match = pipeline.match(flow, "7440-50-8")
-    assert isinstance(match, Match) and match.tier == "cas"  # sanity: the pipeline itself matches
-    outcome = _decide(flow, match, index)
-    assert outcome == Unmatched(
-        "speciation", "'Copper ion' names an ion or oxidation state; EF target 'Copper' does not"
+    match = Match(
+        code="cu", tier="cas", placement="exact", location=None, candidates=1, caveats=()
     )
+    outcome = _decide(
+        BafuFlow("Copper ion", "emissions to air", "unspecified", "kg"), match, index
+    )
+    assert outcome is match
 
 
-def test_decide_keeps_a_match_onto_an_ef_target_that_itself_names_the_species():
-    # "Chromium VI" matched by synonym onto "Chromium(6+)": the EF target name itself
-    # carries the oxidation state, so this is the right species, not a collapse.
+def test_chromium_vi_pipeline_match_lands_on_the_species_specific_target():
+    # pipeline-level (not a _decide round-trip -- _decide is a no-op for any Match now
+    # that decision (d) dropped the speciation guard, see
+    # test_decide_no_longer_withholds_an_ion_shaped_match above; the real-data,
+    # CAS-only shape of this scenario is covered directly in test_matchers.py):
+    # "Chromium VI" matched by synonym onto "Chromium(6+)", whose EF target name
+    # itself carries the oxidation state, is the right species, not a collapse.
     cf = [
         cf_row("cr6", "chromium vi", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=1.0)
     ]
@@ -740,24 +759,20 @@ def test_decide_keeps_a_match_onto_an_ef_target_that_itself_names_the_species():
     pipeline = default_pipeline(index, {})
     flow = BafuFlow("Chromium VI", "emissions to air", "unspecified", "kg")
     match = pipeline.match(flow, None)
-    assert isinstance(match, Match) and match.tier == "synonym"  # sanity: not a curated tier
-    outcome = _decide(flow, match, index)
-    assert outcome == match
+    assert isinstance(match, Match) and match.code == "cr6" and match.tier == "synonym"
 
 
-def test_decide_keeps_a_curated_alias_match_for_an_ion_shaped_name():
-    # "Ammonium, ion" -> "Ammonium" via a curated alias: a human already checked this
-    # exact pairing, so the speciation guard defers to it even though EF's own
-    # "Ammonium" label carries no species marker of its own.
+def test_ammonium_plus_pipeline_match_lands_on_the_curated_alias_target():
+    # pipeline-level: "Ammonium+" -> "Ammonium" via a curated alias -- a trailing "+"
+    # is not one of IonStripMatcher's own markers (comma/bare "ion", or a roman
+    # numeral II-VI), so only the curated alias resolves it.
     cf = [cf_row("nh4", "ammonium", WATER_FRESH, method="ef-3.1:eutrophication-marine", value=1.0)]
     vocab = [vocab_row("nh4", "Ammonium", cas="14798-03-9")]
     index = EfFlowIndex.from_tables(cf, vocab)
-    pipeline = default_pipeline(index, {"ammonium, ion": "Ammonium"})
-    flow = BafuFlow("Ammonium, ion", "emissions to water", "river", "kg")
+    pipeline = default_pipeline(index, {"ammonium+": "Ammonium"})
+    flow = BafuFlow("Ammonium+", "emissions to water", "river", "kg")
     match = pipeline.match(flow, None)
-    assert isinstance(match, Match) and match.tier == "alias"  # sanity: curated tier
-    outcome = _decide(flow, match, index)
-    assert outcome == match
+    assert isinstance(match, Match) and match.code == "nh4" and match.tier == "alias"
 
 
 def test_entry_for_raises_when_no_fixed_conversion_exists(tmp_path):

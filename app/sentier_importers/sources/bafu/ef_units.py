@@ -50,7 +50,11 @@ _SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoul
 #: ecoinvent v2 net calorific values, MJ per BAFU unit, keyed by (BAFU name, BAFU unit) so a
 #: conversion is never applied by accident. These are the resource-flow definitions the
 #: BAFU-2026 inventory is built from. Decision 2026-09-13. `Gas, natural/m3` exists in
-#: both m3 and Nm3 in BAFU; both are treated as normal cubic metres.
+#: both m3 and Nm3 in BAFU; both are treated as normal cubic metres. Decision (g),
+#: 2026-09-13: coal-mine off-gas (which the pipeline itself matches onto EF's "Natural
+#: Gas" resource flow, by CAS -- both share CAS 8006-14-2) is approximated at the same
+#: 38.3 MJ/m3 natural-gas value, in both its m3 and Nm3 variants; see
+#: ``ENERGY_CONTENT_NOTES`` for the extra caveat text these two keys carry.
 ENERGY_CONTENT: dict[tuple[str, str], float] = {
     ("Coal, hard", "kg"): 19.1,
     ("Coal, brown", "kg"): 9.9,
@@ -59,6 +63,22 @@ ENERGY_CONTENT: dict[tuple[str, str], float] = {
     ("Uranium", "kg"): 560_000.0,
     ("Gas, natural/m3", "m3"): 38.3,
     ("Gas, natural/m3", "Nm3"): 38.3,
+    ("Gas, mine, off-gas, process, coal mining/m3", "m3"): 38.3,
+    ("Gas, mine, off-gas, process, coal mining/m3", "Nm3"): 38.3,
+}
+
+#: Extra caveat text appended (after "; ") to the energy-content caveat for specific
+#: ``ENERGY_CONTENT`` keys, when the NCV factor alone would not disclose an assumption
+#: baked into the key itself. Decision (g), 2026-09-13: the two coal-mine off-gas keys
+#: are not natural-gas extraction at all -- the factor is a deliberate approximation,
+#: and every entry using it must say so. A key absent here carries no extra text.
+ENERGY_CONTENT_NOTES: dict[tuple[str, str], str] = {
+    ("Gas, mine, off-gas, process, coal mining/m3", "m3"): (
+        "coal-mine off-gas approximated as natural gas (decision 2026-09-13)"
+    ),
+    ("Gas, mine, off-gas, process, coal mining/m3", "Nm3"): (
+        "coal-mine off-gas approximated as natural gas (decision 2026-09-13)"
+    ),
 }
 
 #: BAFU unit -> EF spelling of the exact same physical scale, used only for an
@@ -142,6 +162,10 @@ def conversion_for(
     share the same EF target; then the water density special case (depends on the
     target's characterisation method, so it cannot live in the generic, method-blind
     ``unit_conversion`` table); then the generic, unit-string-only fallback.
+
+    A key also present in ``ENERGY_CONTENT_NOTES`` (decision (g), 2026-09-13: the two
+    coal-mine off-gas keys) has that extra text appended to the caveat, disclosing an
+    assumption the factor alone would not.
     """
     if index.reference_unit(match.code) == "megajoule":
         energy = ENERGY_CONTENT.get((flow.name, flow.unit))
@@ -150,6 +174,9 @@ def conversion_for(
                 f"energy content {energy:g} MJ/{flow.unit} (net calorific value convention "
                 "of the BAFU-2026 source inventory)"
             )
+            note = ENERGY_CONTENT_NOTES.get((flow.name, flow.unit))
+            if note:
+                caveat = f"{caveat}; {note}"
             return energy, caveat
     if flow.unit == "kg" and set(index.vector(match.code)) == {WATER_USE_METHOD}:
         # water is the only substance with a fixed mass -> volume factor (density);

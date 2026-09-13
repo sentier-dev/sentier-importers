@@ -64,6 +64,28 @@ _ORE_RE = re.compile(
 #: name always names a non-renewable element resource extracted from the ground.
 _ORE_LEAF = "non-renewable element resources from ground"
 
+#: An ion/oxidation-state marker BAFU trails an element or anion name with: a comma or
+#: bare ``ion`` (``Arsenic, ion`` / ``Copper ion``), or a trailing roman numeral II-VI
+#: (``Calcium II``). Roman numerals are matched case-sensitively (BAFU's own spelling
+#: is always upper-case here) -- unlike ``_QUALIFIER_RE``, this pattern carries no
+#: ``re.IGNORECASE`` flag. ``IonStripMatcher`` strips the marker and looks the bare
+#: stem up directly; decision (d), 2026-09-13.
+_ION_STRIP_RE = re.compile(r"^(?P<stem>.+?)(,\s?ion|\sion|\s(II|III|IV|V|VI))$")
+
+#: Species markers EF itself uses in an *EF* flow name (a bracketed roman numeral
+#: oxidation state, a bracketed charge like ``(6+)``/``(2+)``/``(2-)``, or the bare
+#: word ``ion``): ``IonStripMatcher`` defers to a same-CAS EF flow shaped like this
+#: instead of collapsing onto the bare element -- see its own docstring.
+_EF_SPECIES_RE = re.compile(r"\((?:i{1,3}|iv|v|vi)\)|\(\d[+-]\)|\bion\b", re.IGNORECASE)
+
+#: The two BAFU carbon-oxide names EF characterises only with a qualifier.
+#: ``CarbonOxideMatcher`` rewrites a bare occurrence of either onto an EF qualified
+#: spelling; decision (e), 2026-09-13.
+_CARBON_OXIDES = ("Carbon dioxide", "Carbon monoxide")
+#: BAFU's own name for atmospheric CO2 uptake (a resource-bucket flow, not an
+#: emission) -- taken as biogenic uptake; decision (e), 2026-09-13.
+_CO2_UPTAKE = "Carbon dioxide, in air"
+
 
 def _normalise_land_class(raw: str) -> str:
     segments = [seg.strip() for seg in raw.strip().lower().split(",")]
@@ -186,6 +208,72 @@ class QualifierMatcher:
         qualifier = match.group("q").lower()
         qualifier = _QUALIFIER_EF.get(qualifier, qualifier)
         return _lookup(index.by_name(f"{stem} ({qualifier})", _bucket(flow)), self.tier)
+
+
+class CarbonOxideMatcher:
+    """Rewrites a bare, unqualified BAFU carbon oxide onto an EF qualified spelling.
+
+    EF characterises ``Carbon dioxide``/``Carbon monoxide`` only with a qualifier
+    (fossil/biogenic/land use change); a bare name never matches on its own. Decision
+    (e), 2026-09-13: a bare emission (``Carbon dioxide``/``Carbon monoxide`` in the
+    air bucket) is taken as fossil; BAFU's own ``Carbon dioxide, in air`` (a resource
+    bucket flow, atmospheric CO2 uptake, not an emission) is taken as biogenic. Both
+    rewrites carry a caveat naming the decision, so the assumption is never silent.
+    """
+
+    tier = "carbon-oxide"
+
+    def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
+        """Return the EF qualified-spelling flows a bare carbon-oxide name rewrites to."""
+        name = flow.name.strip()
+        bucket = _bucket(flow)
+        if bucket == "air" and name in _CARBON_OXIDES:
+            target = f"{name} (fossil)"
+            caveat = "unqualified carbon oxide taken as fossil (decision 2026-09-13)"
+        elif bucket == "resource" and name == _CO2_UPTAKE:
+            target = "carbon dioxide (biogenic)"
+            caveat = "CO2 uptake from air taken as biogenic (decision 2026-09-13)"
+        else:
+            return []
+        found = _lookup(index.by_name(target, bucket), self.tier)
+        return [replace(c, caveat=caveat) for c in found]
+
+
+class IonStripMatcher:
+    """Strips an ion/oxidation-state marker from a BAFU name and matches the bare stem.
+
+    Decision (d), 2026-09-13: an ion-shaped BAFU name (``_ION_STRIP_RE``) whose EF
+    counterpart is the plain element/anion flow is emitted, not withheld -- a human
+    reviewing the result can see the caveat this matcher attaches to every candidate
+    it returns. A name with no ion/oxidation-state marker never matches (``[]``); a
+    marker whose stem EF does not carry at all is left to a later tier (this matcher
+    only ever collapses onto a same-bucket, same-name EF flow, never invents one).
+
+    One escape, checked before collapsing: when the source carries a CAS number that
+    itself names a species-shaped EF flow in this bucket (``_EF_SPECIES_RE``, e.g.
+    ``Chromium(6+)``) -- this matcher defers (``[]``) rather than steal that better,
+    species-correct match away from ``CasMatcher``, which runs later. Without this
+    escape, ``Chromium VI`` (CAS 18540-29-9, no exact/synonym route of its own) would
+    collapse onto plain ``Chromium`` here instead of resolving onto EF's own
+    ``Chromium(6+)`` flow via CAS -- a real species, silently swapped for a wrong one.
+    """
+
+    tier = "ion"
+
+    def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
+        """Return the bare-stem EF flow(s) an ion/oxidation-state-shaped name strips to."""
+        match = _ION_STRIP_RE.match(flow.name.strip())
+        if match is None:
+            return []
+        bucket = _bucket(flow)
+        if cas is not None and any(
+            _EF_SPECIES_RE.search(f.name) for f in index.by_cas(cas, bucket)
+        ):
+            return []
+        stem = match.group("stem")
+        found = _lookup(index.by_name(stem, bucket), self.tier)
+        caveat = "ion-form source name mapped onto the EF element flow (decision 2026-09-13)"
+        return [replace(c, caveat=caveat) for c in found]
 
 
 class LandUseMatcher:
@@ -349,10 +437,15 @@ class RegionStripMatcher:
     ``"region/<inner tier>"``. No token, no match: ``[]``.
 
     ``inner`` must be name-keyed matchers only (``ExactNameMatcher``, ``LandUseMatcher``,
-    ``SynonymMatcher``, ``QualifierMatcher``, ``AliasMatcher``): a ``CasMatcher`` inside
-    would ignore the stripped stem and match on ``cas`` again, defeating the point of
-    stripping. ``LandUseMatcher`` is still name-keyed despite its own internal class
-    lookup -- it only ever reads ``flow.name``, never ``cas``.
+    ``SynonymMatcher``, ``QualifierMatcher``, ``CarbonOxideMatcher``, ``IonStripMatcher``,
+    ``AliasMatcher``): a ``CasMatcher`` inside would ignore the stripped stem and match
+    on ``cas`` again, defeating the point of stripping. The actual rule is narrower than
+    "never reads ``cas``": ``IonStripMatcher`` DOES read ``cas``, but only as a defer
+    guard (to check whether a same-CAS EF flow already carries its own species marker,
+    see its docstring) -- it never KEYS its lookup on ``cas`` the way ``CasMatcher``
+    does, so stripping the region token first still matters for it. ``LandUseMatcher``
+    remains name-keyed in the strict sense despite its own internal class lookup -- it
+    only ever reads ``flow.name``.
     """
 
     tier = "region"
