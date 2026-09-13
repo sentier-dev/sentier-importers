@@ -45,3 +45,15 @@ def fetch(url: str, ctx: RunContext) -> RawData:
     ctx.cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(content)
     return RawData(content=content, source_url=url)
+
+
+def local_path(url: str | None, name: str) -> Path:
+    """Filesystem ``Path`` for a ``file://`` input that must be read directly from
+    disk (e.g. a directory) rather than through the content-addressed cache above.
+
+    ``name`` identifies the input in the error message. Raises ``FetchError`` when
+    ``url`` is ``None``, blank, or not a ``file://`` URL.
+    """
+    if not url or not url.startswith("file://"):
+        raise FetchError(f"{name} must be a local file:// path, got {url!r}")
+    return Path(url[len("file://") :])

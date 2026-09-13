@@ -1,5 +1,6 @@
 """biosphere3 code -> EF 3.1 flow via characterization-factor vector identity."""
 
+import pytest
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 from sentier_importers.sources.eaternity.cf_identity import (
     CfVectors,
@@ -179,3 +180,87 @@ def test_superset_candidates_adding_different_methods_are_withheld():
         BafuFlow("Lead", "emissions to air", "high. pop.", "kg"),
     )
     assert got.reason == "superset_candidates_disagree"
+
+
+_SUB_MATCH_LABELS = EfLabels.from_rows(
+    [
+        {
+            "flow": "ef-agri",
+            "flow_name": "iron",
+            "flow_context": "Emissions / Emissions to soil / Emissions to agricultural soil",
+        },
+        {
+            "flow": "ef-non",
+            "flow_name": "iron",
+            "flow_context": ("Emissions / Emissions to soil / Emissions to non-agricultural soil"),
+        },
+        {
+            "flow": "ef-ground",
+            "flow_name": "iron",
+            "flow_context": (
+                "Resources / Resources from ground / "
+                "Non-renewable element resources from ground"
+            ),
+        },
+        {
+            "flow": "ef-land-occupation",
+            "flow_name": "occupation, arable land",
+            "flow_context": "Resources / Land use / Land occupation",
+        },
+        {
+            "flow": "ef-land-transformation",
+            "flow_name": "transformation, to arable land",
+            "flow_context": "Resources / Land use / Land transformation",
+        },
+        {
+            "flow": "ef-groundwater-long-term",
+            "flow_name": "arsenic",
+            "flow_context": (
+                "Emissions / Emissions to water / Emissions to ground water, long-term"
+            ),
+        },
+        {
+            "flow": "ef-air-unspecified-long-term",
+            "flow_name": "particulates",
+            "flow_context": (
+                "Emissions / Emissions to air / Emissions to air, unspecified (long-term)"
+            ),
+        },
+        {
+            "flow": "ef-air-unspecified",
+            "flow_name": "particulates",
+            "flow_context": "Emissions / Emissions to air / Emissions to air, unspecified",
+        },
+        {
+            "flow": "ef-air-rural",
+            "flow_name": "iron",
+            "flow_context": AIR_RURAL,
+        },
+    ]
+)
+
+_SUB_MATCH_CASES = [
+    # the original substring bug: "agricultural" must not match the "non-agricultural"
+    # leaf just because it is a substring of it.
+    ("ef-agri", "agricultural", True),
+    ("ef-non", "agricultural", False),
+    ("ef-non", "industrial", True),
+    ("ef-ground", "in ground", True),
+    # the "land" token accepts either EF land leaf (a tuple of accepted tails), and must
+    # not bleed into the unrelated "in ground" resource token.
+    ("ef-land-occupation", "land", True),
+    ("ef-land-transformation", "land", True),
+    ("ef-land-occupation", "in ground", False),
+    # long-term is part of the leaf tail, so it must match exactly, not by substring.
+    ("ef-groundwater-long-term", "groundwater", False),
+    ("ef-groundwater-long-term", "groundwater, long-term", True),
+    ("ef-air-unspecified-long-term", "unspecified", False),
+    ("ef-air-unspecified", "unspecified", True),
+    ("ef-ground", "in water", False),
+    ("ef-air-rural", "high. pop.", False),
+]
+
+
+@pytest.mark.parametrize("code, bafu_subcategory, expected", _SUB_MATCH_CASES)
+def test_sub_matches(code, bafu_subcategory, expected):
+    assert _SUB_MATCH_LABELS.sub_matches(code, bafu_subcategory) is expected

@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 import pytest
 from sentier_importers.core import fetch as fetch_mod
@@ -71,6 +72,17 @@ def test_http_fetch_uses_httpx(tmp_path, monkeypatch):
     assert raw.content == b"net-bytes"
     key = hashlib.sha256(b"https://example.com/data").hexdigest()
     assert (ctx.cache_dir / key).read_bytes() == b"net-bytes"
+
+
+def test_local_path_returns_the_filesystem_path_for_a_file_url():
+    assert fetch_mod.local_path("file:///a/b/c", "ef_vocab") == Path("/a/b/c")
+
+
+def test_local_path_raises_fetch_error_for_a_non_local_or_missing_url():
+    with pytest.raises(FetchError, match="ef_vocab must be a local file"):
+        fetch_mod.local_path("https://example.com/x", "ef_vocab")
+    with pytest.raises(FetchError, match="ef_vocab must be a local file"):
+        fetch_mod.local_path(None, "ef_vocab")
 
 
 def test_offline_hit_succeeds(tmp_path):

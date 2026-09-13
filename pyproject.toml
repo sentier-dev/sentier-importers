@@ -63,13 +63,13 @@ include-package-data = true
 where = ["app"]
 
 [tool.setuptools.package-data]
-"sentier_importers" = ["registry.yaml", "sources/**/data/*"]
+"sentier_importers" = ["registry.yaml", "sources/**/data/*", "matching/*.yaml"]
 
 [tool.setuptools.dynamic]
 version = { attr = "sentier_importers.__version__" }
 
 [tool.pytest.ini_options]
-addopts = "--cov sentier_importers.core --cov-report term-missing --verbose"
+addopts = "--cov sentier_importers.core --cov sentier_importers.matching --cov-report term-missing --verbose"
 norecursedirs = ["dist", "build", ".tox"]
 testpaths = ["tests"]
 

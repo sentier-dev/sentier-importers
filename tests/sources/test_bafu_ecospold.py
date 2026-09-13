@@ -20,7 +20,7 @@ def test_parse_zip_one_record_per_dataset():
     assert elec["location"] == "CH"
     assert elec["technology"] == "Combined cycle test turbine"
     assert elec["obsolete"] is False
-    assert len(elec["exchanges"]) == 4
+    assert len(elec["exchanges"]) == 8
 
 
 def test_parse_zip_exchange_fields():

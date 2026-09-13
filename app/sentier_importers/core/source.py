@@ -44,7 +44,8 @@ class SourceConfig:
     # wrap rows into ``{name, version, <verb>: rows}`` instead of a vocab collection.
     package_name: str | None = None
     package_version: str | None = None
-    package_verb: str | None = None  # replace | update | delete | create
+    # replace | update | delete | create | review | coverage (sidecars)
+    package_verb: str | None = None
     # Named secondary inputs (``{name: url}``) a source joins against — bridges that
     # compose several upstream artifacts. Fetched through the same cache as
     # ``fetch_url`` and exposed as ``Source.inputs[name]``.

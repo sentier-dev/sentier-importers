@@ -1,0 +1,53 @@
+# Curated BAFU-2026 v1 flow name -> EF 3.1 preferred label. Lowercase keys.
+# Only for spellings no generic rule recovers; a wrong alias is a wrong factor,
+# so every line is checked against sentier-vocab's EF pref_label by hand.
+# A key whose BAFU flows can never place on the target's EF context is dead and
+# must be removed, not kept.
+aliases:
+  particulates, < 2.5 um: Particles (PM2.5)
+  particulates, < 10 um:
+    target: Particles (PM10)
+    caveat: >-
+      BAFU PM10 includes the fine fraction; characterised at EF's PM10 factor
+      (4.35x lower than PM2.5)
+  particulates, < 10 um (stationary):
+    target: Particles (PM10)
+    caveat: >-
+      BAFU PM10 includes the fine fraction; characterised at EF's PM10 factor
+      (4.35x lower than PM2.5)
+  nmvoc, non-methane volatile organic compounds, unspecified origin: Non-methane Volatile Organic Compounds
+  dioxin, 2,3,7,8 tetrachlorodibenzo-p-: 2,3,7,8-tetrachlorodibenzo-p-dioxin
+  ammonium, ion: Ammonium
+  curium alpha: Curium
+  plutonium-alpha: Plutonium
+  # water resources (m3) -> EF water-use resource flows
+  water, river: River water
+  water, lake: Lake water
+  water, well: Ground water
+  water, unspecified natural origin/m3: Water
+  water, unspecified natural origin: Water
+  water, cooling, unspecified natural origin/m3: Water to Cooling
+  water, cooling, unspecified natural origin: Water to Cooling
+  water, turbine use, unspecified natural origin: Water to turbine
+  water, process, unspecified natural origin/m3: Water
+  # surface water is river/lake water, not EF's unspecified-origin "Water"
+  water, process, surface: River water
+  # fossil/biotic energy resources (MJ) -> EF resource-use-fossils flows (megajoule)
+  energy, from coal: Hard Coal
+  energy, from coal, brown: Brown Coal
+  # "Energy, from oil" is filed under resources / unspecified; still withheld there
+  # as sub_compartment_absent (EF has no unspecified energy-resource leaf) -- expected.
+  energy, from oil: Crude Oil
+  energy, from peat: Peat
+  energy, from uranium: Uranium
+  # yields no entry today: EF has this flow only under emissions to water,
+  # unspecified (long-term), and BAFU never files it there. Still worth keeping --
+  # it upgrades two rows (water/ocean, water/river) from no_ef_flow to the more
+  # informative sub_compartment_absent.
+  benzo(a)anthracene: benzo[a]anthracene
+  butane, perfluorocyclo-, pfc-318: PFC-318
+  ethane, 1,1,2-trifluoro-, hfc-143: HFC-143
+  octene (mixture of isomers): Octene
+  # "nitrogen" withdrawn: EF's "Nitrogen, Total (excluding N2)" asserts a chemical
+  # identity (total N), not a spelling difference -- open question for Laurenz,
+  # not a curated alias.
