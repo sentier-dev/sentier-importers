@@ -131,12 +131,6 @@ class Placement(Enum):
     #: a nomenclature alignment only, never a factor claim. See
     #: ``pipeline.MatchPipeline._resolve``.
     NOMENCLATURE = "nomenclature_placement"
-    #: Round 4, decision 2026-09-13: a ``*, long-term`` BAFU sub-compartment whose
-    #: candidates do not place on the bucket-level long-term-unspecified leaf are
-    #: re-placed with the ``, long-term`` suffix stripped (``river, long-term`` ->
-    #: ``river``, ...) -- EF has no long-term leaf for the substance, so the
-    #: immediate-emission flow is used instead. See ``pipeline.MatchPipeline._resolve``.
-    LONG_TERM_COLLAPSED = "long_term_collapsed"
     #: Round 4, decision 2026-09-13: a ``water`` / ``unspecified`` BAFU source whose
     #: candidates exist on neither the unspecified nor the unspecified (long-term)
     #: leaf, but do exist on fresh water, is placed there instead (``DEFAULT_LEAF`` in
