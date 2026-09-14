@@ -22,6 +22,7 @@ from sentier_importers.sources.agribalyse.ef_cf_dedup import (
     _pluralize_variants,
     _split_direction,
     _strip_simapro_prefix,
+    harmonise_water_family,
     parse_simapro_index,
     resolve_global_duplicates,
 )
@@ -556,3 +557,19 @@ def test_parse_simapro_index_end_to_end_normalization_and_filtering(tmp_path):
     assert index.fallback_values("forest", frozenset({"forest, unspecified"})) is None
     assert index.primary_values("annual crop, ad") is None
     assert index.primary_values("ammonia") is None
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (-42.955, -42.95),
+        (42.95, 42.95),
+        (-42.95, -42.95),
+        (42.949, 42.95),
+        (37.8, 37.8),
+        (-37.8, -37.8),
+        (0.0, 0.0),
+    ],
+)
+def test_harmonise_water_family_snaps_only_the_rounding_artefact(value, expected):
+    assert harmonise_water_family(value) == expected

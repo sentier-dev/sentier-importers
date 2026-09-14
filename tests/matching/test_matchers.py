@@ -1098,3 +1098,13 @@ def test_carbon_oxide_matcher_ignores_co2_uptake_outside_the_resource_bucket(co_
 def test_carbon_oxide_matcher_ignores_unrelated_names(co_index):
     flow = BafuFlow("Carbon tetrachloride", "emissions to air", "unspecified", "kg")
     assert CarbonOxideMatcher().candidates(flow, None, co_index) == []
+
+
+def test_shipped_alias_file_has_the_coarse_particulate_entry_added_in_round_8():
+    aliases = load_aliases()
+    entry = aliases["particulates, > 2.5 um, and < 10um"]
+    assert entry.target == "Particles (PM10)"
+    assert entry.caveat == (
+        "coarse fraction (2.5 to 10 um) characterised at EF's PM10 factor, the curated "
+        "package's convention (decision 2026-09-14)"
+    )

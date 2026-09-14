@@ -299,7 +299,7 @@ def test_real_jrc_data_has_no_remaining_global_duplicates():
     for (method, _name, loc), value in by_key.items():
         if method == WATER_METHOD and loc is None:
             water_checked += 1
-            assert round(abs(value), 3) in {42.95, 42.955}
+            assert round(abs(value), 3) == 42.95
     assert water_checked > 0
 
     # "forest" must resolve via SimaPro's "forest, unspecified" (21.463), never by
@@ -338,3 +338,25 @@ def test_real_jrc_data_every_simapro_decision_matches_arbiter_value_within_toler
         else:
             sp_values = simapro_index.fallback_values(key, land_names) or []
         assert any(_is_close(entry["kept"], sv) for sv in sp_values), entry
+
+
+def test_transform_harmonises_the_water_return_rounded_to_three_decimals():
+    # JRC rounds one 42.95-family member to -42.955; the emitted table carries -42.95 so
+    # intakes and returns cancel exactly (decision 2026-09-14). Country rows untouched.
+    raw = _cf_raw(
+        [
+            {"uuid": "wr", "name": "Water", "method": WATER_METHOD, "cf": -42.955},
+            {"uuid": "wr", "name": "Water", "method": WATER_METHOD, "cf": -37.8},
+            {
+                "uuid": "wr",
+                "name": "Water",
+                "method": WATER_METHOD,
+                "cf": -42.955,
+                "location": "CH",
+            },
+        ]
+    )
+    src = AgribalyseEfCfsSource(_cfg())
+    rows = src.transform(src.parse(raw))
+    by_location = {r.get("location"): r["factor_value"] for r in rows if r["flow_name"] == "Water"}
+    assert by_location == {None: -42.95, "CH": -42.955}
