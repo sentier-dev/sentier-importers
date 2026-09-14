@@ -19,7 +19,19 @@ elementary-flow shards) bypasses it, read from its local path directly in ``pars
 a directory has no single content digest to cache against.
 
 Unit/dimension conversion (``unit_conversion``, ``conversion_for``, ``ENERGY_CONTENT``,
-``STOICHIOMETRIC``, ``nomenclature_unit``) lives in the sibling ``ef_units`` module.
+``STOICHIOMETRIC``, ``nomenclature_target_unit``) lives in the sibling ``ef_units`` module.
+
+Round 5, decision 2026-09-14 (``_name_only_match``, wired into ``_decide``): a flow the
+pipeline gives up on entirely (``Unmatched(reason="no_ef_flow")``) over the sibling
+nomenclature package's inclusive index gets one more try -- "for the ones with names:
+we map, else: nothing". Every EF flow anywhere in the inclusive index whose label
+equals the source name, case-insensitively, is looked up regardless of bucket
+(``ef_index.EfFlowIndex.by_name_any_bucket``); if at least one exists and every one of
+them is uncharacterised, the flow is aligned onto one of them by name alone, with no
+context and no factor. A single characterised namesake vetoes the alignment entirely
+(this source's own characterised-only index can never reach this rule at all --
+gated on ``EfFlowIndex.includes_uncharacterised``). See ``_name_only_match`` and
+``entry_for`` for the full rule and the comment it produces.
 """
 
 from __future__ import annotations
@@ -34,14 +46,21 @@ from sentier_importers.core.context import RunContext
 from sentier_importers.core.randonneur import codes_of
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
-from sentier_importers.matching.ef_index import UNCERTAIN_RESOURCE_NAME, EfFlowIndex, normalise_cas
+from sentier_importers.matching.compartments import Placement, unspecified_leaf
+from sentier_importers.matching.ef_index import (
+    UNCERTAIN_RESOURCE_NAME,
+    EfFlow,
+    EfFlowIndex,
+    normalise_cas,
+)
 from sentier_importers.matching.matchers import load_aliases
 from sentier_importers.matching.pipeline import Match, MatchPipeline, Unmatched, default_pipeline
 from sentier_importers.sources.bafu.ecospold import parse_ecospold_zip
 from sentier_importers.sources.bafu.ef_units import (
     WATER_USE_METHOD,
     conversion_for,
-    nomenclature_unit,
+    nomenclature_target_unit,
+    nomenclature_unit_mismatch,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
@@ -64,6 +83,19 @@ _ION = re.compile(r"(,\s?ion$|\sion$|\s(II|III|IV|V|VI)$|\+$)")
 #: groundwater and resolved via the curated ``water, fossil`` alias instead (see
 #: ``matching/aliases.yaml``), each such entry carrying that decision as a caveat.
 _NON_FRESHWATER = ("Water, salt",)
+
+#: BAFU category -> the human phrase ``_name_only_match``'s own caveat names the
+#: source as (round 5, decision 2026-09-14): "the source is a {phrase}, so the EF
+#: context is omitted". Every category ``pipeline.MatchPipeline.match`` itself
+#: recognises (``compartments.BAFU_BUCKET``) has an entry; a category outside that set
+#: can never reach ``_name_only_match`` at all (the pipeline already refuses it as
+#: ``non_ef_compartment`` before any tier runs), so no fallback spelling is needed.
+_SOURCE_CATEGORY_HUMAN: dict[str, str] = {
+    "resources": "resource extraction",
+    "emissions to air": "emission to air",
+    "emissions to water": "emission to water",
+    "emissions to soil": "emission to soil",
+}
 
 
 @dataclass(frozen=True)
@@ -193,6 +225,81 @@ def _refine_unmatched(flow: BafuFlow, outcome: Unmatched) -> Unmatched:
     return outcome
 
 
+def _sits_on_own_unspecified_leaf(flow: EfFlow) -> bool:
+    """Whether ``flow`` sits on the bucket-level unspecified leaf of its OWN EF context.
+
+    Used only by ``_name_only_match`` to pick a deterministic, preferred code among
+    several factorless namesakes: the plain (non-long-term) unspecified leaf of
+    whichever bucket ``flow`` itself lands in (``compartments.unspecified_leaf``),
+    never the source flow's own bucket -- a name-only alignment crosses buckets by
+    definition, so there is no "this source's bucket" to prefer here the way the
+    ordinary nomenclature placement does. ``False`` for a flow whose context maps to
+    no bucket at all (``EfFlow.bucket`` is ``None``). A resource- or land-bucket
+    namesake has no unspecified leaf either (``unspecified_leaf`` returns ``None`` for
+    those buckets), so the preference only ever fires among emission-bucket namesakes;
+    resource namesakes fall through to the code-sorted first.
+    """
+    bucket = flow.bucket
+    if bucket is None:
+        return False
+    return flow.leaf == unspecified_leaf(bucket, long_term=False)
+
+
+def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
+    """Round 5, decision 2026-09-14: "for the ones with names: we map, else: nothing".
+
+    Called by ``_decide`` only after the pipeline itself has given up entirely
+    (``Unmatched(reason="no_ef_flow")``) on the inclusive, ``include_uncharacterised``
+    index (nomenclature package only -- see ``_decide``'s own gate). Looks up every EF
+    flow whose label equals ``flow.name`` case-insensitively, in ANY bucket
+    (``EfFlowIndex.by_name_any_bucket``), ignoring the source's own compartment
+    entirely: the ordinary matchers are all bucket-scoped, so a same-named EF flow
+    sitting in a different bucket (a resource extraction whose only EF namesake is an
+    element on a soil-emission leaf, say) never reaches them at all.
+
+    Returns ``None`` -- the flow stays ``no_ef_flow``, exactly as before this rule
+    existed -- in two cases: no namesake exists at all, or at least one namesake IS
+    characterised. The second guard is the one that matters most: a real factor
+    living under the very same name elsewhere in EF (BAFU's salts, Talc, Uranium) means
+    a nomenclature-only alignment here would silently sit next to a live impact
+    number for the same substance name, which is never safe to assert -- so ANY
+    characterised namesake vetoes the whole name, not just the characterised one.
+
+    Otherwise every namesake is uncharacterised and the flow is aligned onto one of
+    them by name alone, with no factor and no claim about EF context: the chosen code
+    prefers whichever namesake sits on the unspecified leaf of its OWN bucket
+    (``_sits_on_own_unspecified_leaf``, deterministic tiebreak among several such
+    leaves is moot since a bucket has only one), falling back to the code-sorted first
+    namesake when none does. The returned ``Match`` carries ``tier="name-only"`` and
+    ``placement=Placement.NAME_ONLY.value`` so ``entry_for``/the coverage source both
+    recognise it, and its one caveat both names every leaf the name was found on and
+    discloses why the target carries no context at all -- ``entry_for`` drops
+    ``target["context"]`` for this placement the same way it does for an
+    energy-carrier match, and must never say both things at once (see ``entry_for``).
+    """
+    namesakes = index.by_name_any_bucket(flow.name)
+    if not namesakes or any(namesake.characterised for namesake in namesakes):
+        return None
+    chosen = next(
+        (namesake for namesake in namesakes if _sits_on_own_unspecified_leaf(namesake)),
+        namesakes[0],
+    )
+    leafs = ", ".join(sorted({namesake.leaf for namesake in namesakes}))
+    category = _SOURCE_CATEGORY_HUMAN.get(flow.category, flow.category)
+    caveat = (
+        f"EF has this name only as {leafs}; the source is a {category}, so the EF "
+        "context is omitted (name alignment only, decision 2026-09-14)"
+    )
+    return Match(
+        code=chosen.code,
+        tier="name-only",
+        placement=Placement.NAME_ONLY.value,
+        location=None,
+        candidates=len(namesakes),
+        caveats=(caveat,),
+    )
+
+
 def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> Match | Unmatched:
     """The single ordered decision chain applied to every pipeline outcome.
 
@@ -209,18 +316,36 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
        likewise never right -- EF's water-use method never characterises sea-water
        discharge. Must run before the unit check below: a kg-denominated ocean flow
        would otherwise pass the water-density special case and be wrongly emitted;
-    3. unit_mismatch (Task 6 correction (1)): applies only when the match target is
-       characterised (``EfFlow.characterised``) -- an uncharacterised target has no EF
-       reference unit at all (``EfFlowIndex.reference_unit`` returns ``None`` for it),
-       so ``conversion_for`` would always report a mismatch for it; the nomenclature
-       package (``mappings_biosphere_nomenclature``) uses ``nomenclature_unit`` instead,
-       at entry-building time, not here (a same-scale spelling only, never a factor). For
-       a characterised target: a real ``Match`` with no fixed unit conversion
-       (``conversion_for``) onto the EF flow's reference unit is withheld rather than
-       emitted with a fabricated factor;
-    4. everything else: a ``Match`` is returned as-is; an ``Unmatched`` is refined by
-       ``_refine_unmatched`` into ``speciation`` (Decision 4, the ``no_ef_flow`` twin
-       of ion-shaped names EF has no match for at all).
+    3. unit_mismatch, split by characterisation (an uncharacterised target has no EF
+       reference unit at all -- ``EfFlowIndex.reference_unit`` returns ``None`` for
+       it, so ``conversion_for`` would always report a mismatch for it, and cannot be
+       reused as-is):
+       a. characterised (Task 6 correction (1)): a real ``Match`` with no fixed unit
+          conversion (``conversion_for``) onto the EF flow's reference unit is
+          withheld rather than emitted with a fabricated factor;
+       b. uncharacterised (round 5, decision 2026-09-14): the nomenclature package
+          (``mappings_biosphere_nomenclature``) uses ``nomenclature_target_unit``
+          instead, at entry-building time, not here (an EF-convention unit per
+          physical dimension, with its own factor when the source differs). But a
+          name in ``ef_units.NOMENCLATURE_TARGET_DIMENSION`` (EF's "Wood", counted by
+          mass) has no such fixed factor for a wrong-dimension source at all (BAFU
+          also reports standing wood by volume) -- ``ef_units.
+          nomenclature_unit_mismatch`` withholds that pairing here, before
+          ``nomenclature_target_unit`` is ever asked to guess a conversion that does
+          not exist;
+    4. name-only alignment (round 5, decision 2026-09-14, ``_name_only_match``): only
+       when the pipeline came back with a plain ``no_ef_flow`` AND ``index`` is the
+       inclusive one (``EfFlowIndex.includes_uncharacterised`` -- the nomenclature
+       package's own pass and the coverage sidecar's second pass; never the matched
+       package's characterised-only pass). Tried before ``_refine_unmatched`` gets a
+       chance to narrow the reason to ``speciation``: a namesake that resolves the
+       flow by name alone is more informative than refining why nothing did. Its own
+       ``Match`` is then run back through rules 2 and 3 above like any other (rule 3b
+       is the one that can actually apply to it);
+    5. everything else: a ``Match`` is returned as-is; an ``Unmatched`` still without a
+       name-only alignment is refined by ``_refine_unmatched`` into ``speciation``
+       (Decision 4, the ``no_ef_flow`` twin of ion-shaped names EF has no match for at
+       all).
 
     Decision (d), 2026-09-13, removed two withholding rules this chain used to carry
     for a ``Match``: the ion/oxidation-state speciation guard (an ion-shaped BAFU name
@@ -260,12 +385,23 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
     nomenclature-package-only relaxed placement (``pipeline.Placement.NOMENCLATURE``),
     energy-carrier context omission (``entry_for``) and the wood/water aliases
     (``matching/aliases.yaml``), decision (g) = the mine-gas energy content
-    (``ef_units.ENERGY_CONTENT``/``ENERGY_CONTENT_NOTES``).
+    (``ef_units.ENERGY_CONTENT``/``ENERGY_CONTENT_NOTES``). Round 5, decision
+    2026-09-14 = name-only alignment (rule 4 above, ``_name_only_match``) and the
+    nomenclature-package dimension-mismatch withholding (rule 3b above,
+    ``ef_units.nomenclature_unit_mismatch``).
     """
     if flow.name.startswith(_NON_FRESHWATER):
         return Unmatched(
             "non_freshwater", "EF water use characterises freshwater deprivation only"
         )
+    if (
+        not isinstance(outcome, Match)
+        and index.includes_uncharacterised
+        and outcome.reason == "no_ef_flow"
+    ):
+        name_only = _name_only_match(flow, index)
+        if name_only is not None:
+            outcome = name_only
     if isinstance(outcome, Match):
         if (
             flow.category == "emissions to water"
@@ -274,17 +410,27 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
         ):
             return Unmatched("no_ef_flow", "EF water use has no sea-water discharge flow")
         ef_flow = index.get(outcome.code)
-        # only the None-ness matters here; the caveat conversion_for also returns is
-        # discarded and recomputed by entry_for when the entry is actually built. An
-        # uncharacterised target has no EF reference unit for conversion_for to check
-        # against at all (see the docstring point 3), so this step is skipped for one.
-        if ef_flow.characterised and conversion_for(flow, outcome, index) is None:
-            ef_unit = index.reference_unit(outcome.code)
-            return Unmatched(
-                "unit_mismatch",
-                f"BAFU unit {flow.unit} vs EF reference unit {ef_unit} for "
-                f"{ef_flow.name}; no fixed conversion",
-            )
+        if ef_flow.characterised:
+            # only the None-ness matters here; the caveat conversion_for also returns
+            # is discarded and recomputed by entry_for when the entry is actually
+            # built.
+            if conversion_for(flow, outcome, index) is None:
+                ef_unit = index.reference_unit(outcome.code)
+                return Unmatched(
+                    "unit_mismatch",
+                    f"BAFU unit {flow.unit} vs EF reference unit {ef_unit} for "
+                    f"{ef_flow.name}; no fixed conversion",
+                )
+        else:
+            # round 5, decision 2026-09-14: a name in
+            # ef_units.NOMENCLATURE_TARGET_DIMENSION fixes one physical dimension for
+            # the substance (EF's "Wood" is counted by mass); a source outside it has
+            # no fixed conversion the way water's density does, so it is withheld
+            # rather than guessed. Reached by either an ordinary pipeline Match (an
+            # alias landing on an uncharacterised target) or a name-only one.
+            mismatch = nomenclature_unit_mismatch(flow, ef_flow)
+            if mismatch is not None:
+                return Unmatched("unit_mismatch", mismatch)
         return outcome
     return _refine_unmatched(flow, outcome)
 
@@ -374,41 +520,60 @@ class BafuEfMatchedSource(Source):
 
         For an uncharacterised target (the nomenclature package only -- ``_decide``
         never lets one reach here for the default, characterised-only source), there is
-        no EF reference unit at all, and the nomenclature package never rescales an
-        amount: the target unit is just ``nomenclature_unit``'s same-scale respelling
-        of the BAFU unit, and ``conversion_factor`` is never set. When the target is a
-        resource-bucket flow whose name is energy-carrier-shaped
-        (``ef_flow.bucket == "resource"`` and
-        ``ef_index.UNCERTAIN_RESOURCE_NAME`` matches, decision (f)(2), 2026-09-13),
-        ``target["context"]`` is omitted entirely -- the bw-context crosswalk cannot
-        reach an EF energy-resource branch at all (see
-        ``ef_index.UNCERTAIN_RESOURCE_NAME``'s own docstring, which is specifically
-        about the *resource* branch the crosswalk cannot reach; an emission-bucket
-        flow that happens to share an energy-shaped name is unaffected and keeps its
-        context), so asserting one, even as "uncertain", would overstate what is
-        known -- and the comment says so instead of the usual
-        branch/sub-compartment-uncertain wording. Any of the three placements whose
-        own first caveat names a specific EF leaf/branch (``resource_branch_fallback``,
-        ``unspecified_fallback``, ``nomenclature_placement``) drops that caveat for one
-        of these energy carriers, since naming a specific leaf would contradict the
-        "not recoverable" disclosure just given -- only trailing (non-placement)
-        caveats, if any, are kept; ``resource_branch_fallback`` also drops its own
-        "placed on the inferred EF resource branch ..." wording (below) for the same
-        reason. Otherwise the comment always starts with a fixed disclosure that the
-        target carries no factor in any EF 3.1 method and that the target unit is
-        only the source
-        unit's EF spelling, followed by a branch/sub-compartment caveat when the
-        target's context itself was uncertain (``EfFlow.context_uncertain``), then the
-        match's own caveats -- except a ``resource_branch_fallback`` caveat, which is
-        never honest to repeat verbatim for an uncharacterised target: the pipeline's
-        own wording ("EF has ... only as ...") asserts a fact about EF's
-        *characterised* branches that has no bearing here, so it is replaced with a
-        caveat that instead says plainly that this is an inferred placement on an
-        uncharacterised flow.
+        no EF reference unit at all: the target unit is ``nomenclature_target_unit``'s
+        EF-convention spelling for the source unit's physical dimension (round 5,
+        decision 2026-09-14), and ``conversion_factor`` is set whenever that function
+        returns a factor (a source unit already at the EF-convention scale gets
+        ``None`` back and no key at all -- same as the characterised branch below,
+        never a fabricated 1.0). ``target["context"]`` is omitted entirely in two
+        distinct cases, never both disclosed at once:
 
-        Either way, a BAFU ``..., resource correction`` flow (a correction entry
-        against a substance's own extraction, not a distinct resource) gets one more
-        caveat, appended last.
+        - the target is a resource-bucket flow whose name is energy-carrier-shaped
+          (``ef_flow.bucket == "resource"`` and ``ef_index.UNCERTAIN_RESOURCE_NAME``
+          matches, decision (f)(2), 2026-09-13) -- the bw-context crosswalk cannot
+          reach an EF energy-resource branch at all (see
+          ``ef_index.UNCERTAIN_RESOURCE_NAME``'s own docstring, which is specifically
+          about the *resource* branch the crosswalk cannot reach; an emission-bucket
+          flow that happens to share an energy-shaped name is unaffected and keeps its
+          context), so asserting one, even as "uncertain", would overstate what is
+          known -- and the comment says so ("EF context not recoverable ...") instead
+          of the usual branch/sub-compartment-uncertain wording;
+        - the match is a name-only alignment (round 5, decision 2026-09-14,
+          ``match.placement == compartments.Placement.NAME_ONLY.value``, built by
+          ``mappings_biosphere_matched._name_only_match``): the chosen EF namesake
+          lives in a different bucket than the source flow's own category, so its
+          context is never the source's context to assert -- the match's own one
+          caveat already discloses this ("... so the EF context is omitted ..."), so
+          neither the energy-carrier wording nor the branch/sub-compartment-uncertain
+          wording is added for it (both would either be false or duplicate what the
+          caveat already says).
+
+        Any of the three placements whose own first caveat names a specific EF
+        leaf/branch (``resource_branch_fallback``, ``unspecified_fallback``,
+        ``nomenclature_placement``) drops that caveat for an energy carrier, since
+        naming a specific leaf would contradict the "not recoverable" disclosure just
+        given -- only trailing (non-placement) caveats, if any, are kept;
+        ``resource_branch_fallback`` also drops its own "placed on the inferred EF
+        resource branch ..." wording (below) for the same reason. A name-only match's
+        own placement is never one of these three, so this dropping never applies to
+        it -- its one caveat is always kept whole. Otherwise the comment always starts
+        with a fixed disclosure that the target carries no factor in any EF 3.1 method
+        and that the target unit is the EF convention for the source unit's dimension,
+        followed by a branch/sub-compartment caveat when the target's context itself
+        was uncertain (``EfFlow.context_uncertain``, skipped for a name-only match same
+        as for an energy carrier), then the match's own caveats -- except a
+        ``resource_branch_fallback`` caveat, which is never honest to repeat verbatim
+        for an uncharacterised target: the pipeline's own wording ("EF has ... only as
+        ...") asserts a fact about EF's *characterised* branches that has no bearing
+        here, so it is replaced with a caveat that instead says plainly that this is an
+        inferred placement on an uncharacterised flow.
+
+        A BAFU ``..., resource correction`` flow (a correction entry against a
+        substance's own extraction, not a distinct resource) gets one more caveat,
+        appended after those. Last of all (round 5, decision 2026-09-14): when
+        ``nomenclature_target_unit`` returns a real factor, ``"amount rescaled by
+        {factor:g}"`` is appended too, so the comment always names the very factor
+        ``conversion_factor`` carries.
         """
         ef_flow = index.get(match.code)
         source: Record = _base_source(flow)
@@ -422,11 +587,13 @@ class BafuEfMatchedSource(Source):
             and ef_flow.bucket == "resource"
             and bool(UNCERTAIN_RESOURCE_NAME.match(ef_flow.name))
         )
+        name_only = match.placement == Placement.NAME_ONLY.value
+        omit_context = uncertain_energy or name_only
 
         target: Record = {"code": match.code}
         if ef_flow.name:
             target["name"] = ef_flow.name
-        if ef_flow.context and not uncertain_energy:
+        if ef_flow.context and not omit_context:
             target["context"] = list(ef_flow.context)
         if match.location:
             target["location"] = match.location
@@ -438,16 +605,19 @@ class BafuEfMatchedSource(Source):
         )
 
         if not ef_flow.characterised:
-            target["unit"] = nomenclature_unit(flow.unit)
+            target_unit, rescale_factor = nomenclature_target_unit(flow, ef_flow)
+            target["unit"] = target_unit
             entry: Record = {"source": source, "target": target}
+            if rescale_factor is not None:
+                entry["conversion_factor"] = rescale_factor
             comments = [
                 "uncharacterised in EF 3.1: no factor in any method; target unit is "
-                "the source unit's EF spelling (EF states no reference unit for this "
-                "flow)"
+                "the EF convention for this dimension (EF states no reference unit "
+                "for this flow)"
             ]
-            if uncertain_energy:
+            if uncertain_energy and not name_only:
                 comments.append("EF context not recoverable from the source context code")
-            elif ef_flow.context_uncertain:
+            elif ef_flow.context_uncertain and not name_only:
                 comments.append(
                     "EF context inferred from the Brightway context code, "
                     "branch/sub-compartment uncertain"
@@ -476,6 +646,8 @@ class BafuEfMatchedSource(Source):
                 comments.extend(match.caveats)
             if resource_correction_caveat:
                 comments.append(resource_correction_caveat)
+            if rescale_factor is not None:
+                comments.append(f"amount rescaled by {rescale_factor:g}")
             entry["comment"] = "; ".join(comments)
             return entry
 

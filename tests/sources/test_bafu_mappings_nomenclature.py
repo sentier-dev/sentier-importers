@@ -11,6 +11,7 @@ from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 from tests.matching.ef_fixtures import AIR_UNSPEC, cf_row, vocab_row
 from tests.sources.test_bafu_mappings_matched import (
+    CF,
     CO2,
     GAS,
     LAND,
@@ -97,17 +98,20 @@ def test_uncertain_suffix_is_absent_when_the_bw_context_code_is_unambiguous(tmp_
     (row,) = [r for r in rows if r["source"]["name"] == "Widget"]
     assert row["comment"] == (
         "uncharacterised in EF 3.1: no factor in any method; target unit is the "
-        "source unit's EF spelling (EF states no reference unit for this flow)"
+        "EF convention for this dimension (EF states no reference unit for this flow)"
     )
 
 
-def test_becquerel_flow_keeps_its_own_unit_with_no_rescale(tmp_path):
-    # An uncharacterised target has no reference unit at all, so the nomenclature
-    # package must never rescale an amount: a BAFU Bq-denominated flow stays "Bq" (NOT
-    # respelled to kBq,
-    # unlike a characterised ionising-radiation match, which does rescale -- see the
-    # sibling matched-source test_becquerel_sources_land_on_kilobecquerel_with_a_
-    # conversion), and carries no conversion_factor at all.
+def test_becquerel_flow_is_rescaled_onto_kbq_like_its_characterised_twin(tmp_path):
+    # Round 5, decision 2026-09-14: before this decision, an uncharacterised target
+    # kept the SOURCE unit's own spelling and never rescaled -- so a BAFU
+    # Bq-denominated flow stayed "Bq" while a kBq-denominated twin of the very same EF
+    # flow stayed "kBq", with no conversion_factor on either, silently off by 1000x
+    # once a downstream consumer merged the two amounts onto one EF node. Now every
+    # activity-dimension source is canonicalised onto EF's kBq convention, the same
+    # target unit a characterised ionising-radiation match uses (see the sibling
+    # matched-source test_becquerel_sources_land_on_kilobecquerel_with_a_conversion),
+    # with the same 0.001 factor made explicit.
     vocab = VOCAB + [vocab_row("kr85m-unchar", "Krypton-85m", bw="envi-air-hist15me")]
     root = _stage(tmp_path, vocab=vocab)
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
@@ -119,9 +123,28 @@ def test_becquerel_flow_keeps_its_own_unit_with_no_rescale(tmp_path):
     rows = source.transform([{"inputs": augmented}])
     (row,) = [r for r in rows if r["source"]["name"] == "Krypton-85m"]
     assert row["target"]["code"] == "kr85m-unchar"
-    assert row["target"]["unit"] == "Bq"
-    assert "conversion_factor" not in row
+    assert row["target"]["unit"] == "kBq"
+    assert row["conversion_factor"] == 0.001
     assert row["comment"].startswith("uncharacterised in EF 3.1: no factor in any method")
+    assert "amount rescaled by 0.001" in row["comment"]
+
+
+def test_kbq_flow_keeps_its_own_unit_with_no_rescale(tmp_path):
+    # the other half of the same twin: a BAFU flow already reported in kBq needs no
+    # factor at all -- it is already at EF's activity convention.
+    vocab = VOCAB + [vocab_row("kr85m-unchar-2", "Krypton-85m", bw="envi-air-hist15me")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    krypton = BafuFlow("Krypton-85m", "emissions to air", "low. pop.", "kBq")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [krypton]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Krypton-85m"]
+    assert row["target"]["unit"] == "kBq"
+    assert "conversion_factor" not in row
+    assert "amount rescaled" not in row["comment"]
 
 
 def test_nomenclature_resource_branch_fallback_caveat_is_honest_about_uncharacterised(tmp_path):
@@ -269,7 +292,7 @@ def test_nomenclature_location_and_regional_aggregate_caveat_are_reported(tmp_pa
     assert kr["target"]["location"] == "KR"
     assert kr["comment"] == (
         "uncharacterised in EF 3.1: no factor in any method; target unit is the "
-        "source unit's EF spelling (EF states no reference unit for this flow)"
+        "EF convention for this dimension (EF states no reference unit for this flow)"
     )
 
     europe = by_name["Water, Europe"]
@@ -306,6 +329,83 @@ def test_no_uncharacterised_match_means_no_rows_for_untouched_fixture_flows(tmp_
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
     rows = _run(source, tmp_path)
     assert GAS not in {r["source"]["code"] for r in rows}
+
+
+def test_name_only_alignment_emits_with_no_context_and_the_exact_comment(tmp_path):
+    # round 5, decision 2026-09-14: "Basalt" is a resource extraction the ordinary
+    # pipeline never places at all (EF carries no "Basalt" in the resource bucket),
+    # but EF does carry a factorless "Basalt" elsewhere (a soil-emission leaf, via the
+    # always-uncharacterised envi-grou-indu bw-context code) -- named alignment only,
+    # no context, no factor.
+    vocab = VOCAB + [vocab_row("basalt-soil-unchar", "Basalt", bw="envi-grou-indu")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Basalt", "resources", "in ground", "kg")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Basalt"]
+    assert row["target"] == {
+        "code": "basalt-soil-unchar",
+        "name": "Basalt",
+        "unit": "kilogram",
+    }
+    assert "conversion_factor" not in row
+    assert row["comment"] == (
+        "uncharacterised in EF 3.1: no factor in any method; target unit is the EF "
+        "convention for this dimension (EF states no reference unit for this flow); "
+        "EF has this name only as emissions to non-agricultural soil; the source is "
+        "a resource extraction, so the EF context is omitted (name alignment only, "
+        "decision 2026-09-14)"
+    )
+
+
+def test_name_only_alignment_prefers_the_namesake_on_its_own_unspecified_leaf(tmp_path):
+    # two factorless "Shale" namesakes spread over two buckets -- the one on the air
+    # bucket's own unspecified leaf must be chosen, deterministically, and the caveat
+    # names both leafs, sorted.
+    vocab = VOCAB + [
+        vocab_row("shale-soil-unchar", "Shale", bw="envi-grou-indu"),
+        vocab_row("shale-air-unchar", "Shale", bw="envi-air-unkn"),
+    ]
+    root = _stage(tmp_path, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Shale", "resources", "in ground", "kg")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Shale"]
+    assert row["target"]["code"] == "shale-air-unchar"
+    assert "context" not in row["target"]
+    assert (
+        "EF has this name only as emissions to air, unspecified, emissions to "
+        "non-agricultural soil" in row["comment"]
+    )
+
+
+def test_name_only_alignment_is_withheld_when_any_namesake_is_characterised(tmp_path):
+    # "Talc" carries a real factor in the air bucket (a different bucket than this
+    # source's own "resource" category, so the ordinary pipeline never finds it
+    # either) and a second, factorless "Talc" elsewhere -- the flow must stay
+    # unmapped by this source rather than align onto the factorless one.
+    cf = CF + [cf_row("talc-air", "talc", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer")]
+    vocab = VOCAB + [
+        vocab_row("talc-air", "Talc"),
+        vocab_row("talc-soil-unchar", "Talc", bw="envi-grou-indu"),
+    ]
+    root = _stage(tmp_path, cf=cf, vocab=vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    records = source.parse(source.fetch(ctx))
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Talc", "resources", "in ground", "kg")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    assert not [r for r in rows if r["source"]["name"] == "Talc"]
 
 
 def test_characterised_match_reaching_transform_raises_runtime_error(tmp_path):

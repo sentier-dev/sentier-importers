@@ -142,6 +142,15 @@ class Placement(Enum):
     #: leaf, but do exist on fresh water, is placed there instead (``DEFAULT_LEAF`` in
     #: ``pipeline.py``). No such fallback is defined for air/soil/resource.
     DEFAULT_LEAF = "default_leaf_fallback"
+    #: Round 5, decision 2026-09-14: a BAFU flow the matching pipeline itself never
+    #: places at all (``Unmatched(reason="no_ef_flow")``) but that names, exactly and
+    #: case-insensitively, one or more EF flows elsewhere in the inclusive index, all
+    #: of them uncharacterised -- "for the ones with names: we map, else: nothing". Not
+    #: produced by ``pipeline.MatchPipeline`` itself: assembled directly by
+    #: ``mappings_biosphere_matched._name_only_match``, which runs after the pipeline
+    #: gives up, over ``EfFlowIndex.by_name_any_bucket`` rather than any bucket-scoped
+    #: matcher. See that function's docstring for the full rule.
+    NAME_ONLY = "name_only"
     NONE = "none"
 
 

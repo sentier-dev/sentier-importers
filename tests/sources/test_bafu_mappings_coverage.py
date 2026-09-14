@@ -412,3 +412,46 @@ def test_energy_carrier_resource_name_is_reported_as_nomenclature(tmp_path):
     assert row["characterised"] is False
     assert row["placement"] == "resource_branch_fallback"
     assert "reason" not in row and "detail" not in row
+
+
+def test_name_only_alignment_is_reported_as_nomenclature_with_the_name_only_tier(tmp_path):
+    # round 5, decision 2026-09-14: a name-only alignment reaches the coverage sidecar
+    # through the same pass-2 ``outcome_for`` call as any other nomenclature-package
+    # match -- no dedicated code path, just its own ``tier``/``placement`` values.
+    vocab = VOCAB + [vocab_row("basalt-soil-unchar", "Basalt", bw="envi-grou-indu")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = _source(root)
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Basalt", "resources", "in ground", "kg")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    (row,) = [r for r in rows if r["source"]["name"] == "Basalt"]
+    assert row["status"] == "mapped"
+    assert row["package"] == "biosphere-4-nomenclature"
+    assert row["tier"] == "name-only"
+    assert row["placement"] == "name_only"
+    assert row["characterised"] is False
+    assert "reason" not in row and "detail" not in row
+
+
+def test_name_only_alignment_never_reaches_pass_1_as_biosphere_3_matched(tmp_path):
+    # pass 1 runs BafuEfMatchedSource.outcomes() over the characterised-only index
+    # (include_uncharacterised=False): by_name_any_bucket on that index can never see
+    # the factorless "Basalt" namesake at all, so the name-only rule can only ever
+    # resolve the flow in pass 2, as biosphere-4-nomenclature -- never as
+    # biosphere-3-matched.
+    vocab = VOCAB + [vocab_row("basalt-soil-unchar", "Basalt", bw="envi-grou-indu")]
+    root = _stage(tmp_path, vocab=vocab)
+    source = _source(root)
+    records = source.parse(
+        source.fetch(RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out"))
+    )
+    inputs = records[0]["inputs"]
+    flow = BafuFlow("Basalt", "resources", "in ground", "kg")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    pass1 = {f.code: outcome for f, outcome in source.outcomes([{"inputs": augmented}])}
+    assert pass1[flow.code] == outcome_for(flow, None, inputs.pipeline, inputs.index)
+    assert not isinstance(pass1[flow.code], Match)
