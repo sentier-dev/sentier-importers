@@ -81,6 +81,7 @@ of its own, so nothing else reads ``report``; a summary is also logged at INFO l
 from __future__ import annotations
 
 import io
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -392,6 +393,23 @@ def _resolve_water(candidates: list[float]) -> tuple[float, str]:
     """Rule 2: keep the 42.95-family value (AWARE world-average default)."""
     kept = min(candidates, key=lambda v: abs(abs(v) - _WATER_FAMILY_ANCHOR))
     return kept, "water"
+
+
+#: JRC rounds one member of the 42.95 family to three decimals (``Water`` emitted to
+#: water, unspecified: -42.955) while every intake and the fresh-water return carry
+#: 42.95 / -42.95. Left as published, a turbine or cooling intake netted against that
+#: return leaves -0.005 per m3 and hydropower comes out with negative water use. The
+#: family is harmonised to |42.95| exactly on global rows (decision 2026-09-14:
+#: "consistent 42.95 / -42.95 for water"); anything farther from the anchor than this
+#: tolerance is not a rounding artefact and is left alone.
+_WATER_FAMILY_TOLERANCE = 0.01
+
+
+def harmonise_water_family(value: float) -> float:
+    """``-42.955`` -> ``-42.95``; values outside the rounding tolerance unchanged."""
+    if abs(abs(value) - _WATER_FAMILY_ANCHOR) <= _WATER_FAMILY_TOLERANCE:
+        return math.copysign(_WATER_FAMILY_ANCHOR, value)
+    return value
 
 
 def _arbiter_hits(candidates: list[float], sp_values: list[float]) -> list[float]:

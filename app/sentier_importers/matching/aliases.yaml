@@ -23,6 +23,11 @@ aliases:
     caveat: >-
       BAFU PM10 includes the fine fraction; characterised at EF's PM10 factor
       (4.35x lower than PM2.5)
+  particulates, > 2.5 um, and < 10um:
+    target: Particles (PM10)
+    caveat: >-
+      coarse fraction (2.5 to 10 um) characterised at EF's PM10 factor, the curated
+      package's convention (decision 2026-09-14)
   nmvoc, non-methane volatile organic compounds, unspecified origin: Non-methane Volatile Organic Compounds
   dioxin, 2,3,7,8 tetrachlorodibenzo-p-: 2,3,7,8-tetrachlorodibenzo-p-dioxin
   ammonium, ion: Ammonium

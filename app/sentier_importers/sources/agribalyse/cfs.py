@@ -20,6 +20,8 @@ from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Records, Rows
 from sentier_importers.sources.agribalyse.ef_cf_dedup import (
     SIMAPRO_INPUT,
+    WATER_METHOD,
+    harmonise_water_family,
     parse_simapro_index,
     resolve_global_duplicates,
 )
@@ -74,6 +76,8 @@ class AgribalyseEfCfsSource(Source):
                 kept_value = resolution.kept.get((impact, uuid))
                 if kept_value is not None and float(value) != kept_value:
                     continue  # dropped duplicate global row, see ef_cf_dedup
+                if impact == WATER_METHOD:
+                    value = harmonise_water_family(float(value))  # -42.955 -> -42.95
             key = (impact, uuid, location)
             if key in seen:
                 continue  # keep distinct (impact, flow, location) — preserves regional CFs
