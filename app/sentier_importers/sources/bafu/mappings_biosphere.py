@@ -15,6 +15,12 @@ withheld there with a reason rather than guessed at by name here.
 Two defects in the sibling ``agribalyse-3.2__ef-3.1`` package are deliberately
 not repeated: stringified ``"nan"`` field values, and name-only targets. A
 target without a ``code`` cannot be resolved to a factor, so it is not shipped.
+
+Decision 2026-09-14: ``EXCLUDED_SOURCE_NAMES`` withholds a handful of BAFU source
+flows the upstream crosswalk resolves onto the wrong substance entirely -- carbonminds
+pairs BAFU ``Metiram`` with EF ``Zineb``, a different dithiocarbamate fungicide, since
+EF 3.1 has no Metiram flow of its own. Shipping that row would assert a factor for the
+wrong substance, so it is dropped here rather than trusted from upstream.
 """
 
 from __future__ import annotations
@@ -50,6 +56,17 @@ _COLUMNS = [
     "cf_equivalent",
     "target_db",
 ]
+
+#: BAFU source flow names withheld regardless of what the upstream crosswalk
+#: resolved them onto (decision 2026-09-14), keyed by lowercased BAFU name. Every
+#: entry names the actual EF substance carbonminds paired the flow with, so a
+#: reviewer can see at a glance why the row is missing rather than just that it is.
+EXCLUDED_SOURCE_NAMES: dict[str, str] = {
+    "metiram": (
+        "carbonminds pairs Metiram with Zineb, a different dithiocarbamate "
+        "fungicide; EF 3.1 has no Metiram flow (decision 2026-09-14)"
+    ),
+}
 
 #: Comments are for what a reader could not otherwise tell. An exact match (T1,
 #: T2) needs none — the entry says everything. Only T3 carries a caveat: the EF
@@ -91,6 +108,8 @@ class BafuBiosphereMappingsSource(Source):
         name = self._clean(record.get("source_name"))
         code = self._clean(record.get("target_code"))
         if not name or not code or record.get("target_db") != _EF_DB:
+            return None
+        if name.lower() in EXCLUDED_SOURCE_NAMES:
             return None
 
         category = self._clean(record.get("source_category"))
