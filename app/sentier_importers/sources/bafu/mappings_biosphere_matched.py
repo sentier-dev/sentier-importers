@@ -286,6 +286,12 @@ def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
     discloses why the target carries no context at all -- ``entry_for`` drops
     ``target["context"]`` for this placement the same way it does for an
     energy-carrier match, and must never say both things at once (see ``entry_for``).
+    Unlike ``pipeline.MatchPipeline``'s own NOMENCLATURE placement (round 7, decision
+    2026-09-14's guard against a long-term source crossing onto a non-long-term
+    leaf), a name-only alignment needs no such guard: it emits no target context at
+    all, so a long-term source aligned this way asserts no immediate-emission
+    context either -- and no factor can attach regardless, since any characterised
+    namesake vetoes the whole name above.
     """
     namesakes = index.by_name_any_bucket(flow.name)
     if not namesakes or any(namesake.characterised for namesake in namesakes):

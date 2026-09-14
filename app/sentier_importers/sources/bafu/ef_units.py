@@ -1,10 +1,10 @@
 """Unit/dimension conversion helpers for the bafu-2026-v1 -> EF 3.1 bridges.
 
 Split out of ``mappings_biosphere_matched`` so the unit-conversion domain (physical
-dimensions, the ecoinvent v2 energy-content table, the stoichiometric factor table,
-the water-density special case, and the nomenclature-package target-unit convention
-for an uncharacterised target) has its own home apart from the matching/decision
-pipeline itself. Everything here is a pure function or lookup table; nothing touches
+dimensions, the energy-content table, the stoichiometric factor table, the
+water-density special case, and the nomenclature-package target-unit convention for an
+uncharacterised target) has its own home apart from the matching/decision pipeline
+itself. Everything here is a pure function or lookup table; nothing touches
 ``BafuFlow``/EF index construction.
 
 Round 5, decision 2026-09-14: ``nomenclature_target_unit`` replaces the earlier
@@ -135,25 +135,52 @@ def nomenclature_unit_mismatch(flow: BafuFlow, ef_flow: EfFlow) -> str | None:
     )
 
 
-#: ecoinvent v2 net calorific values, MJ per BAFU unit, keyed by (BAFU name, BAFU unit) so a
+#: Net calorific values, MJ per BAFU unit, keyed by (BAFU name, BAFU unit) so a
 #: conversion is never applied by accident. These are the resource-flow definitions the
-#: BAFU-2026 inventory is built from. Decision 2026-09-13. `Gas, natural/m3` exists in
-#: both m3 and Nm3 in BAFU; both are treated as normal cubic metres. Decision (g),
-#: 2026-09-13: coal-mine off-gas (which the pipeline itself matches onto EF's "Natural
-#: Gas" resource flow, by CAS -- both share CAS 8006-14-2) is approximated at the same
-#: 38.3 MJ/m3 natural-gas value, in both its m3 and Nm3 variants; see
-#: ``ENERGY_CONTENT_NOTES`` for the extra caveat text these two keys carry.
+#: BAFU-2026 inventory is built from. `Gas, natural/m3` exists in both m3 and Nm3 in
+#: BAFU; both are treated as normal cubic metres. Decision (g), 2026-09-13: coal-mine
+#: off-gas (which the pipeline itself matches onto EF's "Natural Gas" resource flow, by
+#: CAS -- both share CAS 8006-14-2) is approximated at the same natural-gas value, in
+#: both its m3 and Nm3 variants; see ``ENERGY_CONTENT_NOTES`` for the extra caveat text
+#: these two keys carry.
+#:
+#: Round 7, decision 2026-09-14: Coal (hard and brown), Oil (crude) and both natural-gas
+#: keys (including the coal-mine off-gas approximation, which shares the natural-gas
+#: value) were replaced with values implied by a parity check against BAFU's own
+#: published EF 3.1 results -- a regression of BAFU's published resource-use score
+#: against the source amount, R2 1.0 -- rather than the earlier generic net calorific
+#: value convention; see ``_REGRESSION_INFERRED_ENERGY_CONTENT`` for the caveat wording
+#: this earns. Peat and Uranium are unchanged and keep the original wording.
 ENERGY_CONTENT: dict[tuple[str, str], float] = {
-    ("Coal, hard", "kg"): 19.1,
-    ("Coal, brown", "kg"): 9.9,
-    ("Oil, crude", "kg"): 45.8,
+    ("Coal, hard", "kg"): 17.73,
+    ("Coal, brown", "kg"): 9.41,
+    ("Oil, crude", "kg"): 43.40,
     ("Peat", "kg"): 9.9,
     ("Uranium", "kg"): 560_000.0,
-    ("Gas, natural/m3", "m3"): 38.3,
-    ("Gas, natural/m3", "Nm3"): 38.3,
-    ("Gas, mine, off-gas, process, coal mining/m3", "m3"): 38.3,
-    ("Gas, mine, off-gas, process, coal mining/m3", "Nm3"): 38.3,
+    ("Gas, natural/m3", "m3"): 35.98,
+    ("Gas, natural/m3", "Nm3"): 35.98,
+    ("Gas, mine, off-gas, process, coal mining/m3", "m3"): 35.98,
+    ("Gas, mine, off-gas, process, coal mining/m3", "Nm3"): 35.98,
 }
+
+#: Round 7, decision 2026-09-14: the ``ENERGY_CONTENT`` keys whose factor was replaced
+#: by a value implied by BAFU's own published EF 3.1 resource-use scores (a regression
+#: against the source amount, R2 1.0) rather than the generic net calorific value
+#: convention the other keys still use -- ``conversion_for`` gives these one of the
+#: two inline caveat wordings it builds, naming that provenance instead of the
+#: generic NCV one. Peat and Uranium are deliberately absent: both are unchanged
+#: from before this round and keep the original wording.
+_REGRESSION_INFERRED_ENERGY_CONTENT: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("Coal, hard", "kg"),
+        ("Coal, brown", "kg"),
+        ("Oil, crude", "kg"),
+        ("Gas, natural/m3", "m3"),
+        ("Gas, natural/m3", "Nm3"),
+        ("Gas, mine, off-gas, process, coal mining/m3", "m3"),
+        ("Gas, mine, off-gas, process, coal mining/m3", "Nm3"),
+    }
+)
 
 #: Extra caveat text appended (after "; ") to the energy-content caveat for specific
 #: ``ENERGY_CONTENT`` keys, when the NCV factor alone would not disclose an assumption
@@ -316,17 +343,28 @@ def conversion_for(
     target's characterisation method, so it cannot live in the generic, method-blind
     ``unit_conversion`` table); then the generic, unit-string-only fallback.
 
-    A key also present in ``ENERGY_CONTENT_NOTES`` (decision (g), 2026-09-13: the two
-    coal-mine off-gas keys) has that extra text appended to the caveat, disclosing an
-    assumption the factor alone would not.
+    The energy-content caveat's own wording depends on the key (round 7, decision
+    2026-09-14): a key in ``_REGRESSION_INFERRED_ENERGY_CONTENT`` names the parity-check
+    regression that produced its factor; every other key keeps the original net
+    calorific value wording. A key also present in ``ENERGY_CONTENT_NOTES`` (decision
+    (g), 2026-09-13: the two coal-mine off-gas keys) has that extra text appended to
+    the caveat on top of either wording, disclosing an assumption the factor alone
+    would not.
     """
     if index.reference_unit(match.code) == "megajoule":
         energy = ENERGY_CONTENT.get((flow.name, flow.unit))
         if energy is not None:
-            caveat = (
-                f"energy content {energy:g} MJ/{flow.unit} (net calorific value convention "
-                "of the BAFU-2026 source inventory)"
-            )
+            if (flow.name, flow.unit) in _REGRESSION_INFERRED_ENERGY_CONTENT:
+                caveat = (
+                    f"energy content {energy:g} MJ/{flow.unit} (net calorific value "
+                    "inferred from BAFU's published EF 3.1 resource-use scores, "
+                    "regression R2 1.0, decision 2026-09-14)"
+                )
+            else:
+                caveat = (
+                    f"energy content {energy:g} MJ/{flow.unit} (net calorific value convention "
+                    "of the BAFU-2026 source inventory)"
+                )
             note = ENERGY_CONTENT_NOTES.get((flow.name, flow.unit))
             if note:
                 caveat = f"{caveat}; {note}"
