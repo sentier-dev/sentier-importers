@@ -83,6 +83,20 @@ climate/POF/ecotoxicity factors, the other ozone-depletion/human-toxicity ones) 
 than duplicates, and picking the code-named one must never silently drop an impact
 category the other one alone would have supplied -- when it would, this tiebreak
 declines and the ambiguity is reported as usual.
+
+Round 6, decision 2026-09-14: a label-collision guard inside ``_pick``
+(``_label_collision``) catches the sentier-vocab pref_label-defect shape that
+``ef_index.load_label_defects`` fixes for known cases -- two or more same-leaf
+candidates sharing the exact same lowercase name but carrying different, present CAS
+numbers (two distinct real substances filed under one EF preferred label). When the
+source CAS matches NONE of them (no source CAS at all, or one naming a substance
+outside this candidate set), this is reported as
+``Unmatched("ambiguous_substances", ...)`` instead of silently resolved by name
+similarity or code order, the way an ordinary "several synonymous EF flows, identical
+factors" tie is. A source CAS that DOES match at least one candidate is treated as
+real evidence and never triggers the guard, even when more than one candidate shares
+that CAS (a genuine duplicate entry rather than a different substance) -- the ordinary
+free-choice narrowing (with its own caveat) still applies among those.
 """
 
 from __future__ import annotations
@@ -478,14 +492,29 @@ class MatchPipeline:
 
         1. every candidate's CF identity (``EfFlowIndex.identity``, which deliberately
            excludes location-specific factors -- regionalised differences are never
-           compared) agrees -- the choice is free. Prefer a candidate the source CAS
-           actually names, as long as that still leaves at least one; among what's
-           left, take whichever candidate's name is textually closest to the source,
-           then break any remaining tie by code. If the full candidate set carried
-           more than one distinct CAS, or the source CAS is known but no candidate
-           carries it while at least one candidate carries a different CAS, the choice
-           is never silent: it gets a caveat naming what was picked and what it was
-           picked over (and, in the latter case, that the source CAS matched none);
+           compared) agrees -- the choice is free, UNLESS it is actually a label
+           collision (round 6, decision 2026-09-14): two or more candidates share the
+           exact same lowercase name yet carry different, present CAS numbers, and the
+           source CAS matches NONE of them (no source CAS at all, or one that names a
+           substance absent from this candidate set entirely) -- that is not a free
+           choice between interchangeable synonyms, it is the
+           ``ef_index.load_label_defects`` shape (two distinct real substances sharing
+           one EF preferred label) showing up on a substance no curated defect entry
+           names yet, and it is reported as ``Unmatched("ambiguous_substances", ...)``
+           (``_label_collision``) rather than silently resolved. A source CAS that DOES
+           match at least one candidate is real evidence for one specific substance,
+           even when more than one EF flow shares that CAS (a genuine duplicate entry)
+           -- that is not a collision between different substances, so it falls
+           through to the ordinary free-choice narrowing below instead (still with its
+           own "never silent" caveat, since more than one candidate remains). Absent a
+           collision, prefer a candidate the source CAS actually names, as long as that
+           still leaves at least one; among what's left, take
+           whichever candidate's name is textually closest to the source, then break
+           any remaining tie by code. If the full candidate set carried more than one
+           distinct CAS, or the source CAS is known but no candidate carries it while
+           at least one candidate carries a different CAS, the choice is never silent:
+           it gets a caveat naming what was picked and what it was picked over (and, in
+           the latter case, that the source CAS matched none);
         2. identities disagree, but the source carries a CAS number that singles out
            exactly one candidate by ``flow.cas`` -- pick that one (no extra caveat: a
            matching CAS is positive evidence, not a guess, and it is checked FIRST:
@@ -561,6 +590,33 @@ class MatchPipeline:
                     ),
                 )
                 distinct_cas = {c.flow.cas for c in candidates if c.flow.cas is not None}
+                # Round 6, decision 2026-09-14: a label collision, not a free choice --
+                # two or more of these identically-factored candidates share the exact
+                # same lowercase name yet carry different, present CAS numbers (the
+                # sentier-vocab pref_label-defect shape ``label_defects.yaml`` fixes:
+                # two distinct real substances sharing one EF preferred label). Unlike
+                # the "free choice among genuine synonyms" case below, silently picking
+                # one here would repeat that very mistake, so this is checked first and
+                # fails loud UNLESS the source CAS matches at least one candidate (real
+                # evidence for one specific substance, even if more than one candidate
+                # happens to share that CAS -- a duplicate entry, not a collision).
+                if (
+                    len({c.flow.name.strip().lower() for c in candidates}) == 1
+                    and len(distinct_cas) > 1
+                ):
+                    singled_out = (
+                        [c for c in candidates if c.flow.cas == normalised_cas]
+                        if normalised_cas is not None
+                        else []
+                    )
+                    if not singled_out:
+                        return self._label_collision(candidates, cas)
+                    # the source CAS matched at least one candidate: real evidence for
+                    # the right substance, even if more than one EF flow shares that
+                    # CAS (e.g. a genuine duplicate entry) -- not a guess between
+                    # different substances, so this is not a label collision. Fall
+                    # through to the ordinary free-choice/CAS-pool narrowing below,
+                    # which still discloses every candidate it chose over.
                 # the source CAS is known but names none of the tied candidates, while
                 # at least one of them carries a different (non-None) CAS: the free
                 # choice above is still silently arbitrary among them and needs the
@@ -668,6 +724,43 @@ class MatchPipeline:
         return Unmatched(
             "ambiguous_substances",
             f"{key} finds {len(candidates)} EF flows with different factors for {names}; {source}",
+        )
+
+    @staticmethod
+    def _label_collision(candidates: list[Candidate], cas: str | None) -> Unmatched:
+        """Report a same-leaf EF pref_label collision: two or more candidates sharing
+        the exact same lowercase name but carrying different, present CAS numbers,
+        when the source CAS matches none of them (or there is no source CAS).
+
+        Round 6, decision 2026-09-14: this is the sentier-vocab label-defect shape
+        (``ef_index.load_label_defects``) surfacing on a substance no curated defect
+        entry names yet -- two distinct real substances sharing one EF preferred
+        label. Never resolved silently, unlike the ordinary "several EF flows share
+        one name with identical factors" free choice (``_pick``'s own identity-agree
+        branch): those really are interchangeable synonyms for one substance, this is
+        not.
+
+        The "N EF flows" count only ever counts CAS-bearing candidates (the ones the
+        CAS list actually names); a candidate with no CAS at all can still be part of
+        ``candidates`` (the guard only requires 2+ *distinct present* CAS among them),
+        and is disclosed separately ("and M without CAS") rather than silently folded
+        into a count the CAS list does not itself account for.
+        """
+        name = candidates[0].flow.name.strip().lower()
+        with_cas = [c for c in candidates if c.flow.cas is not None]
+        without_cas = len(candidates) - len(with_cas)
+        cas_values = ", ".join(sorted({c.flow.cas for c in with_cas}))
+        count = f"{len(with_cas)}" + (f" (and {without_cas} without CAS)" if without_cas else "")
+        normalised_cas = normalise_cas(cas)
+        source = (
+            "no source CAS to arbitrate"
+            if normalised_cas is None
+            else f"the source CAS {normalised_cas} matches none of them"
+        )
+        return Unmatched(
+            "ambiguous_substances",
+            f"label collision: {count} EF flows named {name} with different "
+            f"CAS ({cas_values}); {source}",
         )
 
 

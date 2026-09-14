@@ -222,6 +222,10 @@ def test_identity_tie_prefers_source_cas_with_a_caveat(pipeline):
     # numbers; the source CAS singles one out, but the choice is never silent.
     got = pipeline.match(water("Molybdenum", "river"), "7439-98-7")
     assert got.code == "mo-b"
+    # round 6, decision 2026-09-14 (third cut): the JRC spelling ("molybdenum") and
+    # the vocab pref_label ("Molybdenum") agree in substance here, only differing
+    # in case, so _pick_jrc_name deliberately prefers the vocab casing -- the
+    # matching key (and this caveat) reads "Molybdenum", same as before this round.
     assert got.caveats == (
         "2 EF flows with identical factors; chose Molybdenum (CAS 7439-98-7) over "
         "Molybdenum (CAS 16065-87-5)",
@@ -237,16 +241,28 @@ def test_identity_tie_source_cas_matching_none_still_gets_a_caveat(pipeline):
         BafuFlow("Molybdenum", "emissions to soil", "industrial", "kg"), "7439-98-7"
     )
     assert got.code == "mo-soil-dup"  # ties break by code once the CAS pool is empty
+    # round 6, decision 2026-09-14 (third cut): same reasoning as the test above --
+    # JRC and vocab agree in substance, differing only in case, so the vocab
+    # casing ("Molybdenum") wins as the matching key.
     assert got.caveats == (
         "2 EF flows with identical factors; source CAS 7439-98-7 matches none, chose "
         "Molybdenum (CAS none) over Molybdenum (CAS 16065-87-5)",
     )
 
 
-def test_identity_tie_without_cas_falls_back_to_code_with_a_caveat(pipeline):
+def test_identity_tie_without_cas_is_now_a_label_collision(pipeline):
+    # round 6, decision 2026-09-14: mo-a/mo-b share the exact same name ("Molybdenum")
+    # with different, present CAS numbers -- previously silently picked (with a
+    # caveat) by code order; the label-collision guard in _pick now refuses to guess
+    # instead, since this is exactly the sentier-vocab pref_label-defect shape
+    # (see test_identity_tie_prefers_source_cas_with_a_caveat below for the case a
+    # source CAS DOES single one out, which is unaffected).
     got = pipeline.match(water("Molybdenum", "river"), None)
-    assert got.code == "mo-a"
-    assert got.caveats != ()
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="label collision: 2 EF flows named molybdenum with different CAS "
+        "(16065-87-5, 7439-98-7); no source CAS to arbitrate",
+    )
 
 
 def test_identity_tie_with_one_shared_cas_has_no_caveat(pipeline):
@@ -978,6 +994,9 @@ def test_refrigerant_code_tiebreak_picks_the_named_flow_when_it_drops_no_categor
     # CFC-10 shares its one method with Carbon Tetrachloride, so it drops nothing.
     got = rc_pipeline.match(air("Methane, tetrachloro-, CFC-10"), "56-23-5")
     assert got.code == "cfc10-rc" and got.tier == "cas"
+    # round 6, decision 2026-09-14 (third cut): JRC ("carbon tetrachloride") and
+    # vocab ("Carbon Tetrachloride") agree in substance, differing only in case,
+    # so _pick_jrc_name prefers the vocab casing as the matching key.
     assert got.caveats == (
         "EF carries a second flow for this CAS with different factors (Carbon "
         "Tetrachloride); the flow named by the source's refrigerant code is used; "
@@ -1044,3 +1063,150 @@ def test_cas_singling_out_a_candidate_beats_the_refrigerant_code(tmp_path_factor
     # OTHER candidate ("CFC-99") exactly, CAS evidence must win.
     got = pipe.match(air("Widget9, CFC-99"), "222-22-2")
     assert got.code == "generic" and got.caveats == ()
+
+
+# --- label collision guard (round 6, decision 2026-09-14, synthetic twins) ------
+
+#: Two EF flows with identical factors (so they land in _pick's "identities agree"
+#: branch) sharing the exact same pref_label but carrying different, present CAS --
+#: the sentier-vocab label-defect shape (ef_index.load_label_defects), reproduced
+#: synthetically so the guard is pinned independently of any real defect entry.
+_TWIN_CF = [
+    cf_row("twin-a", "sodium", WATER_FRESH, value=93308.0),
+    cf_row("twin-b", "sodium", WATER_FRESH, value=93308.0),
+    # a third, differently-named flow sharing a synonym with twin-a: a genuine
+    # synonym-tier tie between two DIFFERENT substances, not a label collision.
+    cf_row("syn-a", "alpha", WATER_FRESH, value=1.0),
+    cf_row("syn-b", "beta", WATER_FRESH, value=1.0),
+]
+_TWIN_VOCAB = [
+    vocab_row("twin-a", "Sodium", cas="1120-01-0"),
+    vocab_row("twin-b", "Sodium", cas="7440-23-5"),
+    vocab_row("syn-a", "Alpha", alt=["Widget"], cas="111-11-1"),
+    vocab_row("syn-b", "Beta", alt=["Widget"], cas="222-22-2"),
+]
+
+
+@pytest.fixture(scope="module")
+def twin_pipeline(tmp_path_factory):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("label-collision"), _TWIN_CF, _TWIN_VOCAB),
+        label_defects={},  # isolate the guard from the shipped label_defects.yaml
+    )
+    return default_pipeline(index, {})
+
+
+def test_label_collision_without_a_source_cas_is_ambiguous(twin_pipeline):
+    got = twin_pipeline.match(water("Sodium", "river"), None)
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="label collision: 2 EF flows named sodium with different CAS "
+        "(1120-01-0, 7440-23-5); no source CAS to arbitrate",
+    )
+
+
+def test_label_collision_with_a_foreign_source_cas_is_ambiguous(twin_pipeline):
+    got = twin_pipeline.match(water("Sodium", "river"), "9999-99-9")
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="label collision: 2 EF flows named sodium with different CAS "
+        "(1120-01-0, 7440-23-5); the source CAS 9999-99-9 matches none of them",
+    )
+
+
+def test_label_collision_is_resolved_when_the_source_cas_singles_one_out(twin_pipeline):
+    # existing behaviour (module docstring, rule 2): a source CAS that DOES single
+    # out exactly one candidate always wins, even though names collide.
+    got = twin_pipeline.match(water("Sodium", "river"), "7440-23-5")
+    assert got.code == "twin-b"
+    # round 6, decision 2026-09-14 (third cut): JRC ("sodium") and vocab ("Sodium")
+    # agree in substance here, differing only in case, so the vocab casing wins.
+    assert got.caveats == (
+        "2 EF flows with identical factors; chose Sodium (CAS 7440-23-5) over "
+        "Sodium (CAS 1120-01-0)",
+    )
+
+
+def test_same_factor_different_name_synonym_tie_is_not_a_label_collision(twin_pipeline):
+    # syn-a/syn-b are matched via their shared synonym "Widget", not by name, and
+    # carry different pref_labels ("Alpha"/"Beta") -- a real free choice between two
+    # distinct EF flows a BAFU synonym happens to reach both of, not a label
+    # collision (the guard is scoped to candidates sharing the exact same name).
+    got = twin_pipeline.match(water("Widget", "river"), None)
+    assert isinstance(got, Match)
+    assert got.code in {"syn-a", "syn-b"}
+    assert got.caveats != ()
+
+
+#: Three same-name, same-leaf, identically-factored candidates: two share the real
+#: substance's own CAS (a duplicate entry -- e.g. two EF rows for the same species),
+#: the third is the mislabelled surfactant. A source CAS naming the real substance
+#: must single out the *pair*, not fail as a collision, since it is real evidence
+#: for a specific substance even though two candidates still tie inside that pair.
+_TRIPLET_CF = [
+    cf_row("trip-a", "sodium", WATER_FRESH, value=93308.0),
+    cf_row("trip-b", "sodium", WATER_FRESH, value=93308.0),
+    cf_row("trip-c", "sodium", WATER_FRESH, value=93308.0),
+]
+_TRIPLET_VOCAB = [
+    vocab_row("trip-a", "Sodium", cas="7440-23-5"),
+    vocab_row("trip-b", "Sodium", cas="7440-23-5"),
+    vocab_row("trip-c", "Sodium", cas="1120-01-0"),
+]
+
+
+@pytest.fixture(scope="module")
+def triplet_pipeline(tmp_path_factory):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(
+            tmp_path_factory.mktemp("label-collision-triplet"), _TRIPLET_CF, _TRIPLET_VOCAB
+        ),
+        label_defects={},
+    )
+    return default_pipeline(index, {})
+
+
+def test_source_cas_matching_a_duplicate_pair_is_not_a_label_collision(triplet_pipeline):
+    # the source CAS singles out trip-a/trip-b (both the real substance), leaving
+    # trip-c (the surfactant, a different CAS) excluded -- real evidence, not a
+    # collision, even though two candidates remain tied against each other.
+    got = triplet_pipeline.match(water("Sodium", "river"), "7440-23-5")
+    assert isinstance(got, Match)
+    assert got.code in {"trip-a", "trip-b"}
+    assert got.caveats != ()  # still never silent: names what it chose over
+
+
+#: A third variant: one of the same-name candidates carries no CAS at all, alongside
+#: two others with different, present CAS -- the guard still fires (2+ distinct
+#: present CAS), but the "N EF flows" count must name only the CAS-bearing ones and
+#: disclose the CAS-less one separately, never silently fold it into that count.
+_NOCAS_CF = [
+    cf_row("nocas-a", "sodium", WATER_FRESH, value=93308.0),
+    cf_row("nocas-b", "sodium", WATER_FRESH, value=93308.0),
+    cf_row("nocas-c", "sodium", WATER_FRESH, value=93308.0),
+]
+_NOCAS_VOCAB = [
+    vocab_row("nocas-a", "Sodium", cas="1120-01-0"),
+    vocab_row("nocas-b", "Sodium", cas="7440-23-5"),
+    vocab_row("nocas-c", "Sodium"),  # no CAS at all
+]
+
+
+@pytest.fixture(scope="module")
+def nocas_pipeline(tmp_path_factory):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(
+            tmp_path_factory.mktemp("label-collision-nocas"), _NOCAS_CF, _NOCAS_VOCAB
+        ),
+        label_defects={},
+    )
+    return default_pipeline(index, {})
+
+
+def test_label_collision_discloses_candidates_without_cas_separately(nocas_pipeline):
+    got = nocas_pipeline.match(water("Sodium", "river"), None)
+    assert got == Unmatched(
+        reason="ambiguous_substances",
+        detail="label collision: 2 (and 1 without CAS) EF flows named sodium with "
+        "different CAS (1120-01-0, 7440-23-5); no source CAS to arbitrate",
+    )

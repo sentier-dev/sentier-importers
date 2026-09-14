@@ -24,14 +24,24 @@ Unit/dimension conversion (``unit_conversion``, ``conversion_for``, ``ENERGY_CON
 Round 5, decision 2026-09-14 (``_name_only_match``, wired into ``_decide``): a flow the
 pipeline gives up on entirely (``Unmatched(reason="no_ef_flow")``) over the sibling
 nomenclature package's inclusive index gets one more try -- "for the ones with names:
-we map, else: nothing". Every EF flow anywhere in the inclusive index whose label
-equals the source name, case-insensitively, is looked up regardless of bucket
+we map, else: nothing". Every EF flow anywhere in the inclusive index whose name
+(``EfFlow.name``, the matching key, not ``EfFlow.label``) equals the source name,
+case-insensitively, is looked up regardless of bucket
 (``ef_index.EfFlowIndex.by_name_any_bucket``); if at least one exists and every one of
 them is uncharacterised, the flow is aligned onto one of them by name alone, with no
 context and no factor. A single characterised namesake vetoes the alignment entirely
 (this source's own characterised-only index can never reach this rule at all --
 gated on ``EfFlowIndex.includes_uncharacterised``). See ``_name_only_match`` and
 ``entry_for`` for the full rule and the comment it produces.
+
+Round 6, decision 2026-09-14: a characterised EF target's matching key
+(``EfFlow.name``) and its display name (``EfFlow.label``) are no longer the same
+thing -- ``ef_index.EfFlowIndex.from_tables`` names a characterised flow from the CF
+table's own JRC spelling for matching, but ``entry_for`` emits ``target["name"]``
+from ``ef_flow.label`` (the vocab pref_label, when it was kept), so a BAFU flow that
+matches on the JRC name can still emit the nicer, more familiar vocab spelling. See
+``ef_index.py``'s own docstring and ``EfFlow.label`` for the full rule (curated
+defects and same-bucket collisions suppress the vocab label back to the JRC name).
 """
 
 from __future__ import annotations
@@ -591,8 +601,12 @@ class BafuEfMatchedSource(Source):
         omit_context = uncertain_energy or name_only
 
         target: Record = {"code": match.code}
-        if ef_flow.name:
-            target["name"] = ef_flow.name
+        if ef_flow.label:
+            # round 6, decision 2026-09-14 (third cut): display the vocab pref_label
+            # when EfFlowIndex kept it (EfFlow.label), never the bare matching key --
+            # for a defect-listed or collision-suppressed flow, or an uncharacterised
+            # one, EfFlow.label already IS the matching key (ef_index.py).
+            target["name"] = ef_flow.label
         if ef_flow.context and not omit_context:
             target["context"] = list(ef_flow.context)
         if match.location:

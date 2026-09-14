@@ -9,7 +9,10 @@ from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
 from sentier_importers.sources.bafu.ecospold import flow_id
-from sentier_importers.sources.bafu.mappings_biosphere import BafuBiosphereMappingsSource
+from sentier_importers.sources.bafu.mappings_biosphere import (
+    EXCLUDED_SOURCE_NAMES,
+    BafuBiosphereMappingsSource,
+)
 
 # Vendored copy of sentier-mappings/schema/randonneur-package.schema.json so tests are
 # self-contained (no dependency on a sibling checkout path — CI has no such path).
@@ -142,12 +145,44 @@ def test_stringified_nan_never_reaches_an_entry():
     )
 
 
+def test_nullish_target_name_is_dropped_rather_than_shipped_blank():
+    entry = _transform([_row(target_name="nan")])[0]
+    assert "name" not in entry["target"]
+
+
+def test_clean_treats_a_real_none_value_as_nullish():
+    """A missing/None parquet cell (not just the "nan" string sentinel) is nullish too."""
+    entry = _transform([_row(source_unit=None, target_unit=None)])[0]
+    assert "unit" not in entry["source"]
+    assert "unit" not in entry["target"]
+
+
 def test_row_without_a_target_code_is_dropped():
     assert _transform([_row(target_code="")]) == []
 
 
 def test_non_ef_target_is_dropped():
     assert _transform([_row(target_db="ecoinvent-3.9.1-biosphere")]) == []
+
+
+def test_metiram_is_withheld_regardless_of_its_upstream_target():
+    # decision 2026-09-14: carbonminds pairs BAFU Metiram with EF Zineb, a
+    # different dithiocarbamate fungicide (EF 3.1 has no Metiram flow of its
+    # own); shipping that row would assert a factor for the wrong substance.
+    assert "metiram" in EXCLUDED_SOURCE_NAMES
+    rows = [_row(source_name="Metiram", target_name="zineb")]
+    assert _transform(rows) == []
+
+
+def test_excluded_source_names_match_is_case_insensitive():
+    assert _transform([_row(source_name="METIRAM")]) == []
+    assert _transform([_row(source_name="metiram")]) == []
+
+
+def test_excluded_source_names_do_not_withhold_unrelated_flows():
+    # a name that merely contains the excluded spelling as a substring must not
+    # be withheld -- the guard matches the whole cleaned name only.
+    assert len(_transform([_row(source_name="Metiram Zinc")])) == 1
 
 
 def test_assembled_package_validates_against_the_randonneur_schema():
