@@ -282,8 +282,8 @@ def test_matched_source_never_emits_an_uncharacterised_target_even_if_forced(tmp
 
 def test_natural_gas_volume_converts_via_energy_content_onto_the_fossil_resource_flow(tmp_path):
     # EF characterises fossil resources in megajoule (resource-use-fossils); a BAFU
-    # m3-denominated natural-gas flow has a fixed ecoinvent v2 net calorific value
-    # (38.3 MJ/m3, decision 2026-09-13), so it converts rather than being withheld.
+    # m3-denominated natural-gas flow has a fixed net calorific value (35.98 MJ/m3,
+    # round 7, decision 2026-09-14), so it converts rather than being withheld.
     cf = CF + [
         cf_row(
             "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
@@ -300,8 +300,8 @@ def test_natural_gas_volume_converts_via_energy_content_onto_the_fossil_resource
     outcome = outcomes[flow]
     assert isinstance(outcome, Match)
     entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
-    assert entry["conversion_factor"] == 38.3
-    assert "38.3 MJ/m3" in entry["comment"]
+    assert entry["conversion_factor"] == 35.98
+    assert "35.98 MJ/m3" in entry["comment"]
     rows = source.transform(records)
     assert GAS in {r["source"]["code"] for r in rows}
 
@@ -312,8 +312,9 @@ def test_gas_mine_off_gas_volume_converts_via_the_approximated_energy_content(
     # decision (g), 2026-09-13: "Gas, mine, off-gas, process, coal mining/m3" (unit
     # Nm3) candidates onto "Natural gas" (as the real BAFU inventory's shared CAS
     # 8006-14-2 also does); the energy-content table now carries a dedicated key for
-    # this exact (name, unit) pair (38.3 MJ/Nm3, the natural-gas value), so it
-    # converts instead of being withheld, and the caveat discloses the approximation.
+    # this exact (name, unit) pair (35.98 MJ/Nm3, the natural-gas value, round 7,
+    # decision 2026-09-14), so it converts instead of being withheld, and the caveat
+    # discloses the approximation.
     cf = CF + [
         cf_row(
             "gas-mj", "natural gas", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0
@@ -336,8 +337,8 @@ def test_gas_mine_off_gas_volume_converts_via_the_approximated_energy_content(
     outcome = outcomes[flow]
     assert isinstance(outcome, Match)
     entry = source.entry_for(flow, outcome, records[0]["inputs"].index)
-    assert entry["conversion_factor"] == 38.3
-    assert "38.3 MJ/Nm3" in entry["comment"]
+    assert entry["conversion_factor"] == 35.98
+    assert "35.98 MJ/Nm3" in entry["comment"]
     assert (
         "coal-mine off-gas approximated as natural gas (decision 2026-09-13)" in entry["comment"]
     )
@@ -468,7 +469,8 @@ def test_resource_correction_flow_carries_its_own_caveat_onto_a_characterised_ta
 
 
 def test_coal_hard_alias_converts_via_energy_content(tmp_path):
-    # "Coal, hard" -> "Hard Coal" via the shipped alias; energy content 19.1 MJ/kg.
+    # "Coal, hard" -> "Hard Coal" via the shipped alias; energy content 17.73 MJ/kg
+    # (round 7, decision 2026-09-14).
     cf = CF + [
         cf_row("coal", "hard coal", RES_GROUND, method="ef-3.1:resource-use-fossils", value=1.0)
     ]
@@ -482,8 +484,8 @@ def test_coal_hard_alias_converts_via_energy_content(tmp_path):
     match = r["inputs"].pipeline.match(flow, None)
     assert isinstance(match, Match) and match.tier == "alias"
     entry = source.entry_for(flow, match, r["inputs"].index)
-    assert entry["conversion_factor"] == 19.1
-    assert "19.1 MJ/kg" in entry["comment"]
+    assert entry["conversion_factor"] == 17.73
+    assert "17.73 MJ/kg" in entry["comment"]
 
 
 def test_uranium_mass_onto_an_ionising_radiation_flow_is_withheld_as_unit_mismatch(tmp_path):

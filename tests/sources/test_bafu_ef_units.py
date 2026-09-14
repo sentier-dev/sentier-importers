@@ -2,6 +2,7 @@ import pytest
 from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.pipeline import Match
 from sentier_importers.sources.bafu.ef_units import (
+    _REGRESSION_INFERRED_ENERGY_CONTENT,
     ENERGY_CONTENT,
     ENERGY_CONTENT_NOTES,
     NOMENCLATURE_TARGET_DIMENSION,
@@ -117,23 +118,23 @@ def test_nomenclature_target_unit_never_applies_water_density_outside_mass():
 #: rather than merely shrinking the parametrization. The fourth element is the extra
 #: ``ENERGY_CONTENT_NOTES`` text a key carries, or ``None`` for a plain NCV entry.
 _ENERGY_CONTENT_CASES = [
-    ("Coal, hard", "kg", 19.1, None),
-    ("Coal, brown", "kg", 9.9, None),
-    ("Oil, crude", "kg", 45.8, None),
+    ("Coal, hard", "kg", 17.73, None),
+    ("Coal, brown", "kg", 9.41, None),
+    ("Oil, crude", "kg", 43.40, None),
     ("Peat", "kg", 9.9, None),
     ("Uranium", "kg", 560_000.0, None),
-    ("Gas, natural/m3", "m3", 38.3, None),
-    ("Gas, natural/m3", "Nm3", 38.3, None),
+    ("Gas, natural/m3", "m3", 35.98, None),
+    ("Gas, natural/m3", "Nm3", 35.98, None),
     (
         "Gas, mine, off-gas, process, coal mining/m3",
         "m3",
-        38.3,
+        35.98,
         "coal-mine off-gas approximated as natural gas (decision 2026-09-13)",
     ),
     (
         "Gas, mine, off-gas, process, coal mining/m3",
         "Nm3",
-        38.3,
+        35.98,
         "coal-mine off-gas approximated as natural gas (decision 2026-09-13)",
     ),
 ]
@@ -146,6 +147,22 @@ def test_energy_content_table_has_exactly_these_nine_entries():
 def test_energy_content_notes_cover_exactly_the_two_mine_gas_keys():
     assert dict(ENERGY_CONTENT_NOTES) == {
         (n, u): note for n, u, _f, note in _ENERGY_CONTENT_CASES if note is not None
+    }
+
+
+def test_regression_inferred_energy_content_covers_exactly_these_keys():
+    # round 7, decision 2026-09-14: Coal (hard/brown), Oil (crude) and both
+    # natural-gas keys (including the coal-mine off-gas approximation) earn the
+    # regression caveat wording; Peat and Uranium are unchanged and keep the
+    # original wording.
+    assert _REGRESSION_INFERRED_ENERGY_CONTENT == {
+        ("Coal, hard", "kg"),
+        ("Coal, brown", "kg"),
+        ("Oil, crude", "kg"),
+        ("Gas, natural/m3", "m3"),
+        ("Gas, natural/m3", "Nm3"),
+        ("Gas, mine, off-gas, process, coal mining/m3", "m3"),
+        ("Gas, mine, off-gas, process, coal mining/m3", "Nm3"),
     }
 
 
@@ -171,10 +188,17 @@ def test_conversion_for_applies_every_energy_content_table_entry(
         code="target", tier="name", placement="exact", location=None, candidates=1, caveats=()
     )
     got = conversion_for(flow, match, index)
-    caveat = (
-        f"energy content {factor:g} MJ/{unit} (net calorific value convention of the "
-        "BAFU-2026 source inventory)"
-    )
+    if (name, unit) in _REGRESSION_INFERRED_ENERGY_CONTENT:
+        caveat = (
+            f"energy content {factor:g} MJ/{unit} (net calorific value inferred from "
+            "BAFU's published EF 3.1 resource-use scores, regression R2 1.0, decision "
+            "2026-09-14)"
+        )
+    else:
+        caveat = (
+            f"energy content {factor:g} MJ/{unit} (net calorific value convention of the "
+            "BAFU-2026 source inventory)"
+        )
     if note:
         caveat = f"{caveat}; {note}"
     assert got == (factor, caveat)
