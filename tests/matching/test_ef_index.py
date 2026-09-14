@@ -154,6 +154,23 @@ def test_lookups_are_case_insensitive_and_bucket_scoped(tmp_path):
     assert {f.code for f in index.by_synonym("methane, tetrachloro-, cfc-10", "air")} == {"ccl4"}
 
 
+def test_by_name_any_bucket_finds_a_namesake_regardless_of_bucket(tmp_path):
+    # round 5, decision 2026-09-14: unlike every other lookup on this index,
+    # by_name_any_bucket ignores bucket entirely -- exactly what the nomenclature
+    # package's name-only alignment needs (mappings_biosphere_matched._name_only_match).
+    cf = [
+        cf_row("widget-air", "widget", AIR_UNSPEC, value=1.0),
+        cf_row("widget-land", "widget", LAND_OCC, method="ef-3.1:land-use", value=1.0),
+    ]
+    vocab = [vocab_row("widget-air", "Widget"), vocab_row("widget-land", "Widget")]
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, cf, vocab))
+    # case/whitespace-insensitive, like every other lookup, and code-sorted
+    assert [f.code for f in index.by_name_any_bucket(" WIDGET ")] == ["widget-air", "widget-land"]
+    assert index.by_name_any_bucket("nonexistent") == []
+    # the ordinary bucket-scoped lookup still only ever sees its own bucket
+    assert {f.code for f in index.by_name("widget", "air")} == {"widget-air"}
+
+
 def test_names_and_synonyms_are_stripped_of_whitespace(tmp_path):
     rows = [cf_row("lonely2", "ozone\xa0", AIR_UNSPEC)]
     index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, rows, []))

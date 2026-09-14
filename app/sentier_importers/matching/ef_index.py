@@ -124,6 +124,12 @@ class EfFlowIndex:
     and ``by_cas`` each return a fresh, code-sorted list; ``vector`` returns a fresh
     dict; ``identity`` returns a tuple sorted by ``method_id``. Callers may hold onto
     or mutate any of these results without affecting the index.
+
+    ``by_name_any_bucket`` is the one un-bucketed lookup: every flow whose label
+    matches, across every bucket at once, code-sorted like the rest. Round 5, decision
+    2026-09-14: it exists only for the nomenclature package's name-only alignment
+    (``mappings_biosphere_matched._name_only_match``), which deliberately looks past
+    the bucket a source flow's own category would restrict it to.
     """
 
     def __init__(
@@ -142,12 +148,15 @@ class EfFlowIndex:
         self._flows: dict[str, EfFlow] = {}
         self._vectors: dict[str, dict[str, float]] = {code: dict(v) for code, v in vectors.items()}
         by_name: dict[tuple[str, str | None], list[EfFlow]] = {}
+        by_name_any_bucket: dict[str, list[EfFlow]] = {}
         by_synonym: dict[tuple[str, str | None], list[EfFlow]] = {}
         by_cas: dict[tuple[str, str | None], list[EfFlow]] = {}
         for flow in flows:
             self._flows[flow.code] = flow
             bucket = flow.bucket
-            by_name.setdefault((flow.name.strip().lower(), bucket), []).append(flow)
+            name_key = flow.name.strip().lower()
+            by_name.setdefault((name_key, bucket), []).append(flow)
+            by_name_any_bucket.setdefault(name_key, []).append(flow)
             for synonym in flow.synonyms:
                 by_synonym.setdefault((synonym.strip().lower(), bucket), []).append(flow)
             if flow.cas is not None:
@@ -159,6 +168,9 @@ class EfFlowIndex:
             return {key: sorted(items, key=lambda f: f.code) for key, items in index.items()}
 
         self._by_name = _sorted(by_name)
+        self._by_name_any_bucket = {
+            key: sorted(items, key=lambda f: f.code) for key, items in by_name_any_bucket.items()
+        }
         self._by_synonym = _sorted(by_synonym)
         self._by_cas = _sorted(by_cas)
         self._sorted_flows: tuple[EfFlow, ...] = tuple(
@@ -335,6 +347,18 @@ class EfFlowIndex:
     def by_name(self, name: str, bucket: str | None) -> list[EfFlow]:
         """Flows in ``bucket`` whose label matches ``name`` (case- and whitespace-insensitive)."""
         return list(self._by_name.get((name.strip().lower(), bucket), []))
+
+    def by_name_any_bucket(self, name: str) -> list[EfFlow]:
+        """Every indexed flow whose label matches ``name`` (case/whitespace-insensitive),
+        in ANY bucket, code-sorted.
+
+        Unlike ``by_name``, not scoped to one bucket: used only by the nomenclature
+        package's round-5 name-only alignment (``mappings_biosphere_matched.
+        _name_only_match``), which recovers an EF namesake living in a different
+        bucket than the source flow's own category would place it in (e.g. a resource
+        extraction whose only EF namesake sits among soil-emission leaves).
+        """
+        return list(self._by_name_any_bucket.get(name.strip().lower(), []))
 
     def by_synonym(self, name: str, bucket: str | None) -> list[EfFlow]:
         """Flows in ``bucket`` whose synonym matches ``name`` (case/whitespace-insensitive)."""
