@@ -405,6 +405,23 @@ class AliasMatcher:
     Accepts either plain ``str`` targets or ``Alias`` values; a plain string is wrapped
     into a target-only ``Alias``. When the matched alias carries a caveat, every
     candidate it produces carries that caveat too.
+
+    Round 6, decision 2026-09-14 (``ef_index`` naming, third cut): a characterised EF
+    flow's matching key (``EfFlow.name``) is now the CF table's own JRC spelling, not
+    the vocab pref_label these aliases were curated against -- the vocab label
+    survives, when kept, as ``EfFlow.label`` and a synonym (``EfFlowIndex.
+    from_tables``). So a target string that still names a flow's pref_label exactly
+    (not its JRC name) is looked up by synonym too, but only accepted when that
+    tells us something a plain synonym hit alone would not: every matching flow's
+    OWN displayed label (``EfFlow.label``, never just any alt_label it happens to
+    share the target string with) equals the target, and every one of them is the
+    same identity (``(name, cas)`` -- distinct EF rows for one physical substance are
+    fine, e.g. genuine duplicates, but two DIFFERENT substances that both merely
+    list the target as one alt_label among many are not this alias's business at
+    all, e.g. "Water" must never fall through onto "Water Vapour" just because
+    "water" appears somewhere in its long synonym list). Falls back to synonym only
+    when the name lookup itself finds nothing -- a target that resolves by name is
+    never second-guessed by also checking synonyms.
     """
 
     tier = "alias"
@@ -417,11 +434,28 @@ class AliasMatcher:
         }
 
     def candidates(self, flow: BafuFlow, cas: str | None, index: EfFlowIndex) -> list[Candidate]:
-        """Return EF flows whose label equals the alias table's target for ``flow.name``."""
+        """Return EF flows whose label -- or, failing that, whose OWN displayed
+        label via a synonym hit, unambiguously -- equals the alias table's target
+        for ``flow.name``."""
         alias = self._aliases.get(flow.name.strip().lower())
         if alias is None:
             return []
-        found = _lookup(index.by_name(alias.target, _bucket(flow)), self.tier)
+        bucket = _bucket(flow)
+        matched = index.by_name(alias.target, bucket)
+        if not matched:
+            target = alias.target.strip().lower()
+            hits = [
+                f
+                for f in index.by_synonym(alias.target, bucket)
+                if f.label.strip().lower() == target
+            ]
+            # identity, not literal string equality: two EF flow codes for the very
+            # same substance can pick a differently-cased JRC spelling each (JRC's
+            # raw data is not perfectly case-consistent across codes), which must
+            # not register as "two different substances" here.
+            if len({(f.name.strip().lower(), f.cas) for f in hits}) == 1:
+                matched = hits
+        found = _lookup(matched, self.tier)
         return [replace(c, caveat=alias.caveat) for c in found]
 
 

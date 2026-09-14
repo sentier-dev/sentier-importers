@@ -3,6 +3,14 @@
 # so every line is checked against sentier-vocab's EF pref_label by hand.
 # A key whose BAFU flows can never place on the target's EF context is dead and
 # must be removed, not kept.
+#
+# Round 6, decision 2026-09-14: a target string is checked against the EF flow's
+# vocab pref_label first (the traditional convention every existing line here was
+# curated against) and its CF-table JRC spelling second, both case-insensitively --
+# AliasMatcher itself tries the JRC name first at runtime (matching.ef_index's own
+# naming authority), falling back to the vocab pref_label only when that finds
+# nothing, and only when it can do so unambiguously (see AliasMatcher's own
+# docstring). A target that matches neither is dead, same as always.
 aliases:
   particulates, < 2.5 um: Particles (PM2.5)
   particulates, < 10 um:

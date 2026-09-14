@@ -730,7 +730,7 @@ class MatchPipeline:
     def _label_collision(candidates: list[Candidate], cas: str | None) -> Unmatched:
         """Report a same-leaf EF pref_label collision: two or more candidates sharing
         the exact same lowercase name but carrying different, present CAS numbers,
-        with no source CAS singling exactly one out.
+        when the source CAS matches none of them (or there is no source CAS).
 
         Round 6, decision 2026-09-14: this is the sentier-vocab label-defect shape
         (``ef_index.load_label_defects``) surfacing on a substance no curated defect
@@ -755,7 +755,7 @@ class MatchPipeline:
         source = (
             "no source CAS to arbitrate"
             if normalised_cas is None
-            else f"the source CAS {normalised_cas} does not single one out"
+            else f"the source CAS {normalised_cas} matches none of them"
         )
         return Unmatched(
             "ambiguous_substances",

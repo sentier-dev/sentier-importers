@@ -27,12 +27,19 @@ or ``self.config`` -- everything both passes need was already built in ``parse``
 Curated and inferred membership comes straight from ``ParsedInputs.curated_codes``/
 ``inferred_codes`` (kept apart there for exactly this reason -- the sibling's own
 ``excluded`` is their union and cannot tell them apart).
+
+Round 6, decision 2026-09-14: ``parse`` logs the inclusive index's own naming
+bookkeeping (``EfFlowIndex.multi_name_codes``/``suppressed_vocab_synonyms``/
+``relabelled_count``) once, here, since this is the one place a full pipeline run
+builds the fullest (inclusive) index -- these counters are not otherwise surfaced
+anywhere in the emitted rows themselves.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 
+from loguru import logger
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.types import RawData, Record, Records, Rows
 from sentier_importers.matching.ef_index import EfFlowIndex
@@ -64,6 +71,17 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
         vocab_dir = fetch_mod.local_path(self.config.inputs.get(_VOCAB_DIR), _VOCAB_DIR)
         inclusive_index = EfFlowIndex.from_bytes(
             self.inputs["ef_cfs"].content, vocab_dir, include_uncharacterised=True
+        )
+        # round 6, decision 2026-09-14: this is the one place the fullest (inclusive)
+        # index gets built for a full pipeline run, so it is where its own naming
+        # bookkeeping is worth surfacing -- these counters are not otherwise logged
+        # or emitted anywhere in the output rows themselves.
+        logger.info(
+            "EF index naming: {} multi-spelling code(s), {} vocab label(s) "
+            "suppressed as a synonym, {} uncharacterised flow(s) relabelled",
+            inclusive_index.multi_name_codes,
+            inclusive_index.suppressed_vocab_synonyms,
+            inclusive_index.relabelled_count,
         )
         inclusive_pipeline = default_pipeline(inclusive_index, load_aliases())
         augmented = replace(

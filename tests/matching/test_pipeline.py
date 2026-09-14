@@ -1110,7 +1110,7 @@ def test_label_collision_with_a_foreign_source_cas_is_ambiguous(twin_pipeline):
     assert got == Unmatched(
         reason="ambiguous_substances",
         detail="label collision: 2 EF flows named sodium with different CAS "
-        "(1120-01-0, 7440-23-5); the source CAS 9999-99-9 does not single one out",
+        "(1120-01-0, 7440-23-5); the source CAS 9999-99-9 matches none of them",
     )
 
 

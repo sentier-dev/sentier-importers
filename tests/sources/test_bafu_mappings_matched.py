@@ -140,6 +140,10 @@ def test_emits_entries_with_flow_ids_ef_units_and_no_comment_for_clean_matches(t
         "unit": "kg",
         "context": ["emissions to air", "unspecified"],
     }
+    # round 6, decision 2026-09-14 (third cut): the matching key is the CF table's
+    # own JRC spelling, but it agrees with the vocab pref_label here except for
+    # case, so _pick_jrc_name prefers the vocab casing; entry_for's emitted name
+    # (EfFlow.label) is unaffected either way -- unchanged from before this round.
     assert co2["target"] == {
         "code": "co2-fos",
         "name": "Carbon dioxide (fossil)",
@@ -891,8 +895,13 @@ def test_chromium_vi_pipeline_match_lands_on_the_species_specific_target():
     # that decision (d) dropped the speciation guard, see
     # test_decide_no_longer_withholds_an_ion_shaped_match above; the real-data,
     # CAS-only shape of this scenario is covered directly in test_matchers.py):
-    # "Chromium VI" matched by synonym onto "Chromium(6+)", whose EF target name
-    # itself carries the oxidation state, is the right species, not a collapse.
+    # "Chromium VI" lands on the flow whose EF target name itself carries the
+    # oxidation state, the right species, not a collapse.
+    #
+    # round 6, decision 2026-09-14: the target's name is now the CF table's own JRC
+    # spelling ("chromium vi"), which equals the BAFU name outright, so this now
+    # matches at the name tier -- it no longer needs "Chromium VI" as an alt_label
+    # synonym of the (now superseded) vocab pref_label "Chromium(6+)" to be found.
     cf = [
         cf_row("cr6", "chromium vi", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=1.0)
     ]
@@ -901,7 +910,7 @@ def test_chromium_vi_pipeline_match_lands_on_the_species_specific_target():
     pipeline = default_pipeline(index, {})
     flow = BafuFlow("Chromium VI", "emissions to air", "unspecified", "kg")
     match = pipeline.match(flow, None)
-    assert isinstance(match, Match) and match.code == "cr6" and match.tier == "synonym"
+    assert isinstance(match, Match) and match.code == "cr6" and match.tier == "name"
 
 
 def test_ammonium_plus_pipeline_match_lands_on_the_curated_alias_target():

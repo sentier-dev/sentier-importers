@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from sentier_importers.core.errors import ParseError
-from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.matchers import (
     Alias,
     AliasMatcher,
@@ -44,6 +44,18 @@ _DEFAULT_CF = _CHECKOUTS_ROOT / "sentier-methods/data/01-ef-3.1/characterization
 _DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/data/elementary-flows"
 _REAL_CF = Path(os.environ.get("SENTIER_METHODS_CF", str(_DEFAULT_CF)))
 _REAL_VOCAB_DIR = Path(os.environ.get("SENTIER_VOCAB_FLOWS", str(_DEFAULT_VOCAB_DIR)))
+_REAL_INPUTS_AVAILABLE = _REAL_CF.exists() and _REAL_VOCAB_DIR.exists()
+
+
+@pytest.fixture(scope="module")
+def real_index():
+    """The real, inclusive EF index, shared by every real-data test in this module --
+    expensive enough (tens of seconds: ~90k flows from every sentier-vocab shard plus
+    the full CF table) that each test building its own would multiply the whole
+    suite's runtime for no benefit.
+    """
+    return EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
+
 
 CF = [
     cf_row("co2-bio", "carbon dioxide (biogenic)", AIR_RURAL),
@@ -215,6 +227,62 @@ def test_alias_matcher_puts_the_caveat_on_every_candidate(index):
     assert no_caveat.candidates(_air("foo"), None, index)[0].caveat is None
 
 
+#: Round 6, decision 2026-09-14: "Water Vapour" lists "Water" among its own many
+#: generic synonyms (real EF vocab rows do exactly this), but is a DIFFERENT
+#: substance from plain "Water" -- no EF flow named "Water" (by name OR by its own
+#: vocab label) exists in this fixture's soil bucket at all.
+_SOIL_INDUSTRIAL = "Emissions / Emissions to soil / Emissions to non-agricultural soil"
+_WATER_VAPOUR_CF = [cf_row("water-vapour", "water vapour", _SOIL_INDUSTRIAL)]
+_WATER_VAPOUR_VOCAB = [
+    vocab_row("water-vapour", "Water Vapour", alt=["Water", "H2O", "Steam"], cas="7732-18-6"),
+]
+
+
+@pytest.fixture(scope="module")
+def water_vapour_index(tmp_path_factory):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(
+            tmp_path_factory.mktemp("water-vapour"), _WATER_VAPOUR_CF, _WATER_VAPOUR_VOCAB
+        )
+    )
+
+
+def test_alias_synonym_fallback_does_not_fall_onto_an_unrelated_namesake(water_vapour_index):
+    # "Water" (the alias target) is not the vocab label of ANY flow in the soil
+    # bucket -- it merely appears deep in "Water Vapour"'s own synonym list. The
+    # synonym fallback must require the matched flow's OWN label to equal the
+    # target, not just any synonym hit, so this must resolve to nothing at all.
+    m = AliasMatcher({"h2o vapor source": "Water"})
+    got = m.candidates(
+        BafuFlow("H2O vapor source", "emissions to soil", "industrial", "kg"),
+        None,
+        water_vapour_index,
+    )
+    assert got == []
+
+
+#: A flow whose vocab pref_label genuinely differs from its JRC name (content, not
+#: just case) and is kept as a synonym (no defect, no collision) -- the shape the
+#: synonym fallback exists for: by_name finds nothing (the JRC name differs), but
+#: the kept vocab label (now a synonym, and EfFlow.label) resolves it unambiguously.
+_SILANE_CF = [cf_row("silane", "chlorosilane, trimethyl-", AIR_UNSPEC)]
+_SILANE_VOCAB = [vocab_row("silane", "Chlorotrimethylsilane", cas="75-77-4")]
+
+
+@pytest.fixture(scope="module")
+def silane_index(tmp_path_factory):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path_factory.mktemp("silane"), _SILANE_CF, _SILANE_VOCAB)
+    )
+
+
+def test_alias_synonym_fallback_resolves_an_unambiguous_kept_label(silane_index):
+    m = AliasMatcher({"trimethylchlorosilane": "Chlorotrimethylsilane"})
+    assert silane_index.by_name("Chlorotrimethylsilane", "air") == []  # JRC name differs
+    got = m.candidates(_air("Trimethylchlorosilane"), None, silane_index)
+    assert [c.flow.code for c in got] == ["silane"]
+
+
 def test_shipped_alias_file_loads_lowercased_and_has_the_seed_entries():
     aliases = load_aliases()
     assert aliases["particulates, < 2.5 um"].target == "Particles (PM2.5)"
@@ -288,20 +356,16 @@ def test_shipped_alias_file_has_the_seven_wood_and_water_entries_added_in_round_
         assert aliases[key] == alias
 
 
-@pytest.mark.skipif(
-    not (_REAL_CF.exists() and _REAL_VOCAB_DIR.exists()),
-    reason="real EF inputs not available",
-)
-def test_round_3_alias_targets_exist_in_the_inclusive_index():
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_round_3_alias_targets_exist_in_the_inclusive_index(real_index):
     # "Wood" and "Water" (the only two distinct targets among the seven new round-3
     # aliases) must both actually resolve in the inclusive (include_uncharacterised)
     # index, in whichever bucket their BAFU names place in -- "Wood" and "water/m3"
     # are uncharacterised (nomenclature package only); "water, unspecified" targets the
     # same characterised resource "Water" flow the pre-existing water aliases already use.
-    index = EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
-    assert index.by_name("Wood", "resource")
-    assert index.by_name("Water", "resource")
-    assert index.by_name("Water", "air")
+    assert real_index.by_name("Wood", "resource")
+    assert real_index.by_name("Water", "resource")
+    assert real_index.by_name("Water", "air")
 
 
 def test_shipped_alias_file_has_the_nineteen_entries_added_in_round_4():
@@ -363,35 +427,59 @@ def test_shipped_alias_file_has_the_nineteen_entries_added_in_round_4():
         assert aliases[key] == alias
 
 
-@pytest.mark.skipif(
-    not (_REAL_CF.exists() and _REAL_VOCAB_DIR.exists()),
-    reason="real EF inputs not available",
-)
-def test_round_4_alias_targets_exist_in_the_inclusive_index():
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_round_4_alias_targets_exist_in_the_inclusive_index(real_index):
     # every distinct target among the nineteen new round-4 aliases must resolve in
     # the inclusive (include_uncharacterised) index, in whichever bucket its BAFU name
     # places in. Only "Waste Heat", "Particles (> PM10)", "Primary Energy From Hydro
     # Power" and the four land-use targets are uncharacterised (nomenclature package
     # only); the other eleven carry factors and fire from the matched package.
-    index = EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
-    assert index.by_name("1,1,1,3,3-pentafluoropropane", "air")
-    assert index.by_name("Chlorotrimethylsilane", "air")
-    assert index.by_name("O-chlorotoluene", "air")
-    assert index.by_name("2-(Thiocyanomethylthio)benzothiazole", "air")
-    assert index.by_name("Disodium Methylarsonate", "air")
-    assert index.by_name("BENZ(a)ANTHRACENE", "air")
-    assert index.by_name("Waste Heat", "air")
-    assert index.by_name("Particles (> PM10)", "air")
-    assert index.by_name("Primary Energy From Hydro Power", "resource")
-    assert index.by_name("Chlormequat Chloride", "air")
-    assert index.by_name("Primisulfuron-methyl", "air")
-    assert index.by_name("Tributyltin", "air")
-    assert index.by_name("Benzene", "air")
-    assert index.by_name("Titanium", "resource")
-    assert index.by_name("Inland Water Bodies", "resource")
-    assert index.by_name("To Inland Water Bodies", "resource")
-    assert index.by_name("From Seabed", "resource")
-    assert index.by_name("To Seabed", "resource")
+    #
+    # round 6, decision 2026-09-14 (third cut): a characterised flow's matching
+    # key is now the CF table's own JRC spelling, not the vocab pref_label these
+    # targets were curated against; AliasMatcher itself falls back to a synonym
+    # hit only when it can do so unambiguously (every hit's OWN label equals the
+    # target, and every hit is the same (name, cas) identity), so "resolves" here
+    # mirrors that exact rule rather than a loose by_name-or-by_synonym truthiness
+    # check -- and asserts the resolved identity (CAS or code), not just that
+    # *something* came back.
+    index = real_index
+
+    def resolves(target: str, bucket: str) -> list[EfFlow]:
+        by_name = index.by_name(target, bucket)
+        if by_name:
+            return by_name
+        target_lower = target.strip().lower()
+        hits = [
+            f for f in index.by_synonym(target, bucket) if f.label.strip().lower() == target_lower
+        ]
+        return hits if len({(f.name.strip().lower(), f.cas) for f in hits}) == 1 else []
+
+    for target, bucket in [
+        ("1,1,1,3,3-pentafluoropropane", "air"),
+        ("Chlorotrimethylsilane", "air"),
+        ("O-chlorotoluene", "air"),
+        ("2-(Thiocyanomethylthio)benzothiazole", "air"),
+        ("Disodium Methylarsonate", "air"),
+        ("BENZ(a)ANTHRACENE", "air"),
+        ("Waste Heat", "air"),
+        ("Particles (> PM10)", "air"),
+        ("Primary Energy From Hydro Power", "resource"),
+        ("Chlormequat Chloride", "air"),
+        ("Primisulfuron-methyl", "air"),
+        ("Tributyltin", "air"),
+        ("Benzene", "air"),
+        ("Titanium", "resource"),
+        ("Inland Water Bodies", "resource"),
+        ("To Inland Water Bodies", "resource"),
+        ("From Seabed", "resource"),
+        ("To Seabed", "resource"),
+    ]:
+        hits = resolves(target, bucket)
+        assert hits, f"{target!r} in {bucket!r} did not resolve"
+        # every hit is the same identity: a real resolution, not several substances
+        assert len({(f.name.strip().lower(), f.cas) for f in hits}) == 1
+        assert all(f.code for f in hits)
 
 
 def test_load_aliases_raises_on_missing_aliases_key(tmp_path):
@@ -518,6 +606,10 @@ def test_land_use_matcher_collapses_a_missing_sub_class(land_index):
         _resource("Occupation, industrial area, built up"), None, land_index
     )
     assert [c.flow.code for c in got] == ["industrial-area"]
+    # round 6, decision 2026-09-14 (third cut): the EF class name embedded in the
+    # caveat is the matching key, which agrees with the vocab pref_label here
+    # except for case -- _pick_jrc_name prefers the vocab casing ("Industrial
+    # Area"), same as before this round.
     assert got[0].caveat == (
         "BAFU files this land flow under resources / unspecified; placed on EF land use; "
         "sub-class 'industrial area, built up' collapsed onto EF class 'Industrial Area'; "
