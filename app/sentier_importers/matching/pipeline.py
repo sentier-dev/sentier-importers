@@ -37,36 +37,48 @@ uncharacterised (``not Candidate.flow.characterised``) and the index was built w
 is tried before ``sub_compartment_absent``: the candidates carry no factor in any
 case, so relaxing which sub-compartment they are asserted on is a nomenclature
 statement only, never a factor claim. When the candidates share one EF leaf that
-leaf is used outright; when they spread over several, the preferred leaf is the
-bucket-level unspecified leaf for THIS source's own long-term-ness (``unspecified_leaf``
-with ``long_term`` read off the BAFU sub-compartment), falling back to the plain
-(non-long-term) unspecified leaf, then the alphabetically first leaf -- the two-step
-fallback matters because the long-term leaf never actually holds an uncharacterised
-candidate in practice, so a ``*, long-term`` source still lands on the ordinary
-unspecified leaf when that is what the candidates offer, rather than skipping straight
-to an arbitrary alphabetical pick. The caveat names every leaf the name was found in
-when there is more than one, and which one was picked, so it never overstates
-"only" when several exist. This never fires for the matched package's
-(biosphere-3-matched) characterised-only index: that index carries no uncharacterised
-flow at all, so the ``not characterised`` condition can never hold for it.
+leaf is used outright; when they spread over several, each source gets exactly one
+preferred leaf for its own long-term-ness: a long-term source (round 7, decision
+2026-09-14, and see below) is restricted to the candidate leafs that are themselves
+long-term, among which the bucket-level unspecified (long-term) leaf
+(``unspecified_leaf`` with ``long_term=True``) is preferred, else the alphabetically
+first eligible one; a non-long-term source is unrestricted, preferring the plain
+bucket-level unspecified leaf (``long_term=False``), else the alphabetically first
+candidate leaf. The caveat names every leaf the name was found in when there is more
+than one, and which one was picked, so it never overstates "only" when several exist.
+This never fires for the matched package's (biosphere-3-matched) characterised-only
+index: that index carries no uncharacterised flow at all, so the ``not characterised``
+condition can never hold for it.
 
-Round 4, decision 2026-09-13, two more placements, tried in this order, both after
-NOMENCLATURE and before giving up as ``sub_compartment_absent`` (so they never steal
-the eight existing nomenclature-package ``groundwater, long-term`` ->
-``Placement.NOMENCLATURE`` rows, which are settled before either ever runs):
+Round 4, decision 2026-09-13, one more placement, tried after NOMENCLATURE and before
+giving up as ``sub_compartment_absent``: ``Placement.DEFAULT_LEAF`` -- a ``water`` /
+``unspecified`` BAFU source whose candidates exist on neither the unspecified nor the
+unspecified (long-term) leaf, but do exist on fresh water, is placed there instead
+(``DEFAULT_LEAF`` table below); air, soil and resource get no such fallback -- there is
+no single obvious "default" leaf for them the way fresh water is the default body of
+water. Ordered after NOMENCLATURE so it never pre-empts that placement's own leaf
+preference (module docstring above; see also the ordering comment in ``_resolve``).
 
-- ``Placement.LONG_TERM_COLLAPSED``: whenever the BAFU sub-compartment carries
-  ``, long-term`` and nothing has placed yet, placement is retried with that suffix
-  stripped (``river, long-term`` -> ``river``, ``groundwater, long-term`` ->
-  ``groundwater``, ``low. pop., long-term`` -> ``low. pop.``) -- EF has no long-term
-  leaf at all for this substance, so the immediate-emission flow is used instead, with
-  a caveat saying so (plus the ordinary unspecified-fallback caveat too, when the
-  stripped placement itself only reached EXACT via that fallback).
-- ``Placement.DEFAULT_LEAF``: a ``water`` / ``unspecified`` BAFU source whose
-  candidates exist on neither the unspecified nor the unspecified (long-term) leaf, but
-  do exist on fresh water, is placed there instead (``DEFAULT_LEAF`` table below); air,
-  soil and resource get no such fallback -- there is no single obvious "default" leaf
-  for them the way fresh water is the default body of water.
+Round 7, decision 2026-09-14: ``Placement.LONG_TERM_COLLAPSED`` is retired. EF 3.1's
+``(long-term)``/``, long-term`` contexts carry factor 0 in every toxicity and
+eutrophication method; collapsing a long-term BAFU source onto the matching
+immediate-emission leaf (as ``LONG_TERM_COLLAPSED`` used to do) silently attached that
+leaf's real, nonzero factor to a flow EF itself treats as factorless -- BAFU
+``Chromium VI`` to groundwater, long-term this way alone made 45 percent of the
+curated package's human-toxicity-cancer score. A long-term BAFU source (its
+sub-compartment carries ``, long-term``) now places only onto an EF leaf that is
+itself a long-term leaf: EXACT via ``place`` (the ``, long-term`` sub-compartment's own
+family, e.g. ``river, long-term`` -> ``water, unspecified (long-term)``), or the
+UNSPECIFIED fallback onto the bucket-level unspecified (long-term) leaf where the
+bucket has one (``compartments.unspecified_leaf`` with ``long_term=True``). The same
+rule reaches the relaxed NOMENCLATURE placement above too (nomenclature package only):
+when the BAFU source is long-term, only a candidate leaf that is itself a long-term
+leaf is eligible there either -- crossing to a non-long-term leaf, even a nameless,
+factorless nomenclature-only one, would misrepresent a long-term source as an
+immediate-emission one. If none of a long-term source's candidates ever land on a
+long-term leaf, by any of the above, the flow is ``Unmatched("sub_compartment_absent")``
+in both packages -- the substance simply has no long-term flow in EF, and the
+ordinary (non-long-term) EF leaves it does have must never be substituted for it.
 
 Round 4, decision 2026-09-13, one more tiebreak inside ``_pick``, tried only after the
 source CAS itself fails to single out exactly one candidate (no source CAS, or the CAS
@@ -137,10 +149,7 @@ from sentier_importers.sources.eaternity.bridge import BafuFlow
 #: every ``*, long-term`` subcategory, whose family already owns the bucket-level
 #: long-term-unspecified leaf too (see compartments.py) -- neither ever reaches this
 #: fallback branch (the ordinary UNSPECIFIED one, keyed on the source's own
-#: sub-compartment), so neither needs a translation here. A ``*, long-term``
-#: subcategory's STRIPPED form (``river``, ``groundwater``, ``low. pop.``) is looked up
-#: here too, though, by ``Placement.LONG_TERM_COLLAPSED`` below -- and every stripped
-#: form is already a plain key in this same table.
+#: sub-compartment), so neither needs a translation here.
 _LEAF_HUMAN = {
     "groundwater": "ground water",
     "river": "fresh water",
@@ -160,22 +169,13 @@ _LEAF_HUMAN = {
 def _unspecified_caveat(subcategory: str) -> str:
     """The caveat for landing on the bucket-level unspecified fallback leaf.
 
-    Shared by the ordinary ``Placement.UNSPECIFIED`` branch (``subcategory`` is the
-    flow's own) and ``Placement.LONG_TERM_COLLAPSED``'s own stripped-fallback branch
-    (``subcategory`` is the ``, long-term``-stripped form) -- both phrase the same
-    fact the same way, so this is the one place that wording lives.
+    Used by the ordinary ``Placement.UNSPECIFIED`` branch, ``subcategory`` being the
+    flow's own.
     """
     human = _LEAF_HUMAN.get(subcategory, subcategory)
     return f"EF has no {human} flow for this substance; the unspecified context is used"
 
 
-#: Suffix a BAFU emission sub-compartment carries when it is the long-term variant of
-#: a plainer one; ``Placement.LONG_TERM_COLLAPSED`` strips it and retries placement.
-_LONG_TERM_SUFFIX = ", long-term"
-_LONG_TERM_CAVEAT = (
-    "EF has no long-term leaf for this substance; the immediate-emission flow is used "
-    "(decision 2026-09-13)"
-)
 #: Round 4, decision 2026-09-13: the one EF leaf a bucket's ``unspecified`` BAFU source
 #: falls back onto (``Placement.DEFAULT_LEAF``) when EF has neither the unspecified nor
 #: the unspecified (long-term) leaf for the substance. Only ``water`` gets one -- fresh
@@ -333,12 +333,13 @@ class MatchPipeline:
         differ in identity and no CAS singles one out); failing that, and only when
         every remaining candidate is uncharacterised and the index includes
         uncharacterised flows (nomenclature package only, decision (f)(1)), the relaxed
-        nomenclature placement (module docstring); failing that, and only when the BAFU
-        sub-compartment carries ``, long-term``, ``Placement.LONG_TERM_COLLAPSED``
-        (module docstring); failing that, and only for a ``water`` / ``unspecified``
-        source, ``Placement.DEFAULT_LEAF`` (module docstring); otherwise
-        ``sub_compartment_absent``, naming every distinct candidate name and leaf so a
-        reviewer can see what EF actually offers.
+        nomenclature placement (module docstring) -- itself guarded (round 7, decision
+        2026-09-14) so a long-term BAFU source only ever lands there on a candidate
+        leaf that is itself a long-term leaf, never on a plain one; failing that, and
+        only for a ``water`` / ``unspecified`` source, ``Placement.DEFAULT_LEAF``
+        (module docstring); otherwise ``sub_compartment_absent``, naming every
+        distinct candidate name and leaf so a reviewer can see what EF actually
+        offers.
         """
         if not candidates:
             return None
@@ -382,66 +383,61 @@ class MatchPipeline:
         if self._index.includes_uncharacterised and all(
             not c.flow.characterised for c in candidates
         ):
-            # prefer the long-term unspecified leaf for a "*, long-term" source (it
-            # never holds an uncharacterised candidate, so this is usually a no-op),
-            # then the plain unspecified leaf, then the alphabetically first leaf.
-            preferred = [
-                unspecified_leaf(bucket, long_term="long-term" in flow.subcategory),
-                unspecified_leaf(bucket, long_term=False),
-            ]
-            leaf = next((p for p in preferred if p in leafs), leafs[0])
-            if len(leafs) == 1:
-                nomenclature_caveat = (
-                    f"EF has this name only in {leaf}; placed there for nomenclature "
-                    "alignment (no factor)"
-                )
+            # Round 7, decision 2026-09-14: a long-term BAFU source (its own
+            # sub-compartment carries "long-term") may only be placed here on a
+            # candidate leaf that is itself a long-term leaf -- never on a plain
+            # (immediate-emission) one, even though these candidates carry no factor
+            # today: EF's long-term leaves are the only place a long-term source's
+            # own fate is modelled at all, and this placement must not misrepresent
+            # it as an ordinary emission (the same mistake retired
+            # Placement.LONG_TERM_COLLAPSED made outright, by a side door). A
+            # non-long-term source is unrestricted, as before: prefer the plain
+            # bucket-level unspecified leaf, then the alphabetically first leaf.
+            # Same expression as the ``placed`` list above, so a candidate whose own
+            # ``subcategory_override`` disagrees with ``flow.subcategory`` (e.g. the
+            # land-use family's "land" override) is judged by the same effective
+            # subcategory it was actually placed against, not the source's raw one.
+            effective_subcategory = candidates[0].subcategory_override or flow.subcategory
+            is_long_term_source = "long-term" in effective_subcategory
+            if is_long_term_source:
+                eligible_leafs = [
+                    candidate_leaf for candidate_leaf in leafs if "long-term" in candidate_leaf
+                ]
+                preferred = [unspecified_leaf(bucket, long_term=True)]
             else:
-                listed = ", ".join(repr(candidate_leaf) for candidate_leaf in leafs)
-                nomenclature_caveat = (
-                    f"EF has this name only in {listed}; placed on {leaf!r} "
-                    "for nomenclature alignment (no factor)"
-                )
-            leaf_candidates = [c for c in candidates if c.flow.leaf == leaf]
-            return self._pick(
-                leaf_candidates,
-                flow,
-                cas,
-                matcher.tier,
-                Placement.NOMENCLATURE,
-                (nomenclature_caveat,),
+                eligible_leafs = leafs
+                preferred = [unspecified_leaf(bucket, long_term=False)]
+            leaf = next(
+                (p for p in preferred if p in eligible_leafs),
+                eligible_leafs[0] if eligible_leafs else None,
             )
+            if leaf is not None:
+                if len(leafs) == 1:
+                    nomenclature_caveat = (
+                        f"EF has this name only in {leaf}; placed there for nomenclature "
+                        "alignment (no factor)"
+                    )
+                else:
+                    listed = ", ".join(repr(candidate_leaf) for candidate_leaf in leafs)
+                    nomenclature_caveat = (
+                        f"EF has this name only in {listed}; placed on {leaf!r} "
+                        "for nomenclature alignment (no factor)"
+                    )
+                leaf_candidates = [c for c in candidates if c.flow.leaf == leaf]
+                return self._pick(
+                    leaf_candidates,
+                    flow,
+                    cas,
+                    matcher.tier,
+                    Placement.NOMENCLATURE,
+                    (nomenclature_caveat,),
+                )
+            # a long-term source whose candidates never include a long-term leaf:
+            # decline this placement and fall through to sub_compartment_absent below.
         # Ordered after NOMENCLATURE, not before: test_relaxed_placement_falls_back_
-        # to_the_alphabetically_first_leaf and test_relaxed_placement_prefers_the_
-        # non_long_term_unspecified_leaf_too both pin the nomenclature package's own
-        # long-term/unspecified leaf preference among uncharacterised candidates, and neither
-        # LONG_TERM_COLLAPSED nor DEFAULT_LEAF (both characterised-or-not, unlike
-        # NOMENCLATURE) may pre-empt that.
-        if flow.subcategory.endswith(_LONG_TERM_SUFFIX):
-            stripped_sub = flow.subcategory[: -len(_LONG_TERM_SUFFIX)]
-            stripped_placed = [
-                (c, place(flow.category, stripped_sub, c.flow.context_path)) for c in candidates
-            ]
-            stripped_exact = [c for c, p in stripped_placed if p is Placement.EXACT]
-            if stripped_exact:
-                return self._pick(
-                    stripped_exact,
-                    flow,
-                    cas,
-                    matcher.tier,
-                    Placement.LONG_TERM_COLLAPSED,
-                    (_LONG_TERM_CAVEAT,),
-                )
-            stripped_fallback = [c for c, p in stripped_placed if p is Placement.UNSPECIFIED]
-            if stripped_fallback and self._fallback:
-                fallback_caveat = _unspecified_caveat(stripped_sub)
-                return self._pick(
-                    stripped_fallback,
-                    flow,
-                    cas,
-                    matcher.tier,
-                    Placement.LONG_TERM_COLLAPSED,
-                    (_LONG_TERM_CAVEAT, fallback_caveat),
-                )
+        # to_the_alphabetically_first_leaf pins NOMENCLATURE's own alphabetical-leaf
+        # fallback among uncharacterised candidates, and DEFAULT_LEAF
+        # (characterised-or-not, unlike NOMENCLATURE) must not pre-empt that.
         if bucket in DEFAULT_LEAF and flow.subcategory == "unspecified":
             # Gated on the FULL candidate set, not just the ones on the default leaf:
             # a candidate already sitting on either unspecified leaf (plain or

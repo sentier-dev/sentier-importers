@@ -1,6 +1,6 @@
 import pytest
 from sentier_importers.matching.compartments import Placement
-from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.matchers import Alias, Candidate
 from sentier_importers.matching.pipeline import Match, MatchPipeline, Unmatched, default_pipeline
 from sentier_importers.sources.eaternity.bridge import BafuFlow
@@ -603,6 +603,27 @@ def test_relaxed_placement_uses_the_sole_leaf_when_only_one_exists(tmp_path):
     )
 
 
+def test_relaxed_placement_declines_a_long_term_source_even_with_a_single_candidate_leaf(
+    tmp_path,
+):
+    # same single-leaf shape as the test above, but the source itself is long-term
+    # ("low. pop., long-term") and that sole candidate leaf is not -- round 7,
+    # decision 2026-09-14's guard applies even when there is only one leaf to choose
+    # from (not just when several compete and an alphabetical fallback would
+    # otherwise pick a wrong one): the placement is declined outright and the flow
+    # falls through to sub_compartment_absent.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], _WIDGET_UNCHAR_VOCAB, shards=1),
+        include_uncharacterised=True,
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(BafuFlow("Widget", "emissions to air", "low. pop., long-term", "kg"), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has widget only in: emissions to non-urban air or from high stacks",
+    )
+
+
 _TWO_LEAF_UNCHAR_VOCAB = [
     # bw="envi-air-unkn" -> "Emissions to air, unspecified"
     vocab_row("widget2-a", "Widget2", bw="envi-air-unkn"),
@@ -634,17 +655,18 @@ def test_relaxed_placement_prefers_the_unspecified_leaf_among_several(tmp_path):
     )
 
 
-def test_relaxed_placement_prefers_the_non_long_term_unspecified_leaf_too(tmp_path):
-    # a "*, long-term" source whose candidates do NOT include the long-term
-    # unspecified leaf, but DO include the plain (non-long-term) one: the plain
-    # unspecified leaf must still be preferred over the alphabetically-first leaf --
-    # the long-term unspecified leaf almost never actually holds an uncharacterised
-    # candidate in practice, so falling through only to alphabetical order here would
-    # be wrong far more often than the "prefer the long-term leaf first" rule helps.
-    # This is the real BAFU-2026 shape: Sulfate/Potassium/Scandium/... to
-    # "groundwater, long-term" candidate onto fresh water / sea water / water
-    # unspecified -- must land on "water, unspecified", not "fresh water"
-    # (alphabetically first).
+def test_relaxed_placement_declines_a_long_term_source_with_only_non_long_term_candidates(
+    tmp_path,
+):
+    # round 7, decision 2026-09-14: a "*, long-term" source whose uncharacterised
+    # candidates exist only on non-long-term leafs (fresh water, sea water, water
+    # unspecified) must never be crossed onto any of them here, even though none of
+    # them carries a factor -- that would misrepresent a long-term source as an
+    # immediate emission, exactly the mistake retired Placement.LONG_TERM_COLLAPSED
+    # made outright, by a side door. This is the real BAFU-2026 shape:
+    # Sulfate/Potassium/Scandium/... file to "groundwater, long-term" with candidates
+    # only on fresh water / sea water / water, unspecified -- withheld now
+    # (sub_compartment_absent), never pinned to "water, unspecified".
     vocab = [
         vocab_row("water-fresh", "Widget5", bw="envi-wate-suwa"),  # fresh water
         vocab_row("water-sea", "Widget5", bw="envi-wate-ocea"),  # sea water
@@ -657,12 +679,10 @@ def test_relaxed_placement_prefers_the_non_long_term_unspecified_leaf_too(tmp_pa
     got = pipe.match(
         BafuFlow("Widget5", "emissions to water", "groundwater, long-term", "kg"), None
     )
-    assert got.code == "water-unspec"
-    assert got.placement == Placement.NOMENCLATURE.value
-    assert got.caveats == (
-        "EF has this name only in 'emissions to fresh water', 'emissions to sea water', "
-        "'emissions to water, unspecified'; placed on 'emissions to water, unspecified' "
-        "for nomenclature alignment (no factor)",
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has widget5 only in: emissions to fresh water, emissions to sea "
+        "water, emissions to water, unspecified",
     )
 
 
@@ -674,22 +694,71 @@ _THREE_LEAF_NO_UNSPECIFIED_VOCAB = [
 
 
 def test_relaxed_placement_falls_back_to_the_alphabetically_first_leaf(tmp_path):
-    # two candidates on leafs, neither of which is a bucket-level "unspecified" leaf
-    # (long-term or not) -- the preference list never matches either, so the
-    # alphabetically first leaf ("air, indoor" sorts before "non-urban air or from
-    # high stacks") wins.
+    # two candidates on leafs, neither of which is a bucket-level "unspecified" leaf --
+    # the preference list never matches either, so the alphabetically first leaf
+    # ("air, indoor" sorts before "non-urban air or from high stacks") wins. A
+    # non-long-term source (unlike the long-term guard below), so nothing restricts
+    # which of these leafs it may land on.
     index = EfFlowIndex.from_files(
         *write_ef_inputs(tmp_path, [], _THREE_LEAF_NO_UNSPECIFIED_VOCAB, shards=1),
         include_uncharacterised=True,
     )
     pipe = default_pipeline(index, {})
-    got = pipe.match(BafuFlow("Widget3", "emissions to air", "low. pop., long-term", "kg"), None)
+    got = pipe.match(BafuFlow("Widget3", "emissions to air", "high. pop.", "kg"), None)
     assert got.code == "widget3-a"  # "air, indoor" -- alphabetically first
     assert got.placement == Placement.NOMENCLATURE.value
     assert got.caveats == (
         "EF has this name only in 'emissions to air, indoor', 'emissions to "
         "non-urban air or from high stacks'; placed on 'emissions to air, indoor' "
         "for nomenclature alignment (no factor)",
+    )
+
+
+def test_relaxed_placement_declines_a_long_term_source_when_no_candidate_leaf_is_long_term(
+    tmp_path,
+):
+    # round 7, decision 2026-09-14: the same two candidates as above, but the source
+    # is itself long-term ("low. pop., long-term") and neither candidate leaf is a
+    # long-term leaf -- the alphabetical fallback above must not apply here; the
+    # placement is declined and the flow falls through to sub_compartment_absent,
+    # same as if EF had no long-term leaf for the substance at all.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], _THREE_LEAF_NO_UNSPECIFIED_VOCAB, shards=1),
+        include_uncharacterised=True,
+    )
+    pipe = default_pipeline(index, {})
+    got = pipe.match(BafuFlow("Widget3", "emissions to air", "low. pop., long-term", "kg"), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has widget3 only in: emissions to air, indoor, emissions to "
+        "non-urban air or from high stacks",
+    )
+
+
+def test_relaxed_placement_accepts_a_comma_style_long_term_leaf_too():
+    # round 7, decision 2026-09-14: the guard's own eligibility check is a plain
+    # ``"long-term" in leaf`` substring test, so it must accept EF's other long-term
+    # naming style too -- not just the bucket-level "*, unspecified (long-term)"
+    # parenthesised form every other test in this module uses, but a specific-medium
+    # leaf spelled "..., long-term" (comma, no parens; real EF leaves like "ground
+    # water, long-term" and "fresh water, long-term" take this form -- see
+    # ``sources.eaternity.cf_identity``). Built directly from an ``EfFlow`` (bypassing
+    # the bw-context crosswalk, which has no code for this specific leaf) so the
+    # candidate's own leaf text is pinned exactly.
+    ef_flow = EfFlow(
+        code="widget6-gw-lt",
+        name="Widget6",
+        context=("Emissions", "Emissions to water", "Emissions to ground water, long-term"),
+        characterised=False,
+    )
+    index = EfFlowIndex([ef_flow], {}, includes_uncharacterised=True)
+    pipe = default_pipeline(index, {})
+    got = pipe.match(BafuFlow("Widget6", "emissions to water", "river, long-term", "kg"), None)
+    assert got.code == "widget6-gw-lt"
+    assert got.placement == Placement.NOMENCLATURE.value
+    assert got.caveats == (
+        "EF has this name only in emissions to ground water, long-term; placed "
+        "there for nomenclature alignment (no factor)",
     )
 
 
@@ -819,7 +888,12 @@ def test_two_dead_tiers_returns_the_first_unmatched(tmp_path_factory):
     )
 
 
-# --- round 4: Placement.LONG_TERM_COLLAPSED (decision 2026-09-13) -----------------
+# --- round 7: long-term emissions follow EF's convention, no factor (2026-09-14) ---
+# Placement.LONG_TERM_COLLAPSED is retired: a long-term BAFU source whose EF
+# candidates never reach a long-term leaf is now withheld (sub_compartment_absent)
+# rather than collapsed onto the matching immediate-emission leaf and its real,
+# nonzero factor -- BAFU Chromium VI to groundwater, long-term this way alone made 45
+# percent of the curated package's human-toxicity-cancer score before this round.
 
 _LT_CF = [
     cf_row("chlorobenzene", "chlorobenzene", WATER_FRESH, value=1.0),
@@ -836,7 +910,7 @@ _LT_VOCAB = [
 @pytest.fixture(scope="module")
 def lt_index(tmp_path_factory):
     return EfFlowIndex.from_files(
-        *write_ef_inputs(tmp_path_factory.mktemp("long-term-collapsed"), _LT_CF, _LT_VOCAB)
+        *write_ef_inputs(tmp_path_factory.mktemp("long-term-withheld"), _LT_CF, _LT_VOCAB)
     )
 
 
@@ -845,45 +919,43 @@ def lt_pipeline(lt_index):
     return default_pipeline(lt_index, {})
 
 
-def test_long_term_collapsed_strips_river_onto_fresh_water(lt_pipeline):
-    # "river, long-term" -> "river": EF has no long-term leaf for this substance at
-    # all, so the immediate-emission (fresh water) flow is used instead.
+def test_long_term_source_is_withheld_when_ef_has_no_long_term_leaf_at_all(lt_pipeline):
+    # "river, long-term": EF has no long-term leaf for this substance at all (only
+    # the immediate-emission fresh water flow) -- round 7, decision 2026-09-14: no
+    # longer collapsed onto that flow's nonzero factor; withheld instead.
     got = lt_pipeline.match(water("Chlorobenzene", "river, long-term"), None)
-    assert got.code == "chlorobenzene"
-    assert got.placement == Placement.LONG_TERM_COLLAPSED.value
-    assert got.caveats == (
-        "EF has no long-term leaf for this substance; the immediate-emission flow "
-        "is used (decision 2026-09-13)",
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has chlorobenzene only in: emissions to fresh water",
     )
 
 
-def test_long_term_collapsed_strips_groundwater_onto_the_unspecified_fallback(lt_pipeline):
-    # "groundwater, long-term" -> "groundwater" -> EF has no ground-water leaf either,
-    # so the stripped placement itself only reaches the bucket-level unspecified
-    # fallback -- both caveats are carried, the long-term one first.
+def test_long_term_source_is_withheld_even_when_the_stripped_form_would_have_reached_unspecified(
+    lt_pipeline,
+):
+    # "groundwater, long-term": EF has neither a ground-water-long-term leaf nor a
+    # ground-water leaf for this substance, only water, unspecified (the immediate
+    # bucket-level leaf) -- round 4's LONG_TERM_COLLAPSED would have reached that via
+    # its own stripped-fallback UNSPECIFIED placement; round 7 withholds it instead.
     got = lt_pipeline.match(water("Chromium VI", "groundwater, long-term"), None)
-    assert got.code == "chromium6"
-    assert got.placement == Placement.LONG_TERM_COLLAPSED.value
-    assert got.caveats == (
-        "EF has no long-term leaf for this substance; the immediate-emission flow "
-        "is used (decision 2026-09-13)",
-        "EF has no ground water flow for this substance; the unspecified context is used",
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has chromium vi only in: emissions to water, unspecified",
     )
 
 
-def test_long_term_collapsed_strips_low_pop_onto_non_urban_air(lt_pipeline):
+def test_long_term_source_is_withheld_for_low_pop_long_term_too(lt_pipeline):
     got = lt_pipeline.match(air("Widgetlt", "low. pop., long-term"), None)
-    assert got.code == "widgetlt"
-    assert got.placement == Placement.LONG_TERM_COLLAPSED.value
-    assert got.caveats == (
-        "EF has no long-term leaf for this substance; the immediate-emission flow "
-        "is used (decision 2026-09-13)",
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has widgetlt only in: emissions to non-urban air or from high stacks",
     )
 
 
-def test_long_term_collapsed_unspecified_fallback_can_be_disabled(lt_index):
-    # with the ordinary unspecified fallback disabled, the stripped "groundwater"
-    # placement never reaches UNSPECIFIED either, so the flow stays absent.
+def test_long_term_source_withholding_is_unaffected_by_the_unspecified_fallback_flag(lt_index):
+    # disabling the ordinary unspecified fallback changes nothing here: ``place()``
+    # itself never offers this long-term source the plain (non-long-term) unspecified
+    # leaf in the first place, so there is no fallback left for the flag to disable.
     pipe = default_pipeline(lt_index, {}, unspecified_fallback=False)
     got = pipe.match(water("Chromium VI", "groundwater, long-term"), None)
     assert got.reason == "sub_compartment_absent"
