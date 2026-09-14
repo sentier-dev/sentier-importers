@@ -44,7 +44,10 @@ _LAND_RE = re.compile(
 )
 #: BAFU land-class spellings that differ from EF's, applied to each comma segment of
 #: the class independently (e.g. ``annual crop, irrigated`` -> ``arable, irrigated``).
-_LAND_CLASS_SYNONYMS = {
+#: Public: also imported by ``sources.agribalyse.ef_cf_dedup`` to normalize the
+#: SimaPro "EF 3.1 adapted" export onto the same EF class names, since ecoinvent's
+#: land-class vocabulary is the same wherever it is sourced from.
+LAND_CLASS_SYNONYMS = {
     "annual crop": "arable",
     "unknown": "unspecified",
     "natural (non-use)": "natural",
@@ -89,7 +92,7 @@ _CO2_UPTAKE = "Carbon dioxide, in air"
 
 def _normalise_land_class(raw: str) -> str:
     segments = [seg.strip() for seg in raw.strip().lower().split(",")]
-    return ", ".join(_LAND_CLASS_SYNONYMS.get(seg, seg) for seg in segments)
+    return ", ".join(LAND_CLASS_SYNONYMS.get(seg, seg) for seg in segments)
 
 
 @dataclass(frozen=True)
@@ -282,7 +285,7 @@ class LandUseMatcher:
     Applies only to resource-bucket flows named ``Occupation, <class>``,
     ``Transformation, from <class>`` or ``Transformation, to <class>``. BAFU spells
     some classes differently from EF (``annual crop`` for EF's ``arable``, ``unknown``
-    for EF's ``unspecified``, ...; see ``_LAND_CLASS_SYNONYMS``) and files 30 of its
+    for EF's ``unspecified``, ...; see ``LAND_CLASS_SYNONYMS``) and files 30 of its
     43 land flows under a resource sub-compartment other than ``land`` (most often
     ``unspecified`` or ``in ground``). Every candidate this matcher returns carries
     ``subcategory_override="land"`` so the pipeline places it on the EF land-use

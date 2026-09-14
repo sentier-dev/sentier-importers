@@ -263,6 +263,11 @@ sources:
     fetch:
       url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
+    # Named input: local arbiter for the 182 ambiguous global-duplicate (flow, method)
+    # pairs the JRC table carries (see sources/agribalyse/ef_cf_dedup.py). A local
+    # reference file only, never delivered; the import still runs if it is absent.
+    inputs:
+      simapro: "file:///home/laurenz/dds/dds-agribalyse/source/simapro-EF31-adapted-cfs.parquet"
     output_format: parquet
     enabled: false
 
