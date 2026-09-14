@@ -1,6 +1,15 @@
+import os
+from pathlib import Path
+
 import pytest
 from sentier_importers.core.errors import ParseError
-from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex, normalise_cas
+from sentier_importers.matching.ef_index import (
+    EfFlow,
+    EfFlowIndex,
+    LabelDefect,
+    load_label_defects,
+    normalise_cas,
+)
 
 from tests.matching.ef_fixtures import (
     AIR_RURAL,
@@ -8,10 +17,31 @@ from tests.matching.ef_fixtures import (
     AIR_URBAN,
     LAND_OCC,
     RES_WATER,
+    WATER_FRESH,
+    WATER_UNSPEC,
     cf_row,
     vocab_row,
     write_ef_inputs,
 )
+
+#: same real-data fallback-guess pattern as test_matchers.py's own constants.
+_CHECKOUTS_ROOT = Path(__file__).parents[3]
+_DEFAULT_CF = _CHECKOUTS_ROOT / "sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+_DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/data/elementary-flows"
+_REAL_CF = Path(os.environ.get("SENTIER_METHODS_CF", str(_DEFAULT_CF)))
+_REAL_VOCAB_DIR = Path(os.environ.get("SENTIER_VOCAB_FLOWS", str(_DEFAULT_VOCAB_DIR)))
+_REAL_INPUTS_AVAILABLE = _REAL_CF.exists() and _REAL_VOCAB_DIR.exists()
+
+
+@pytest.fixture(scope="module")
+def real_index():
+    """The real, inclusive EF index -- expensive (tens of seconds: ~90k flows read
+    from every sentier-vocab shard plus the full CF table), so every real-data test
+    in this module shares this one module-scoped build instead of paying for its
+    own.
+    """
+    return EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
+
 
 LAND_TRANS = "Land use / Land transformation"
 
@@ -80,7 +110,16 @@ def test_index_from_files_joins_cf_table_and_vocab(tmp_path):
     index = EfFlowIndex.from_files(cf, vocab)
     flow = index.get("cu-urban")
     assert isinstance(flow, EfFlow)
+    # round 6, decision 2026-09-14 (third cut): the matching key is the CF table's
+    # own JRC spelling, not the vocab pref_label -- but here they agree in
+    # substance and differ only in case, so _pick_jrc_name deliberately prefers
+    # the vocab casing ("Copper", not "copper"): a real content difference would
+    # still win as the matching key, but this is not one. The vocab label is not
+    # added as a synonym either (it is now identical to the name, not just a
+    # case-insensitive lookup match), and the displayed label defaults to the
+    # (already vocab-cased) name.
     assert flow.name == "Copper"
+    assert flow.label == "Copper"
     assert flow.context == (
         "Emissions",
         "Emissions to air",
@@ -231,7 +270,7 @@ def test_from_files_reads_all_vocab_shards(tmp_path):
 def test_from_bytes_reads_the_cf_table_from_memory(tmp_path):
     cf, vocab = write_ef_inputs(tmp_path, CF, VOCAB)
     index = EfFlowIndex.from_bytes(cf.read_bytes(), vocab)
-    assert index.get("cu-urban").name == "Copper"
+    assert index.get("cu-urban").name == "Copper"  # vocab casing preferred; see above
     assert index.get("cu-urban").synonyms == ("Cu",)
     assert len(index) == len(EfFlowIndex.from_files(cf, vocab))
 
@@ -459,3 +498,437 @@ def test_energy_shaped_name_outside_the_resource_bucket_is_not_forced_uncertain(
     assert flow is not None
     assert flow.bucket == "air"
     assert flow.context_uncertain is False
+
+
+# --- label defects (round 6: sentier-vocab pref_label defects) -----------------
+
+
+def test_load_label_defects_happy_path(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text(
+        "label_defects:\n"
+        "  - cas: '1120-01-0'\n"
+        "    wrong_label: sodium\n"
+        "    true_name: Sodium hexadecyl sulphate\n"
+        "    note: a note\n",
+        encoding="utf-8",
+    )
+    defects = load_label_defects(path)
+    assert defects == {
+        "1120-01-0": LabelDefect(
+            wrong_label="sodium", true_name="Sodium hexadecyl sulphate", note="a note"
+        )
+    }
+
+
+def test_load_label_defects_raises_on_missing_top_level_key(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text("not_label_defects: []\n", encoding="utf-8")
+    with pytest.raises(ParseError):
+        load_label_defects(path)
+
+
+def test_load_label_defects_raises_on_empty_file(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ParseError):
+        load_label_defects(path)
+
+
+def test_load_label_defects_raises_on_missing_field(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text(
+        "label_defects:\n  - cas: '1120-01-0'\n    wrong_label: sodium\n    note: a note\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ParseError):
+        load_label_defects(path)
+
+
+def test_load_label_defects_raises_on_unknown_field(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text(
+        "label_defects:\n"
+        "  - cas: '1120-01-0'\n"
+        "    wrong_label: sodium\n"
+        "    true_name: Sodium hexadecyl sulphate\n"
+        "    note: a note\n"
+        "    typo: oops\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ParseError):
+        load_label_defects(path)
+
+
+def test_load_label_defects_raises_on_blank_field(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text(
+        "label_defects:\n"
+        "  - cas: '1120-01-0'\n"
+        "    wrong_label: sodium\n"
+        "    true_name: ''\n"
+        "    note: a note\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ParseError):
+        load_label_defects(path)
+
+
+def test_load_label_defects_raises_on_non_string_field(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text(
+        "label_defects:\n"
+        "  - cas: 1120\n"
+        "    wrong_label: sodium\n"
+        "    true_name: Sodium hexadecyl sulphate\n"
+        "    note: a note\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ParseError):
+        load_label_defects(path)
+
+
+def test_load_label_defects_raises_on_non_list_value(tmp_path):
+    path = tmp_path / "label_defects.yaml"
+    path.write_text("label_defects: {}\n", encoding="utf-8")
+    with pytest.raises(ParseError):
+        load_label_defects(path)
+
+
+def test_shipped_label_defects_file_has_the_four_known_defects():
+    defects = load_label_defects()
+    assert defects == {
+        "1120-01-0": LabelDefect(
+            wrong_label="sodium",
+            true_name="Sodium hexadecyl sulphate",
+            note=defects["1120-01-0"].note,
+        ),
+        "7647-14-5": LabelDefect(
+            wrong_label="sea water",
+            true_name="Sodium chloride",
+            note=defects["7647-14-5"].note,
+        ),
+        "86290-81-5": LabelDefect(
+            wrong_label="8-(N-Indolyl)-2,6-dimethyl-7-octen-2-ol",
+            true_name="Gasoline",
+            note=defects["86290-81-5"].note,
+        ),
+        "29797-40-8": LabelDefect(
+            wrong_label="Benzal chloride",
+            true_name=(
+                "mixture of 2,4-dichloro-1-methylbenzene; 1,4-dichloro-2-methylbenzene; "
+                "1,2-dichloro-4-methylbenzene; 1,2-dichloro-3-methylbenzene; "
+                "1,3-dichloro-2-methylbenzene"
+            ),
+            note=defects["29797-40-8"].note,
+        ),
+    }
+    for defect in defects.values():
+        assert "reported 2026-09-14" in defect.note
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_shipped_defects_true_name_matches_the_real_jrc_name(real_index):
+    # every defect's true_name must actually be what JRC calls that CAS today (case-
+    # insensitively) -- a curated true_name that drifts from the CF table would be
+    # exactly as wrong as the vocab label it replaces. When the CAS carries no CF
+    # row at all (fully uncharacterised) or JRC's own name still equals the wrong
+    # label, there is nothing authoritative to check against, so the curated
+    # true_name is trusted as documentation instead.
+    defects = load_label_defects()
+    for cas, defect in defects.items():
+        jrc_names = {
+            f.name.strip().lower() for f in real_index if f.cas == cas and f.characterised
+        }
+        if not jrc_names or jrc_names == {defect.wrong_label.strip().lower()}:
+            continue  # nothing authoritative to check against; true_name is documentation
+        assert jrc_names == {defect.true_name.strip().lower()}
+
+
+# --- characterised naming: JRC flow_name is authoritative (round 6, second cut) --
+
+DEFECT = LabelDefect(wrong_label="sodium", true_name="Sodium hexadecyl sulphate", note="n")
+
+
+def test_characterised_name_comes_from_the_jrc_table_not_the_vocab_label(tmp_path):
+    # the CF table's own flow_name ("sodium hexadecyl sulphate") wins outright; the
+    # vocab pref_label ("sodium"), which differs, survives only as a synonym.
+    rows = [cf_row("na-surf", "sodium hexadecyl sulphate", AIR_UNSPEC)]
+    vocab = [vocab_row("na-surf", "sodium", cas="1120-01-0")]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={})
+    flow = index.get("na-surf")
+    assert flow.name == "sodium hexadecyl sulphate"
+    assert index.by_name("sodium hexadecyl sulphate", "air") == [flow]
+    assert index.by_synonym("sodium", "air") == [flow]
+    assert index.suppressed_vocab_synonyms == 0
+
+
+def test_defect_listed_vocab_label_is_dropped_not_kept_as_synonym(tmp_path):
+    # same shape as above, but "sodium" is listed in label_defects for this CAS: the
+    # wrong label must not resurface via the synonym tier either.
+    rows = [cf_row("na-surf", "sodium hexadecyl sulphate", AIR_UNSPEC)]
+    vocab = [vocab_row("na-surf", "sodium", cas="1120-01-0")]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={"1120-01-0": DEFECT})
+    flow = index.get("na-surf")
+    assert flow.name == "sodium hexadecyl sulphate"
+    assert index.by_synonym("sodium", "air") == []
+    assert flow.synonyms == ()
+    assert index.suppressed_vocab_synonyms == 1
+
+
+def test_defect_wrong_label_is_stripped_out_of_alt_labels_too(tmp_path):
+    rows = [cf_row("na-syn", "sodium hexadecyl sulphate", AIR_UNSPEC)]
+    vocab = [vocab_row("na-syn", "sodium", alt=["Sodium", "Other synonym"], cas="1120-01-0")]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={"1120-01-0": DEFECT})
+    flow = index.get("na-syn")
+    assert flow.synonyms == ("Other synonym",)
+
+
+def test_defect_does_not_fire_on_a_different_cas(tmp_path):
+    rows = [cf_row("na-other", "sodium hexadecyl sulphate", AIR_UNSPEC)]
+    vocab = [vocab_row("na-other", "sodium", cas="9999-99-9")]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={"1120-01-0": DEFECT})
+    flow = index.get("na-other")
+    assert flow.name == "sodium hexadecyl sulphate"
+    assert flow.synonyms == ("sodium",)
+    assert index.suppressed_vocab_synonyms == 0
+
+
+def test_defect_does_not_fire_when_vocab_label_does_not_match_wrong_label(tmp_path):
+    rows = [cf_row("na-real", "sodium", AIR_UNSPEC)]
+    vocab = [vocab_row("na-real", "Sodium (inorganic)", cas="1120-01-0")]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={"1120-01-0": DEFECT})
+    flow = index.get("na-real")
+    assert flow.name == "sodium"
+    assert flow.synonyms == ("Sodium (inorganic)",)
+    assert index.suppressed_vocab_synonyms == 0
+
+
+def test_vocab_label_colliding_with_a_different_flows_jrc_name_in_the_same_bucket_is_dropped(
+    tmp_path,
+):
+    # flow B's own JRC name is "widget b"; flow A's vocab pref_label happens to equal
+    # it exactly and both flows share a leaf (so also a bucket) -- keeping "widget b"
+    # as A's synonym would let the synonym tier land A's namesakes on B instead,
+    # exactly the label-defect collision shape, so it is dropped even with no defect
+    # entry at all.
+    rows = [
+        cf_row("flow-a", "widget a", WATER_FRESH),
+        cf_row("flow-b", "widget b", WATER_FRESH),
+    ]
+    vocab = [
+        vocab_row("flow-a", "widget b", cas="111-11-1"),
+        vocab_row("flow-b", "widget b", cas="222-22-2"),
+    ]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={})
+    flow_a = index.get("flow-a")
+    flow_b = index.get("flow-b")
+    assert flow_a.name == "widget a"
+    assert flow_a.synonyms == ()  # "widget b" dropped: it is flow_b's own JRC name
+    assert flow_b.name == "widget b"
+    assert index.suppressed_vocab_synonyms == 1
+    assert index.by_synonym("widget b", "water") == []
+    assert index.by_name("widget b", "water") == [flow_b]
+
+
+def test_vocab_label_colliding_across_leaves_in_the_same_bucket_is_still_dropped(tmp_path):
+    # round 6, decision 2026-09-14 (third cut): flow B sits on a DIFFERENT leaf
+    # (water, unspecified) than flow A (fresh water), but the SAME bucket (water) --
+    # by_name/by_synonym are bucket-scoped, not leaf-scoped, so a collision on a
+    # different leaf in the same bucket is exactly as real as one on the same leaf,
+    # and must be caught the same way (a leaf-only check would have missed this).
+    rows = [
+        cf_row("flow-a", "widget a", WATER_FRESH),
+        cf_row("flow-b", "widget b", WATER_UNSPEC),
+    ]
+    vocab = [
+        vocab_row("flow-a", "widget b", cas="111-11-1"),
+        vocab_row("flow-b", "widget b", cas="222-22-2"),
+    ]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={})
+    flow_a = index.get("flow-a")
+    assert flow_a.synonyms == ()
+    assert index.suppressed_vocab_synonyms == 1
+    assert index.by_synonym("widget b", "water") == []
+
+
+def test_vocab_label_matching_a_same_named_flow_in_a_different_bucket_is_not_a_collision(
+    tmp_path,
+):
+    # same shared vocab spelling as above, but flow_b now sits in a different
+    # BUCKET (air, not water): by_name/by_synonym are bucket-scoped, so there is no
+    # actual collision an alias/synonym lookup could ever trip over -- the synonym
+    # is kept.
+    rows = [
+        cf_row("flow-a", "widget a", WATER_FRESH),
+        cf_row("flow-b", "widget b", AIR_UNSPEC),
+    ]
+    vocab = [
+        vocab_row("flow-a", "widget b", cas="111-11-1"),
+        vocab_row("flow-b", "widget b", cas="222-22-2"),
+    ]
+    index = EfFlowIndex.from_tables(rows, vocab, label_defects={})
+    flow_a = index.get("flow-a")
+    assert flow_a.synonyms == ("widget b",)
+    assert index.suppressed_vocab_synonyms == 0
+
+
+def test_vocab_label_colliding_with_an_uncharacterised_flows_name_is_dropped(tmp_path):
+    # round 6, decision 2026-09-14 (third cut): the collision index must include
+    # uncharacterised flows too -- this is exactly the real Sodium shape before
+    # label_defects.yaml named it explicitly: a characterised flow's vocab label
+    # colliding with an UNCHARACTERISED flow's own name in the same bucket.
+    rows = [cf_row("surfactant", "widget hexadecyl sulphate", WATER_FRESH)]
+    vocab = [
+        vocab_row("surfactant", "Widget", cas="111-11-1"),
+        vocab_row("real-widget", "Widget", cas="222-22-2", bw="envi-wate-suwa"),
+    ]
+    index = EfFlowIndex.from_tables(rows, vocab, include_uncharacterised=True, label_defects={})
+    surfactant = index.get("surfactant")
+    assert surfactant.synonyms == ()
+    assert index.suppressed_vocab_synonyms == 1
+    real_widget = index.get("real-widget")
+    assert real_widget is not None
+    assert real_widget.characterised is False
+    assert real_widget.name == "Widget"
+    assert index.by_name("Widget", "water") == [real_widget]
+
+
+def test_multi_name_code_picks_the_most_frequent_spelling(tmp_path):
+    rows = [
+        cf_row("multi", "Widget A", AIR_UNSPEC, method="ef-3.1:m1"),
+        cf_row("multi", "Widget A", AIR_UNSPEC, method="ef-3.1:m2"),
+        cf_row("multi", "Widget B", AIR_UNSPEC, method="ef-3.1:m3"),
+    ]
+    index = EfFlowIndex.from_tables(rows, [], label_defects={})
+    assert index.get("multi").name == "Widget A"
+    assert index.multi_name_codes == 1
+
+
+def test_multi_name_code_tie_breaks_alphabetically(tmp_path):
+    rows = [
+        cf_row("tie", "Zeta", AIR_UNSPEC, method="ef-3.1:m1"),
+        cf_row("tie", "Alpha", AIR_UNSPEC, method="ef-3.1:m2"),
+    ]
+    index = EfFlowIndex.from_tables(rows, [], label_defects={})
+    assert index.get("tie").name == "Alpha"
+    assert index.multi_name_codes == 1
+
+
+def test_multi_name_codes_is_zero_when_every_code_agrees(tmp_path):
+    rows = [
+        cf_row("agree", "Widget", AIR_UNSPEC, method="ef-3.1:m1"),
+        cf_row("agree", "Widget", AIR_UNSPEC, method="ef-3.1:m2"),
+    ]
+    index = EfFlowIndex.from_tables(rows, [], label_defects={})
+    assert index.multi_name_codes == 0
+
+
+def test_uncharacterised_flow_still_uses_the_vocab_label_and_the_old_relabel_rule(
+    tmp_path,
+):
+    # no CF row exists for an uncharacterised flow, so it keeps the vocab label as
+    # its name, still passed through label_defects exactly as before this round.
+    vocab = [vocab_row("na-uncertain", "sodium", cas="1120-01-0", bw="envi-air-unkn")]
+    index = EfFlowIndex.from_tables(
+        [], vocab, include_uncharacterised=True, label_defects={"1120-01-0": DEFECT}
+    )
+    flow = index.get("na-uncertain")
+    assert flow.name == "Sodium hexadecyl sulphate"
+    assert flow.characterised is False
+    assert index.relabelled_count == 1
+    assert index.suppressed_vocab_synonyms == 0
+
+
+def test_relabelled_count_and_suppressed_vocab_synonyms_are_independent_counters(
+    tmp_path,
+):
+    rows = [cf_row("na-a", "sodium hexadecyl sulphate", AIR_UNSPEC)]
+    vocab = [
+        vocab_row("na-a", "sodium", cas="1120-01-0"),
+        vocab_row("na-b", "sodium", cas="1120-01-0", bw="envi-air-unkn"),
+    ]
+    index = EfFlowIndex.from_tables(
+        rows, vocab, include_uncharacterised=True, label_defects={"1120-01-0": DEFECT}
+    )
+    # na-a is characterised: its vocab label is suppressed, never "relabelled"
+    # na-b is uncharacterised: it is renamed the old way instead
+    assert index.relabelled_count == 1
+    assert index.suppressed_vocab_synonyms == 1
+
+
+def test_from_tables_defaults_to_the_shipped_label_defects_file():
+    # no label_defects kwarg at all: from_tables loads the packaged file itself.
+    rows = [cf_row("na-default", "sodium hexadecyl sulphate", AIR_UNSPEC)]
+    vocab = [vocab_row("na-default", "sodium", cas="1120-01-0")]
+    index = EfFlowIndex.from_tables(rows, vocab)
+    assert index.get("na-default").name == "sodium hexadecyl sulphate"
+    assert index.by_synonym("sodium", "air") == []
+    assert index.suppressed_vocab_synonyms == 1
+
+
+def test_from_files_and_from_bytes_forward_label_defects(tmp_path):
+    rows = [cf_row("na-ff", "sodium hexadecyl sulphate", AIR_UNSPEC)]
+    vocab = [vocab_row("na-ff", "sodium", cas="1120-01-0")]
+    cf, vocab_dir = write_ef_inputs(tmp_path, rows, vocab)
+    files_index = EfFlowIndex.from_files(cf, vocab_dir, label_defects={"1120-01-0": DEFECT})
+    assert files_index.get("na-ff").name == "sodium hexadecyl sulphate"
+    assert files_index.by_synonym("sodium", "air") == []
+    bytes_index = EfFlowIndex.from_bytes(
+        cf.read_bytes(), vocab_dir, label_defects={"1120-01-0": DEFECT}
+    )
+    assert bytes_index.get("na-ff").name == "sodium hexadecyl sulphate"
+    assert bytes_index.by_synonym("sodium", "air") == []
+
+
+def test_relabelled_count_defaults_to_zero():
+    index = EfFlowIndex.from_tables([], [])
+    assert index.relabelled_count == 0
+    assert index.multi_name_codes == 0
+    assert index.suppressed_vocab_synonyms == 0
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_real_index_names_the_surfactant_by_its_jrc_name(real_index):
+    # CAS 1120-01-0 (a surfactant) carries the JRC name "sodium hexadecyl sulphate"
+    # in the CF table; its wrong sentier-vocab pref_label ("sodium") is a known
+    # defect and never becomes its name or a synonym now that JRC naming is
+    # authoritative. Pinned so a future sentier-methods/sentier-vocab change (or a
+    # regression here) is caught rather than silently changing behaviour.
+    sodium_flows = [f for f in real_index if f.cas == "1120-01-0"]
+    assert len(sodium_flows) == 11
+    for flow in sodium_flows:
+        assert flow.name == "sodium hexadecyl sulphate"
+        assert "sodium" not in (s.lower() for s in flow.synonyms)
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_real_by_name_sodium_water_finds_only_the_real_inorganic_sodium(real_index):
+    # the surfactant no longer answers to "sodium" at all (neither as its name nor
+    # as a synonym); only the real inorganic Sodium (CAS 7440-23-5, uncharacterised)
+    # does.
+    hits = real_index.by_name("sodium", "water")
+    assert hits
+    assert {f.cas for f in hits} == {"7440-23-5"}
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_real_by_name_benzal_chloride_finds_only_the_real_uncharacterised_one(real_index):
+    # CAS 29797-40-8 (a dichlorotoluene mixture, JRC name starts "mixture of
+    # 2,4-dichloro-1-methylbenzene") is wrongly labelled "Benzal chloride" in
+    # sentier-vocab; the real Benzal chloride (CAS 98-87-3) exists in EF 3.1 but
+    # carries no factor in any method. "benzal chloride" must resolve only to the
+    # real, uncharacterised one now, in every bucket BAFU's own rows use.
+    for bucket in ("air", "water"):
+        hits = real_index.by_name("benzal chloride", bucket)
+        assert hits
+        assert {f.cas for f in hits} == {"98-87-3"}
+        assert all(not f.characterised for f in hits)
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_real_index_counters_pin_the_current_ef_table(real_index):
+    # upstream drift guard: a new EF table or vocab payload that changes either
+    # number must be looked at, not absorbed silently
+    assert real_index.multi_name_codes == 0
+    assert real_index.suppressed_vocab_synonyms == 346

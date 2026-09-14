@@ -24,6 +24,12 @@ any bucket when every namesake the name has is itself uncharacterised. Such a ``
 carries ``tier="name-only"``/``placement="name_only"`` and reaches ``entry_for`` (and
 this source's own never-a-characterised-match guard) exactly like any other
 nomenclature-package match.
+
+Round 6, decision 2026-09-14: an uncharacterised target has no separate JRC name to
+weigh against its vocab pref_label (``ef_index.EfFlowIndex.from_tables``), so
+``EfFlow.name`` and ``EfFlow.label`` are always equal here -- the matching-key/
+display-name split ``entry_for`` relies on for the matched package's characterised
+targets is a no-op for this source's own emitted rows.
 """
 
 from __future__ import annotations

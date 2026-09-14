@@ -1,0 +1,44 @@
+# Known sentier-vocab pref_label defects: an EF 3.1 flow whose factors are correct
+# but whose preferred label names the wrong substance. Loaded once (like
+# aliases.yaml) and applied in EfFlowIndex.from_tables, matched by normalised CAS
+# and a current label equal to wrong_label (case-insensitive):
+#
+# - a CHARACTERISED flow already gets its matching key (name) straight from the
+#   CF table's own JRC spelling, never from wrong_label, so a listed entry here
+#   only ever suppresses the vocab label from becoming its displayed label
+#   (EfFlow.label) or a synonym -- both fall back to the JRC name instead.
+# - an UNCHARACTERISED flow has no CF row to fall back on, so a listed entry
+#   relabels BOTH its matching key (name) and its displayed label (label) to
+#   true_name outright.
+#
+# Either way, the wrong label is never kept as a synonym -- doing so would let the
+# synonym tier re-create the exact collision this file fixes.
+label_defects:
+  - cas: "1120-01-0"
+    wrong_label: "sodium"
+    true_name: "Sodium hexadecyl sulphate"
+    note: >-
+      sentier-vocab pref_label defect, reported 2026-09-14; the EF flow keeps its
+      factors, only its name is corrected here
+  - cas: "7647-14-5"
+    wrong_label: "sea water"
+    true_name: "Sodium chloride"
+    note: >-
+      sentier-vocab pref_label defect, reported 2026-09-14; the EF flow keeps its
+      factors, only its name is corrected here
+  - cas: "86290-81-5"
+    wrong_label: "8-(N-Indolyl)-2,6-dimethyl-7-octen-2-ol"
+    true_name: "Gasoline"
+    note: >-
+      sentier-vocab pref_label defect, reported 2026-09-14; the EF flow keeps its
+      factors, only its name is corrected here
+  - cas: "29797-40-8"
+    wrong_label: "Benzal chloride"
+    true_name: >-
+      mixture of 2,4-dichloro-1-methylbenzene; 1,4-dichloro-2-methylbenzene;
+      1,2-dichloro-4-methylbenzene; 1,2-dichloro-3-methylbenzene;
+      1,3-dichloro-2-methylbenzene
+    note: >-
+      sentier-vocab pref_label defect, reported 2026-09-14; the EF flow keeps its
+      factors, only its name is corrected here; the real Benzal chloride (CAS
+      98-87-3) exists in EF 3.1 uncharacterised (no factor in any method)

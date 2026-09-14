@@ -282,7 +282,7 @@ def test_nomenclature_unit_mismatch_withholds_a_wrong_dimension_wood_source():
     # anywhere in this codebase (unlike water) -- the source must be withheld.
     flow = BafuFlow("Wood, hard, standing", "resources", "in ground", "m3")
     assert nomenclature_unit_mismatch(flow, _ef_flow("Wood")) == (
-        "EF Wood is counted by mass; no density convention converts m3 " "(decision 2026-09-14)"
+        "EF Wood is counted by mass; no density convention converts m3 (decision 2026-09-14)"
     )
 
 
