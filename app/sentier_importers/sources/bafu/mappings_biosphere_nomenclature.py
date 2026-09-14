@@ -15,6 +15,15 @@ Requires the sibling matched payload as the ``matched`` input: the nomenclature
 package must skip exactly what the matched package itself mapped
 (``ParsedInputs.matched_codes``), not just what the curated and inferred packages map,
 or the two sources could both claim the same flow.
+
+Round 5, decision 2026-09-14: a flow the matching/decision chain still cannot place at
+all (``Unmatched(reason="no_ef_flow")``) gets one further try here, since this source's
+own index is the inclusive one -- ``mappings_biosphere_matched._name_only_match``,
+wired into ``_decide``, aligns it by name alone onto an uncharacterised EF namesake in
+any bucket when every namesake the name has is itself uncharacterised. Such a ``Match``
+carries ``tier="name-only"``/``placement="name_only"`` and reaches ``entry_for`` (and
+this source's own never-a-characterised-match guard) exactly like any other
+nomenclature-package match.
 """
 
 from __future__ import annotations

@@ -8,7 +8,7 @@ from sentier_importers.core.context import RunContext
 from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
-from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.matchers import load_aliases
 from sentier_importers.matching.pipeline import Match, Unmatched, default_pipeline
 from sentier_importers.sources.bafu.ecospold import flow_id
@@ -16,6 +16,8 @@ from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCov
 from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     BafuEfMatchedSource,
     _decide,
+    _name_only_match,
+    _sits_on_own_unspecified_leaf,
     substance_cas,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
@@ -743,6 +745,145 @@ def test_decide_no_longer_withholds_an_ion_shaped_match():
         BafuFlow("Copper ion", "emissions to air", "unspecified", "kg"), match, index
     )
     assert outcome is match
+
+
+def test_name_only_match_recovers_a_factorless_namesake_in_another_bucket():
+    # round 5, decision 2026-09-14: "Basalt" is a BAFU resource extraction; EF carries
+    # no "Basalt" flow in the resource bucket at all, only a factorless one placed on
+    # a soil-emission leaf via the bw-context crosswalk (envi-grou-indu is always
+    # uncharacterised -- see bw_context.NEVER_CHARACTERISED_CODES) -- exactly the
+    # shape the ordinary bucket-scoped matchers can never reach.
+    cf: list = []
+    vocab = [vocab_row("basalt-soil", "Basalt", bw="envi-grou-indu")]
+    index = EfFlowIndex.from_tables(cf, vocab, include_uncharacterised=True)
+    flow = BafuFlow("Basalt", "resources", "in ground", "kg")
+    match = _name_only_match(flow, index)
+    assert match == Match(
+        code="basalt-soil",
+        tier="name-only",
+        placement="name_only",
+        location=None,
+        candidates=1,
+        caveats=(
+            "EF has this name only as emissions to non-agricultural soil; the source "
+            "is a resource extraction, so the EF context is omitted (name alignment "
+            "only, decision 2026-09-14)",
+        ),
+    )
+
+
+def test_name_only_match_prefers_the_namesake_on_its_own_unspecified_leaf():
+    # two factorless "Shale" namesakes: one on a specific (non-unspecified) soil leaf,
+    # one on the air bucket's own unspecified leaf -- the latter must be chosen,
+    # deterministically, over the code-sorted-first tiebreak.
+    vocab = [
+        vocab_row("shale-soil", "Shale", bw="envi-grou-indu"),
+        vocab_row("shale-air", "Shale", bw="envi-air-unkn"),
+    ]
+    index = EfFlowIndex.from_tables([], vocab, include_uncharacterised=True)
+    flow = BafuFlow("Shale", "resources", "in ground", "kg")
+    match = _name_only_match(flow, index)
+    assert match.code == "shale-air"
+    assert match.caveats == (
+        "EF has this name only as emissions to air, unspecified, emissions to "
+        "non-agricultural soil; the source is a resource extraction, so the EF "
+        "context is omitted (name alignment only, decision 2026-09-14)",
+    )
+
+
+def test_name_only_match_refuses_when_any_namesake_is_characterised():
+    # "Talc" carries a real factor in the air bucket (a different bucket than the
+    # source's own "resource" category, so the ordinary pipeline never finds it
+    # either) and a second, factorless "Talc" elsewhere -- ANY characterised
+    # namesake vetoes the whole name, protecting BAFU's salts, Talc and Uranium from
+    # being aligned next to a live impact number for the same substance name.
+    cf = [cf_row("talc-air", "talc", AIR_UNSPEC, method="ef-3.1:human-toxicity-cancer", value=1.0)]
+    vocab = [
+        vocab_row("talc-air", "Talc"),
+        vocab_row("talc-soil", "Talc", bw="envi-grou-indu"),
+    ]
+    index = EfFlowIndex.from_tables(cf, vocab, include_uncharacterised=True)
+    flow = BafuFlow("Talc", "resources", "in ground", "kg")
+    assert _name_only_match(flow, index) is None
+
+
+def test_sits_on_own_unspecified_leaf_is_false_for_a_context_with_no_bucket():
+    # defensive branch: a real bw-context-crosswalked EfFlow always maps to a bucket,
+    # but _sits_on_own_unspecified_leaf must not assume that -- a flow whose context
+    # cannot be mapped to any bucket at all is never "on" any unspecified leaf.
+    flow = EfFlow(code="x", name="Ghost", context=("Nonsense",), characterised=False)
+    assert flow.bucket is None
+    assert _sits_on_own_unspecified_leaf(flow) is False
+
+
+def test_name_only_match_returns_none_when_ef_has_no_namesake_at_all():
+    index = EfFlowIndex.from_tables([], [], include_uncharacterised=True)
+    flow = BafuFlow("Gypsum", "resources", "in ground", "kg")
+    assert _name_only_match(flow, index) is None
+
+
+def test_name_only_alignment_never_fires_on_a_characterised_only_index():
+    # contrived: an uncharacterised EfFlow that WOULD resolve the name is placed
+    # directly into the index's own lookup tables even though the index itself was
+    # not built with include_uncharacterised (impossible via the real from_tables()
+    # constructor) -- this pins the guard specifically on
+    # EfFlowIndex.includes_uncharacterised, the same flag the matched package's own
+    # (real, from_tables()-built) index always carries False, rather than on "no
+    # uncharacterised flow happens to be present".
+    namesake = EfFlow(
+        code="widget-soil",
+        name="Widget",
+        context=("Emissions", "Emissions to soil", "Emissions to non-agricultural soil"),
+        characterised=False,
+    )
+    index = EfFlowIndex([namesake], {}, includes_uncharacterised=False)
+    flow = BafuFlow("Widget", "emissions to air", "unspecified", "kg")
+    outcome = _decide(flow, Unmatched("no_ef_flow", "x"), index)
+    assert outcome == Unmatched("no_ef_flow", "x")
+
+
+def test_decide_applies_name_only_alignment_ahead_of_speciation_refinement():
+    # round 5 runs before _refine_unmatched: a name-only alignment, when one applies,
+    # is more informative than narrowing "no_ef_flow" into "speciation" -- though no
+    # real BAFU name in the round-5 recovery list is ion-shaped, this pins the order
+    # directly so a future _decide reordering cannot silently swap the two.
+    vocab = [vocab_row("arsenic-ion-air", "Arsenic, ion", bw="envi-air-unkn")]
+    index = EfFlowIndex.from_tables([], vocab, include_uncharacterised=True)
+    flow = BafuFlow("Arsenic, ion", "emissions to water", "river", "kg")
+    outcome = _decide(flow, Unmatched("no_ef_flow", "x"), index)
+    assert isinstance(outcome, Match) and outcome.code == "arsenic-ion-air"
+    assert outcome.placement == "name_only"
+
+
+def test_decide_withholds_a_wood_flow_reported_by_volume_as_unit_mismatch():
+    # round 5, decision 2026-09-14: "Wood, standing" resolves through a curated alias
+    # onto EF's uncharacterised "Wood" (mirroring the real aliases.yaml wood entries)
+    # -- a real pipeline Match, not a name-only one. EF counts Wood by mass; a
+    # cubic-meter source has no density conversion anywhere in this codebase (unlike
+    # water), so it must be withheld rather than guessed.
+    vocab = [vocab_row("wood-unchar", "Wood", bw="reso-biot")]
+    index = EfFlowIndex.from_tables([], vocab, include_uncharacterised=True)
+    pipeline = default_pipeline(index, {"wood, standing": "Wood"})
+    flow = BafuFlow("Wood, standing", "resources", "biotic", "m3")
+    match = pipeline.match(flow, None)
+    assert isinstance(match, Match)  # sanity: the alias resolves a real Match
+    outcome = _decide(flow, match, index)
+    assert outcome == Unmatched(
+        "unit_mismatch",
+        "EF Wood is counted by mass; no density convention converts m3 (decision 2026-09-14)",
+    )
+
+
+def test_decide_allows_a_wood_flow_reported_by_mass():
+    # the other half of the same alias: a kilogram source agrees with EF's own
+    # dimension for Wood, so it passes through untouched.
+    vocab = [vocab_row("wood-unchar", "Wood", bw="reso-biot")]
+    index = EfFlowIndex.from_tables([], vocab, include_uncharacterised=True)
+    pipeline = default_pipeline(index, {"wood, standing": "Wood"})
+    flow = BafuFlow("Wood, standing", "resources", "biotic", "kg")
+    match = pipeline.match(flow, None)
+    outcome = _decide(flow, match, index)
+    assert isinstance(outcome, Match) and outcome.code == "wood-unchar"
 
 
 def test_chromium_vi_pipeline_match_lands_on_the_species_specific_target():

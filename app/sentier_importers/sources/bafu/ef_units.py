@@ -2,15 +2,35 @@
 
 Split out of ``mappings_biosphere_matched`` so the unit-conversion domain (physical
 dimensions, the ecoinvent v2 energy-content table, the stoichiometric factor table,
-the water-density special case, and the nomenclature-only unit respelling the
-nomenclature package uses for an uncharacterised target) has its own home apart from
-the matching/decision pipeline itself. Everything here is a pure function or lookup
-table; nothing touches ``BafuFlow``/EF index construction.
+the water-density special case, and the nomenclature-package target-unit convention
+for an uncharacterised target) has its own home apart from the matching/decision
+pipeline itself. Everything here is a pure function or lookup table; nothing touches
+``BafuFlow``/EF index construction.
+
+Round 5, decision 2026-09-14: ``nomenclature_target_unit`` replaces the earlier
+same-scale-only ``nomenclature_unit`` respelling (kept the SOURCE unit's own spelling,
+applied no factor at all). That respelling let one EF flow fed by both a ``Bq`` source
+and a ``kBq`` source (BAFU carries both twins for many radionuclides) end up with two
+different ``target["unit"]`` values and no ``conversion_factor`` on either -- silently
+off by 1000x whenever a downstream consumer merged the two amounts onto one EF node
+(91 affected codes; also 2 water-substance codes fed by ``kg`` and ``m3``, and one
+fed by ``kWh`` and ``MJ``). ``nomenclature_target_unit`` instead canonicalises: one
+EF-convention unit per physical dimension, exactly what the nomenclature package's own
+sentier-mappings metadata already promises ("kilogram, kBq with a Bq -> kBq factor,
+cubic meter, megajoule, m2, m2*a"), with the source-to-target factor made explicit via
+its returned ``conversion_factor`` instead of silently assumed 1.
+
+That canonicalisation is only safe when a fixed factor bridges every source unit onto
+one target dimension (water's density does); when it does not (EF's "Wood" is counted
+by mass, but BAFU also reports standing wood by volume, with no density convention
+anywhere in this codebase), decision 2026-09-14 withholds the wrong-dimension source
+instead of inventing one -- ``NOMENCLATURE_TARGET_DIMENSION``/
+``nomenclature_unit_mismatch``, consulted by ``mappings_biosphere_matched._decide``.
 """
 
 from __future__ import annotations
 
-from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.pipeline import Match
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
@@ -37,6 +57,10 @@ _DIMENSION: dict[str, str] = {
     "MJ": "energy",
     "megajoule": "energy",
     "kWh": "energy",
+    #: BAFU's own cubic-meter-year unit (a reservoir/storage volume held over time);
+    #: EF states no convention for this dimension at all, so ``nomenclature_target_unit``
+    #: keeps BAFU's own spelling rather than inventing an EF one (decision 2026-09-14).
+    "m3y": "volume-time",
 }
 
 #: The few same-dimension unit pairs whose physical scale actually differs: an SI
@@ -45,8 +69,71 @@ _DIMENSION: dict[str, str] = {
 #: pair (kg/kilogram, m3/cubic meter, kBq/kBq, m2, m2*a, MJ/megajoule) is the same
 #: physical scale and needs no factor (1.0) -- see ``unit_conversion``. The reverse
 #: direction, kBq -> Bq, never occurs: EF's reference unit for ionising radiation is
-#: always kBq (``EfFlowIndex.reference_unit``), never Bq.
+#: always kBq (``EfFlowIndex.reference_unit``), never Bq. Also consulted by
+#: ``nomenclature_target_unit`` (round 5, decision 2026-09-14) for the very same two
+#: scaled pairs -- one table, so a characterised and an uncharacterised match of the
+#: same source unit are never rescaled by two different factors.
 _SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoule"): 3.6}
+
+#: The fixed mass -> volume factor for water (density, 1 kg == 0.001 m3), shared by
+#: ``conversion_for``'s characterised water-use special case and by
+#: ``nomenclature_target_unit``'s own uncharacterised one (round 5, decision
+#: 2026-09-14) -- one constant, so the two paths never risk stating the density
+#: differently.
+_WATER_DENSITY_FACTOR = 0.001
+
+#: Round 5, decision 2026-09-14: the EF-convention target unit for an uncharacterised
+#: match (the nomenclature package), one per physical dimension -- what
+#: ``nomenclature_target_unit`` fills ``target["unit"]`` with. Every value here is
+#: exactly the spelling the nomenclature package's own sentier-mappings metadata
+#: promises ("kilogram, kBq with a Bq -> kBq factor, cubic meter, megajoule, m2,
+#: m2*a"). ``volume-time`` has no EF convention at all -- BAFU's own ``m3y`` spelling
+#: is kept as-is; listed here anyway so ``nomenclature_target_unit`` never needs a
+#: second table.
+_NOMENCLATURE_TARGET_UNIT: dict[str, str] = {
+    "mass": "kilogram",
+    "activity": "kBq",
+    "volume": "cubic meter",
+    "area": "m2",
+    "area-time": "m2*a",
+    "energy": "megajoule",
+    "volume-time": "m3y",
+}
+
+#: EF target-name -> the one physical dimension EF's own convention counts it in,
+#: consulted only for an uncharacterised nomenclature-package match (round 5, decision
+#: 2026-09-14): unlike water (a genuine, fixed mass -> volume density factor,
+#: ``_WATER_DENSITY_FACTOR``), a name here has NO valid cross-dimension conversion at
+#: all -- ``nomenclature_target_unit`` would otherwise happily canonicalise a
+#: cubic-meter source onto ``"cubic meter"`` right next to a kilogram source of the
+#: SAME EF flow canonicalised onto ``"kilogram"``, two different target units for one
+#: EF node with no way to reconcile them. "Wood" is the one such name today: EF counts
+#: it by mass, but BAFU also reports standing wood by volume (``m3``, a wood-density
+#: assumption this codebase does not carry anywhere else) -- decision 2026-09-14:
+#: withhold the wrong-dimension source (``unit_mismatch``) rather than invent one.
+NOMENCLATURE_TARGET_DIMENSION: dict[str, str] = {"Wood": "mass"}
+
+
+def nomenclature_unit_mismatch(flow: BafuFlow, ef_flow: EfFlow) -> str | None:
+    """The withholding detail when ``flow.unit``'s physical dimension disagrees with
+    ``NOMENCLATURE_TARGET_DIMENSION``'s entry for ``ef_flow.name``, or ``None`` when
+    ``ef_flow.name`` has no entry there at all, or the dimension agrees.
+
+    Consulted by ``mappings_biosphere_matched._decide`` for every match onto an
+    uncharacterised target, ahead of ``nomenclature_target_unit``: a name in this table
+    fixes the substance to one physical dimension, and a source outside it must be
+    withheld rather than silently canonicalised onto a target unit that does not
+    correspond to the same physical measurement at all (unlike the water density
+    special case, there is no fixed factor to bridge the two here).
+    """
+    dimension = NOMENCLATURE_TARGET_DIMENSION.get(ef_flow.name)
+    if dimension is None or _DIMENSION.get(flow.unit) == dimension:
+        return None
+    return (
+        f"EF {ef_flow.name} is counted by {dimension}; no density convention "
+        f"converts {flow.unit} (decision 2026-09-14)"
+    )
+
 
 #: ecoinvent v2 net calorific values, MJ per BAFU unit, keyed by (BAFU name, BAFU unit) so a
 #: conversion is never applied by accident. These are the resource-flow definitions the
@@ -109,43 +196,77 @@ STOICHIOMETRIC_NOTES: dict[tuple[str, str], str] = {
     ),
 }
 
-#: BAFU unit -> EF spelling of the exact same physical scale, used only for an
-#: uncharacterised EF target (the nomenclature package,
-#: ``mappings_biosphere_nomenclature``): such a target has no reference unit at all
-#: (``EfFlowIndex.reference_unit`` returns ``None`` for it, and there is no CF-method
-#: convention to read one off of), so the nomenclature package must never rescale an
-#: amount -- only respell the unit BAFU already reports, one for one. Every entry here
-#: is a same-scale spelling pair only (``kg``/``kilogram``, ``m3``/``Nm3``/
-#: ``cubic meter``, ``m2a``/``m2*a``); ``Bq``, ``kBq``, ``kWh`` and ``m2`` map to
-#: themselves -- unlike ``unit_conversion``/``conversion_for``, this table carries no
-#: scaled pair at all (no Bq->kBq, no kWh->megajoule): those need a factor, and the
-#: nomenclature package has none to apply. A unit not listed here is passed through
-#: unchanged.
-_NOMENCLATURE_UNITS: dict[str, str] = {
-    "kg": "kilogram",
-    "Bq": "Bq",
-    "kBq": "kBq",
-    "m3": "cubic meter",
-    "Nm3": "cubic meter",
-    "MJ": "megajoule",
-    "kWh": "kWh",
-    "m2": "m2",
-    "m2a": "m2*a",
-}
+
+#: EF names whose substance is water for the purpose of the density conversion of an
+#: uncharacterised target. Deliberately narrow: EF's water-use method characterises
+#: nine names (Water, Ground Water, freshwater, lake water, river water, Water To
+#: Cooling, Water from cooling, Water to/from turbine), and the uncharacterised index
+#: also carries "Sea Water", "Green Water", "Water Vapour", "Water, In Air" and more.
+#: Only "Water" is reached by a BAFU source today (55 kg rows, 8 m3 rows, all of them
+#: the region-stripped water family). Widen this table, and re-run the one-unit-per-
+#: EF-code delivery check, if a source ever lands on another water name.
+_WATER_NAMES = frozenset({"water"})
 
 
-def nomenclature_unit(bafu_unit: str) -> str:
-    """The EF spelling of ``bafu_unit``, same physical scale, never a factor.
+def _is_water_flow(ef_flow: EfFlow) -> bool:
+    """Whether ``ef_flow`` is a water substance for the density conversion.
 
-    Used only when the match target is uncharacterised (the nomenclature package):
-    such a target has no EF reference unit at all (``EfFlowIndex.reference_unit``
-    returns ``None`` for it), so this is what ``entry_for`` uses to fill
-    ``target["unit"]`` instead -- ``entry_for`` never sets ``conversion_factor`` for
-    one. ``bafu_unit`` outside
-    :data:`_NOMENCLATURE_UNITS` is returned unchanged -- this is a spelling courtesy,
-    not a claim of physical accuracy.
+    ``conversion_for``'s own water-density special case identifies a characterised
+    water-use match by its CF vector (``{WATER_USE_METHOD}`` exactly); an
+    uncharacterised match (the nomenclature package's own targets) carries no vector
+    at all (``EfFlowIndex.vector`` is always ``{}`` for one), so the name is the only
+    handle. See ``_WATER_NAMES`` for how narrow that handle deliberately is.
     """
-    return _NOMENCLATURE_UNITS.get(bafu_unit, bafu_unit)
+    return ef_flow.name.strip().lower() in _WATER_NAMES
+
+
+def nomenclature_target_unit(flow: BafuFlow, ef_flow: EfFlow) -> tuple[str, float | None]:
+    """The EF-convention unit for ``flow.unit``'s physical dimension, paired with the
+    factor that rescales the source amount onto it (``None`` when the source is
+    already at that scale) -- used only when the match target is uncharacterised (the
+    nomenclature package): such a target has no EF reference unit of its own to defer
+    to (``EfFlowIndex.reference_unit`` returns ``None`` for it), so ``entry_for`` uses
+    this instead.
+
+    Round 5, decision 2026-09-14: replaces the earlier same-scale-only
+    ``nomenclature_unit`` respelling (kept the SOURCE unit's own spelling, never a
+    factor) -- see the module docstring for why that was wrong: it let one EF flow fed
+    by two differently-scaled BAFU sources (``Bq``/``kBq``, ``kg``/``m3`` for water,
+    ``kWh``/``MJ``) end up with two different ``target["unit"]`` values and no
+    ``conversion_factor`` to reconcile them.
+
+    Per physical dimension (``_DIMENSION``, canonicalised via
+    ``_NOMENCLATURE_TARGET_UNIT``): mass -> kilogram (``kg`` needs no factor), EXCEPT
+    a water flow (``_is_water_flow`` on ``ef_flow``, never on ``flow`` -- the source
+    name is not what is being checked) -> cubic meter, reusing the exact water-density
+    factor ``conversion_for`` applies to a characterised water-use match
+    (``_WATER_DENSITY_FACTOR``); activity -> kBq (``Bq`` rescales by
+    ``_SCALED[("Bq", "kBq")]``, ``kBq`` needs no factor); energy -> megajoule (``kWh``
+    rescales by ``_SCALED[("kWh", "megajoule")]``, ``MJ`` needs no factor); volume ->
+    cubic meter (``m3``/``Nm3`` need no factor, same physical scale); area -> ``m2``;
+    area-time -> ``m2*a`` (``m2a`` needs no factor, same physical scale); volume-time
+    has no EF convention at all -- BAFU's own ``m3y`` spelling is kept as-is (the one
+    real BAFU flow in this dimension, "Volume occupied, reservoir").
+
+    A source unit outside every dimension table entirely is returned unchanged, with
+    no factor -- a spelling courtesy, not a claim of physical accuracy, same as the
+    ``nomenclature_unit`` respelling this replaces.
+
+    Never called for a (``flow``, ``ef_flow``) pair ``nomenclature_unit_mismatch``
+    would refuse (round 5, decision 2026-09-14, e.g. a cubic-meter "Wood" source):
+    ``_decide`` withholds any such pair as ``unit_mismatch`` before an entry -- and
+    this function -- is ever reached for it, the same contract ``entry_for``'s own
+    ``ValueError`` documents for a characterised mismatch.
+    """
+    dimension = _DIMENSION.get(flow.unit)
+    if dimension is None:
+        return flow.unit, None
+    if dimension == "mass" and _is_water_flow(ef_flow):
+        return "cubic meter", _WATER_DENSITY_FACTOR
+    target_unit = _NOMENCLATURE_TARGET_UNIT[dimension]
+    if flow.unit == target_unit:
+        return target_unit, None
+    return target_unit, _SCALED.get((flow.unit, target_unit))
 
 
 def unit_conversion(bafu_unit: str, ef_unit: str | None) -> float | None:
@@ -217,7 +338,9 @@ def conversion_for(
     if flow.unit == "kg" and set(index.vector(match.code)) == {WATER_USE_METHOD}:
         # water is the only substance with a fixed mass -> volume factor (density);
         # this depends on the target's characterisation method, so it cannot live in
-        # the generic, method-blind ``unit_conversion`` table above.
-        return 0.001, None
+        # the generic, method-blind ``unit_conversion`` table above. Shared with
+        # nomenclature_target_unit's own uncharacterised water special case (round 5,
+        # decision 2026-09-14) via _WATER_DENSITY_FACTOR, so the two never disagree.
+        return _WATER_DENSITY_FACTOR, None
     factor = unit_conversion(flow.unit, index.reference_unit(match.code))
     return None if factor is None else (factor, None)

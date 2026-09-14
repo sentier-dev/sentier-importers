@@ -15,7 +15,11 @@ biosphere-3-matched, biosphere-4-nomenclature), in two passes:
    biosphere-3-matched outcome -- a ``RuntimeError``, never silently reported. An
    ``Unmatched`` outcome is reported from this second pass, not the first: the
    inclusive index can refine the reason (e.g. a code the CF table has no context for
-   at all).
+   at all). Round 5, decision 2026-09-14: ``outcome_for``'s own ``_decide`` step may
+   also resolve a plain ``no_ef_flow`` here into a name-only alignment
+   (``mappings_biosphere_matched._name_only_match``) -- reported the same as any other
+   biosphere-4-nomenclature ``Match``, with ``tier="name-only"`` and
+   ``placement="name_only"``; this source needs no code of its own for it.
 
 ``transform`` itself is pure (records in, rows out): it never touches ``self.inputs``
 or ``self.config`` -- everything both passes need was already built in ``parse``.

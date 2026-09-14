@@ -1,18 +1,28 @@
 import pytest
-from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.pipeline import Match
 from sentier_importers.sources.bafu.ef_units import (
     ENERGY_CONTENT,
     ENERGY_CONTENT_NOTES,
+    NOMENCLATURE_TARGET_DIMENSION,
     STOICHIOMETRIC,
     STOICHIOMETRIC_NOTES,
     conversion_for,
-    nomenclature_unit,
+    nomenclature_target_unit,
+    nomenclature_unit_mismatch,
     unit_conversion,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
 from tests.matching.ef_fixtures import RES_GROUND, cf_row, vocab_row, write_ef_inputs
+
+
+def _ef_flow(name: str = "Widget") -> EfFlow:
+    """A bare, uncharacterised ``EfFlow`` carrying only what ``nomenclature_target_unit``
+    ever looks at: its name (for the water special case) -- context/code are
+    irrelevant to the unit table, so kept minimal.
+    """
+    return EfFlow(code="x", name=name, context=(), characterised=False)
 
 
 @pytest.mark.parametrize(
@@ -42,23 +52,64 @@ def test_unit_conversion_fixed_factors_and_cross_dimension_mismatches(
     assert unit_conversion(bafu_unit, ef_unit) == expected
 
 
+#: Round 5, decision 2026-09-14: one EF-convention target unit per physical
+#: dimension, with the factor (``None`` when the source is already at that scale)
+#: that ``nomenclature_target_unit`` must return for it. Every non-water case here
+#: uses a plain "Widget" target -- the water density exception has its own
+#: parametrization below.
 @pytest.mark.parametrize(
-    "bafu_unit,expected",
+    "bafu_unit,expected_unit,expected_factor",
     [
-        ("kg", "kilogram"),
-        ("Bq", "Bq"),  # spelling only, same scale -- never rescaled to kBq
-        ("kBq", "kBq"),
-        ("m3", "cubic meter"),
-        ("Nm3", "cubic meter"),
-        ("MJ", "megajoule"),
-        ("kWh", "kWh"),  # spelling only, same scale -- never rescaled to megajoule
-        ("m2", "m2"),
-        ("m2a", "m2*a"),
-        ("unknown-unit", "unknown-unit"),  # passed through unchanged
+        ("kg", "kilogram", None),
+        ("Bq", "kBq", 0.001),
+        ("kBq", "kBq", None),
+        ("m3", "cubic meter", None),
+        ("Nm3", "cubic meter", None),
+        ("MJ", "megajoule", None),
+        ("kWh", "megajoule", 3.6),
+        ("m2", "m2", None),
+        ("m2a", "m2*a", None),
+        ("m3y", "m3y", None),  # volume-time: EF has no convention, spelling kept as-is
+        ("unknown-unit", "unknown-unit", None),  # outside every dimension table
     ],
 )
-def test_nomenclature_unit_covers_every_bafu_unit(bafu_unit, expected):
-    assert nomenclature_unit(bafu_unit) == expected
+def test_nomenclature_target_unit_covers_every_dimension(
+    bafu_unit, expected_unit, expected_factor
+):
+    flow = BafuFlow("Widget", "emissions to air", "unspecified", bafu_unit)
+    assert nomenclature_target_unit(flow, _ef_flow("Widget")) == (expected_unit, expected_factor)
+
+
+@pytest.mark.parametrize(
+    "bafu_unit,expected_unit,expected_factor",
+    [
+        ("kg", "cubic meter", 0.001),  # the one mass -> volume exception: water density
+        ("m3", "cubic meter", None),  # already volume: no rescale needed
+    ],
+)
+def test_nomenclature_target_unit_applies_the_water_density_exception(
+    bafu_unit, expected_unit, expected_factor
+):
+    # "Water" is the one substance name EF's water-use method characterises, under
+    # every context -- the uncharacterised nomenclature package identifies the same
+    # substance by name (it carries no CF vector to check, unlike conversion_for's own
+    # characterised water-use special case; see nomenclature_target_unit's docstring).
+    flow = BafuFlow("Water", "resources", "in water", bafu_unit)
+    assert nomenclature_target_unit(flow, _ef_flow("Water")) == (expected_unit, expected_factor)
+
+
+def test_nomenclature_target_unit_water_exception_is_case_and_whitespace_insensitive():
+    flow = BafuFlow("Water, KR", "emissions to water", "river", "kg")
+    assert nomenclature_target_unit(flow, _ef_flow(" WATER ")) == ("cubic meter", 0.001)
+
+
+def test_nomenclature_target_unit_never_applies_water_density_outside_mass():
+    # a non-mass source unit onto EF's "Water" substance is not a density conversion
+    # at all -- the exception only ever intercepts the mass dimension. "MJ" is
+    # physically nonsensical for water, but exercises the code path: the ordinary
+    # energy-dimension rule applies, not the 0.001 water density factor.
+    flow = BafuFlow("Water", "resources", "in water", "MJ")
+    assert nomenclature_target_unit(flow, _ef_flow("Water")) == ("megajoule", None)
 
 
 #: Hardcoded independently of ENERGY_CONTENT itself (not derived from the dict under
@@ -217,3 +268,29 @@ def test_conversion_for_returns_none_when_nothing_applies(tmp_path):
         code="u238", tier="name", placement="exact", location=None, candidates=1, caveats=()
     )
     assert conversion_for(flow, match, index) is None
+
+
+def test_nomenclature_target_dimension_has_exactly_the_one_wood_entry():
+    # hardcoded independently of the dict under test, same rationale as
+    # _ENERGY_CONTENT_CASES/_STOICHIOMETRIC_CASES above.
+    assert dict(NOMENCLATURE_TARGET_DIMENSION) == {"Wood": "mass"}
+
+
+def test_nomenclature_unit_mismatch_withholds_a_wrong_dimension_wood_source():
+    # round 5, decision 2026-09-14: EF counts "Wood" by mass; BAFU also reports
+    # standing wood by volume (m3), and no density convention bridges the two
+    # anywhere in this codebase (unlike water) -- the source must be withheld.
+    flow = BafuFlow("Wood, hard, standing", "resources", "in ground", "m3")
+    assert nomenclature_unit_mismatch(flow, _ef_flow("Wood")) == (
+        "EF Wood is counted by mass; no density convention converts m3 " "(decision 2026-09-14)"
+    )
+
+
+def test_nomenclature_unit_mismatch_allows_the_matching_dimension():
+    flow = BafuFlow("Wood, unspecified, standing/kg", "resources", "in ground", "kg")
+    assert nomenclature_unit_mismatch(flow, _ef_flow("Wood")) is None
+
+
+def test_nomenclature_unit_mismatch_ignores_a_name_outside_the_table():
+    flow = BafuFlow("Basalt", "resources", "in ground", "m3")
+    assert nomenclature_unit_mismatch(flow, _ef_flow("Basalt")) is None
