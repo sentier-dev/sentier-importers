@@ -18,9 +18,10 @@ target without a ``code`` cannot be resolved to a factor, so it is not shipped.
 
 Decision 2026-09-14: ``EXCLUDED_SOURCE_NAMES`` withholds a handful of BAFU source
 flows the upstream crosswalk resolves onto the wrong substance entirely -- carbonminds
-pairs BAFU ``Metiram`` with EF ``Zineb``, a different dithiocarbamate fungicide, since
-EF 3.1 has no Metiram flow of its own. Shipping that row would assert a factor for the
-wrong substance, so it is dropped here rather than trusted from upstream.
+pairs BAFU ``Metiram`` with EF ``Zineb``, a different dithiocarbamate fungicide, although
+EF 3.1 carries its own ``Metiram`` flow (CAS 9006-42-2). Shipping that row would assert a
+factor for the wrong substance, so it is dropped here rather than trusted from upstream;
+the matched package then lands Metiram on EF's own flow by name and CAS.
 """
 
 from __future__ import annotations
@@ -64,7 +65,7 @@ _COLUMNS = [
 EXCLUDED_SOURCE_NAMES: dict[str, str] = {
     "metiram": (
         "carbonminds pairs Metiram with Zineb, a different dithiocarbamate "
-        "fungicide; EF 3.1 has no Metiram flow (decision 2026-09-14)"
+        "fungicide; EF 3.1 has its own Metiram flow, CAS 9006-42-2 (decision 2026-09-14)"
     ),
 }
 

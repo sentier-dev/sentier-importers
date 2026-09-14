@@ -167,8 +167,9 @@ def test_non_ef_target_is_dropped():
 
 def test_metiram_is_withheld_regardless_of_its_upstream_target():
     # decision 2026-09-14: carbonminds pairs BAFU Metiram with EF Zineb, a
-    # different dithiocarbamate fungicide (EF 3.1 has no Metiram flow of its
-    # own); shipping that row would assert a factor for the wrong substance.
+    # different dithiocarbamate fungicide (EF 3.1 has its own Metiram flow, CAS
+    # 9006-42-2, which the matched package uses); shipping that row would assert a
+    # factor for the wrong substance.
     assert "metiram" in EXCLUDED_SOURCE_NAMES
     rows = [_row(source_name="Metiram", target_name="zineb")]
     assert _transform(rows) == []
