@@ -1,9 +1,11 @@
 from pathlib import Path
 
 import orjson
+import pytest
 import yaml
 from sentier_importers.core import pipeline
 from sentier_importers.core.context import RunContext
+from sentier_importers.core.errors import FetchError, MissingInputError
 from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.sources.example_csv.source import ExampleCsvSource
 
@@ -170,3 +172,61 @@ def test_run_source_validates_when_schema_declared(tmp_path, monkeypatch):
     pipeline.run_source(src, _ctx(tmp_path))
     assert captured["schema_id"] == "Widget"
     assert captured["validated"] == ("linkml", "Widget")
+
+
+# --- missing local input: error carries source, input, root, access ---------
+
+
+class _DefaultFetchSource(Source):
+    def transform(self, records):
+        return list(records)
+
+
+def _rooted_source(tmp_path, access, **inputs):
+    cfg = SourceConfig(
+        name="rooted",
+        module="tests",
+        target="sentier_inventory",
+        category="demo",
+        fetch_url=f"file://{tmp_path / 'main.csv'}",
+        fetch_format="csv",
+        output_format="json",
+        access=access,
+        inputs=inputs,
+    )
+    return _DefaultFetchSource(cfg)
+
+
+@pytest.mark.parametrize(
+    "access, sentence",
+    [
+        ("private", "DdS-internal"),
+        ("licensed", "provider"),
+        ("public", "clone"),
+    ],
+)
+def test_missing_fetch_url_error_has_context(tmp_path, access, sentence):
+    src = _rooted_source(tmp_path, access)
+    ctx = _ctx(tmp_path, data_root=tmp_path / "root")
+    with pytest.raises(FetchError) as exc:
+        pipeline.validate_source(src, ctx)
+    text = str(exc.value)
+    assert f"file not found: {tmp_path / 'main.csv'}" in text
+    assert "input:  fetch.url of source 'rooted'" in text
+    assert f"root:   {tmp_path / 'root'}" in text
+    assert "--data-root" in text and "SENTIER_DATA_ROOT" in text
+    assert f"access: {access}." in text
+    assert sentence in text
+
+
+def test_missing_named_input_error_names_the_input(tmp_path):
+    (tmp_path / "main.csv").write_text("id,label\n1,a\n", encoding="utf-8")
+    src = _rooted_source(tmp_path, "public", side=f"file://{tmp_path / 'side.json'}")
+    with pytest.raises(FetchError) as exc:
+        pipeline.validate_source(src, _ctx(tmp_path, data_root=tmp_path))
+    assert "input:  side of source 'rooted'" in str(exc.value)
+
+
+def test_missing_input_keeps_its_error_type_through_the_context_wrapper(tmp_path):
+    with pytest.raises(MissingInputError):
+        pipeline.validate_source(_rooted_source(tmp_path, "private"), _ctx(tmp_path))

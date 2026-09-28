@@ -10,7 +10,7 @@ EcoSpold zip (see the memo in ``sources/bafu/ecospold.py``).
 Usage:
     uv run python scripts/run_bafu_local.py \
         [--output-dir output/bafu-2026] [--cache-dir cache] \
-        [--schema-dir ../sentier-vocab/schemas] \
+        [--data-root ~/dds] [--schema-dir ../sentier-vocab/schemas] \
         [--inventory-clone ../sentier-inventory]
 """
 
@@ -66,6 +66,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", default="output/bafu-2026")
     parser.add_argument("--cache-dir", default="cache")
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        help="Directory the registry's file:// inputs are relative to "
+        "(default: $SENTIER_DATA_ROOT, else the parent of this checkout).",
+    )
     parser.add_argument("--schema-dir", default=None, help="Local sentier-vocab schemas dir.")
     parser.add_argument(
         "--inventory-clone",
@@ -79,14 +85,16 @@ def main() -> None:
         default = Path(__file__).resolve().parents[2] / "sentier-vocab" / "schemas"
         schema_dir = default if default.is_dir() else None
 
+    data_root = registry.resolve_data_root(Path(args.data_root) if args.data_root else None)
     ctx = RunContext(
         cache_dir=Path(args.cache_dir),
         output_dir=Path(args.output_dir),
         dry_run=True,
         schema_dir=schema_dir,
+        data_root=data_root,
     )
 
-    configs = [c for c in registry.load_registry() if c.name.startswith("bafu")]
+    configs = [c for c in registry.load_registry(data_root=data_root) if c.name.startswith("bafu")]
     for config in configs:
         start = time.monotonic()
         out = pipeline.run_source(registry.load_source(config), ctx)

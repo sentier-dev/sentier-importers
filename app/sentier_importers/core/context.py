@@ -18,6 +18,9 @@ class RunContext:
     - ``deliver_local_root``: when set, copy emitted files into this local checkout of
       the target repo (no git/gh involved) — the regenerate-locally flow for sources
       whose data cannot be delivered upstream yet.
+    - ``data_root``: the directory ``${SENTIER_DATA_ROOT}`` expanded to when the
+      registry was loaded (see ``core.registry.resolve_data_root``); reported in
+      missing-input errors. ``None`` when the registry was loaded elsewhere.
     """
 
     cache_dir: Path
@@ -26,3 +29,4 @@ class RunContext:
     offline: bool = False
     schema_dir: Path | None = None
     deliver_local_root: Path | None = None
+    data_root: Path | None = None

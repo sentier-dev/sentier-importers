@@ -9,7 +9,8 @@ from sentier_importers.core import schema_provider
 from sentier_importers.core import validate as validate_mod
 from sentier_importers.core import write as write_mod
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import ValidationError
+from sentier_importers.core.errors import FetchError, ValidationError
+from sentier_importers.core.registry import DATA_ROOT_VAR
 from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.core.targets import Target, get_target
 from sentier_importers.core.types import Payload, Rows
@@ -62,6 +63,48 @@ def _arrow_schema(config: SourceConfig, target: Target, ctx: RunContext):
     return write_mod.arrow_schema_for(schema_path, config.validate_against)
 
 
+#: What to do about a missing local input, by the source's ``access`` class.
+ACCESS_HINTS = {
+    "public": "This input is a public sentier-* checkout: clone it beside this repo "
+    "or point the data root at it.",
+    "licensed": "This input is obtainable from its provider under the provider's "
+    "terms; place it at the path above.",
+    "private": "This input is a DdS-internal artifact and is not distributed with " "the repo.",
+}
+
+
+def _input_name(config: SourceConfig, url: str | None) -> str:
+    """The registry key (``fetch.url`` or an ``inputs`` name) that declares ``url``."""
+    if url == config.fetch_url:
+        return "fetch.url"
+    for name, candidate in config.inputs.items():
+        if candidate == url:
+            return name
+    return "an input"
+
+
+def _with_input_context(exc: FetchError, config: SourceConfig, ctx: RunContext) -> FetchError:
+    """Re-wrap a fetch failure with the source, the registry input, the data root
+    that was used, and what the ``access`` class says about obtaining the file.
+    The exception type is preserved so the CLI can tell a missing local input
+    (warn and skip) from any other fetch failure (error)."""
+    root = ctx.data_root if ctx.data_root is not None else "(not set)"
+    lines = [
+        str(exc),
+        f"  input:  {_input_name(config, exc.url)} of source {config.name!r}",
+        f"  root:   {root}  (override with --data-root or {DATA_ROOT_VAR})",
+        f"  access: {config.access}. {ACCESS_HINTS[config.access]}",
+    ]
+    return type(exc)("\n".join(lines), url=exc.url)
+
+
+def _fetch(source: Source, ctx: RunContext):
+    try:
+        return source.fetch(ctx)
+    except FetchError as exc:
+        raise _with_input_context(exc, source.config, ctx) from exc
+
+
 def _produce(source: Source, ctx: RunContext) -> tuple[Rows, Payload, Target]:
     """Run fetch → parse → transform → dedup → assemble → validate.
 
@@ -69,7 +112,7 @@ def _produce(source: Source, ctx: RunContext) -> tuple[Rows, Payload, Target]:
     """
     config = source.config
     target = get_target(config.target)
-    rows = source.transform(source.parse(source.fetch(ctx)))
+    rows = source.transform(source.parse(_fetch(source, ctx)))
     rows = dedup_mod.dedup(rows, config, target, ctx)
     payload = _assemble(rows, config)
     _validate(payload, config, target, ctx)

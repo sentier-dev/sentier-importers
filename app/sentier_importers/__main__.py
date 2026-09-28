@@ -14,14 +14,21 @@ from pathlib import Path
 from platformdirs import user_cache_dir
 from sentier_importers.core import pipeline, registry
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import SentierImporterError
+from sentier_importers.core.errors import MissingInputError, SentierImporterError
 
 DEFAULT_CACHE_DIR = Path(user_cache_dir("sentier_importers"))
 DEFAULT_OUTPUT_DIR = Path("output")
 
 
+def _data_root(args: argparse.Namespace) -> Path:
+    return registry.resolve_data_root(
+        Path(args.data_root) if getattr(args, "data_root", None) else None
+    )
+
+
 def _ctx(args: argparse.Namespace) -> RunContext:
     return RunContext(
+        data_root=_data_root(args),
         cache_dir=Path(args.cache_dir) if args.cache_dir else DEFAULT_CACHE_DIR,
         output_dir=Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_DIR,
         dry_run=not getattr(args, "deliver", False),
@@ -34,6 +41,13 @@ def _ctx(args: argparse.Namespace) -> RunContext:
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        metavar="DIR",
+        help=f"Directory the registry's file:// inputs are relative to (default: "
+        f"${registry.DATA_ROOT_VAR}, else the parent of this checkout).",
+    )
     parser.add_argument("--cache-dir", default=None, help="Fetch cache directory.")
     parser.add_argument("--output-dir", default=None, help="Where to stage emitted files.")
     parser.add_argument("--offline", action="store_true", help="Fail on any fetch cache miss.")
@@ -45,28 +59,47 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> None:
-    for config in registry.load_registry():
+    for config in registry.load_registry(data_root=_data_root(args)):
         status = "enabled" if config.enabled else "disabled"
-        print(f"{config.name:24} -> {config.target}/{config.category}  [{status}]")
+        print(
+            f"{config.name:40} -> {config.target}/{config.category}  "
+            f"[{status}]  {config.access}"
+        )
+
+
+def _warn_skipped(exc: MissingInputError, name: str) -> None:
+    """A licensed or private input is absent on this machine: say so and move on.
+
+    The message already names the input, the root used, and the access class.
+    """
+    print(f"warning: {exc}\nskipped {name}", file=sys.stderr)
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
-    config = registry.get_config(args.source)
+    config = registry.get_config(args.source, data_root=_data_root(args))
     source = registry.load_source(config)
-    count = pipeline.validate_source(source, _ctx(args))
+    try:
+        count = pipeline.validate_source(source, _ctx(args))
+    except MissingInputError as exc:
+        _warn_skipped(exc, config.name)
+        return
     print(f"{config.name}: {count} rows valid")
 
 
 def cmd_run(args: argparse.Namespace) -> None:
     ctx = _ctx(args)
     if args.all:
-        configs = [c for c in registry.load_registry() if c.enabled]
+        configs = [c for c in registry.load_registry(data_root=ctx.data_root) if c.enabled]
     else:
         if not args.source:
             raise SentierImporterError("run requires a <source> name or --all")
-        configs = [registry.get_config(args.source)]
+        configs = [registry.get_config(args.source, data_root=ctx.data_root)]
     for config in configs:
-        out = pipeline.run_source(registry.load_source(config), ctx)
+        try:
+            out = pipeline.run_source(registry.load_source(config), ctx)
+        except MissingInputError as exc:
+            _warn_skipped(exc, config.name)
+            continue
         print(f"wrote {out}")
 
 
@@ -75,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     lst = sub.add_parser("list", help="List registered sources.")
+    _add_common(lst)
     lst.set_defaults(func=cmd_list)
 
     val = sub.add_parser("validate", help="Validate a source without emitting.")

@@ -31,8 +31,9 @@ sources:
     module: sentier_importers.sources.agribalyse.mappings_biosphere
     target: sentier_mappings
     category: agribalyse-3.2__ef-3.1
+    access: private
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/registry/mappings_biosphere.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/registry/mappings_biosphere.parquet"
       format: parquet
     output_format: json
     package:
@@ -145,8 +146,9 @@ sources:
     module: sentier_importers.sources.agribalyse.products
     target: sentier_vocab
     category: products
+    access: private
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
       format: parquet
     output_format: parquet
     collection:
@@ -187,8 +189,9 @@ sources:
     module: sentier_importers.sources.agribalyse.processes
     target: sentier_vocab
     category: processes
+    access: private
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
       format: parquet
     output_format: parquet
     collection:
@@ -208,8 +211,9 @@ sources:
     module: sentier_importers.sources.agribalyse.vocab_lcia_methods
     target: sentier_vocab
     category: lcia-methods
+    access: private
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
     output_format: yaml
     collection:
@@ -227,8 +231,9 @@ sources:
     module: sentier_importers.sources.agribalyse.vocab_impact_categories
     target: sentier_vocab
     category: impact-categories
+    access: private
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
     output_format: yaml
     collection:
@@ -250,8 +255,9 @@ sources:
     module: sentier_importers.sources.agribalyse.methods
     target: sentier_methods
     category: 01-ef-3.1
+    access: private
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
     output_format: parquet
     enabled: false
@@ -260,14 +266,15 @@ sources:
     module: sentier_importers.sources.agribalyse.cfs
     target: sentier_methods
     category: 01-ef-3.1
+    access: private
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
     # Named input: local arbiter for the 182 ambiguous global-duplicate (flow, method)
     # pairs the JRC table carries (see sources/agribalyse/ef_cf_dedup.py). A local
     # reference file only, never delivered; the import still runs if it is absent.
     inputs:
-      simapro: "file:///home/laurenz/dds/dds-agribalyse/source/simapro-EF31-adapted-cfs.parquet"
+      simapro: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/simapro-EF31-adapted-cfs.parquet"
     output_format: parquet
     enabled: false
 
@@ -285,9 +292,10 @@ sources:
     module: sentier_importers.sources.agribalyse.flows
     target: sentier_vocab
     category: elementary-flows
+    access: private
     emit_filename: air
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz                                # unused: the plugin overrides parse() to gunzip
     output_format: parquet
     collection:
@@ -305,9 +313,10 @@ sources:
     module: sentier_importers.sources.agribalyse.flows
     target: sentier_vocab
     category: elementary-flows
+    access: private
     emit_filename: water
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz
     output_format: parquet
     collection:
@@ -325,9 +334,10 @@ sources:
     module: sentier_importers.sources.agribalyse.flows
     target: sentier_vocab
     category: elementary-flows
+    access: private
     emit_filename: soil
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz
     output_format: parquet
     collection:
@@ -345,9 +355,10 @@ sources:
     module: sentier_importers.sources.agribalyse.flows
     target: sentier_vocab
     category: elementary-flows
+    access: private
     emit_filename: land-use
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz
     output_format: parquet
     collection:
@@ -365,9 +376,10 @@ sources:
     module: sentier_importers.sources.agribalyse.flows
     target: sentier_vocab
     category: elementary-flows
+    access: private
     emit_filename: natural-resource
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz
     output_format: parquet
     collection:
@@ -385,9 +397,10 @@ sources:
     module: sentier_importers.sources.agribalyse.flows
     target: sentier_vocab
     category: elementary-flows
+    access: private
     emit_filename: biota
     fetch:
-      url: "file:///home/laurenz/dds/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz
     output_format: parquet
     collection:
@@ -461,9 +474,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: agriculture
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -481,9 +495,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: electricity
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -501,9 +516,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: chemicals
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -521,9 +537,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: transport
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -541,9 +558,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: energy
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -561,9 +579,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: waste
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -581,9 +600,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: construction
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -601,9 +621,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: materials
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -621,9 +642,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: electronics
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -641,9 +663,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: building-services
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -661,9 +684,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
     category: processes
+    access: licensed
     emit_filename: obsolete
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -684,9 +708,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
     category: elementary-flows
+    access: licensed
     emit_filename: emissions-to-air
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -704,9 +729,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
     category: elementary-flows
+    access: licensed
     emit_filename: emissions-to-water
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -724,9 +750,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
     category: elementary-flows
+    access: licensed
     emit_filename: emissions-to-soil
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -744,9 +771,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
     category: elementary-flows
+    access: licensed
     emit_filename: resources
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -764,9 +792,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
     category: elementary-flows
+    access: licensed
     emit_filename: non-material-emissions
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -784,9 +813,10 @@ sources:
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
     category: elementary-flows
+    access: licensed
     emit_filename: economic-issues
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     collection:
@@ -807,9 +837,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 01-agriculture
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -819,9 +850,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 01-agriculture
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -831,9 +863,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 02-electricity
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -843,9 +876,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 02-electricity
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -855,9 +889,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 03-chemicals
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -867,9 +902,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 03-chemicals
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -879,9 +915,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 04-transport
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -891,9 +928,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 04-transport
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -903,9 +941,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 05-energy
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -915,9 +954,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 05-energy
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -927,9 +967,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 06-waste
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -939,9 +980,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 06-waste
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -951,9 +993,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 07-construction
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -963,9 +1006,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 07-construction
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -975,9 +1019,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 08-materials
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -987,9 +1032,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 08-materials
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -999,9 +1045,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 09-electronics
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -1011,9 +1058,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 09-electronics
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -1023,9 +1071,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 10-building-services
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -1035,9 +1084,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 10-building-services
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -1047,9 +1097,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: 99-obsolete
+    access: licensed
     emit_filename: processes
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -1059,9 +1110,10 @@ sources:
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: 99-obsolete
+    access: licensed
     emit_filename: exchanges
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
     validate_against: null
@@ -1079,9 +1131,10 @@ sources:
     module: sentier_importers.sources.bafu.mappings_biosphere
     target: sentier_mappings
     category: bafu-2026-v1__ef-3.1
+    access: private
     emit_filename: biosphere-1-curated
     fetch:
-      url: "file:///home/laurenz/dds/dds-carbonminds-data/registry/mappings_biosphere_ef.parquet"
+      url: "file://${SENTIER_DATA_ROOT}/dds-carbonminds-data/registry/mappings_biosphere_ef.parquet"
       format: parquet
     output_format: json
     package:
@@ -1104,15 +1157,16 @@ sources:
     module: sentier_importers.sources.eaternity.mappings_biosphere
     target: sentier_mappings
     category: bafu-2026-v1__ef-3.1
+    access: private
     emit_filename: biosphere-2-inferred
     fetch:
-      url: "file:///home/laurenz/dds/sentier-mappings/data/ecoinvent-biosphere3__eaternity-bafu-ext/biosphere.json"
+      url: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/ecoinvent-biosphere3__eaternity-bafu-ext/biosphere.json"
       format: json
     inputs:
-      curated: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
-      ecospold: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      ef_flows: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      method_cfs: "file:///home/laurenz/dds/dds-carbonminds-data/registry/method_cfs"
+      curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
+      ecospold: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      ef_flows: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      method_cfs: "file://${SENTIER_DATA_ROOT}/dds-carbonminds-data/registry/method_cfs"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-biosphere-inferred
@@ -1127,15 +1181,16 @@ sources:
     module: sentier_importers.sources.eaternity.inference_review
     target: sentier_mappings
     category: bafu-2026-v1__ef-3.1
+    access: private
     emit_filename: inference_review
     fetch:
-      url: "file:///home/laurenz/dds/sentier-mappings/data/ecoinvent-biosphere3__eaternity-bafu-ext/biosphere.json"
+      url: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/ecoinvent-biosphere3__eaternity-bafu-ext/biosphere.json"
       format: json
     inputs:
-      curated: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
-      ecospold: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      ef_flows: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      method_cfs: "file:///home/laurenz/dds/dds-carbonminds-data/registry/method_cfs"
+      curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
+      ecospold: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      ef_flows: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      method_cfs: "file://${SENTIER_DATA_ROOT}/dds-carbonminds-data/registry/method_cfs"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-inference-review
@@ -1154,15 +1209,16 @@ sources:
     module: sentier_importers.sources.bafu.mappings_biosphere_matched
     target: sentier_mappings
     category: bafu-2026-v1__ef-3.1
+    access: licensed
     emit_filename: biosphere-3-matched
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     inputs:
-      curated: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
-      inferred: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
-      ef_cfs: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      ef_vocab: "file:///home/laurenz/dds/sentier-vocab/data/elementary-flows"
+      curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
+      inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
+      ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/data/elementary-flows"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-biosphere-matched
@@ -1185,15 +1241,16 @@ sources:
     module: sentier_importers.sources.bafu.mappings_biosphere_coverage
     target: sentier_mappings
     category: bafu-2026-v1__ef-3.1
+    access: licensed
     emit_filename: coverage
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     inputs:
-      curated: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
-      inferred: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
-      ef_cfs: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      ef_vocab: "file:///home/laurenz/dds/sentier-vocab/data/elementary-flows"
+      curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
+      inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
+      ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/data/elementary-flows"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-coverage
@@ -1212,16 +1269,17 @@ sources:
     module: sentier_importers.sources.bafu.mappings_biosphere_nomenclature
     target: sentier_mappings
     category: bafu-2026-v1__ef-3.1
+    access: licensed
     emit_filename: biosphere-4-nomenclature
     fetch:
-      url: "file:///home/laurenz/dds/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
+      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     inputs:
-      curated: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
-      inferred: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
-      matched: "file:///home/laurenz/dds/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-3-matched.json"
-      ef_cfs: "file:///home/laurenz/dds/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      ef_vocab: "file:///home/laurenz/dds/sentier-vocab/data/elementary-flows"
+      curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
+      inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
+      matched: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-3-matched.json"
+      ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/data/elementary-flows"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-biosphere-nomenclature
