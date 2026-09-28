@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import FetchError
+from sentier_importers.core.errors import FetchError, MissingInputError
 from sentier_importers.core.types import RawData
 
 
@@ -30,7 +30,7 @@ def fetch(url: str, ctx: RunContext) -> RawData:
     if url.startswith("file://"):
         local = Path(url[len("file://") :])
         if not local.exists():
-            raise FetchError(f"file not found: {local}", url=url)
+            raise MissingInputError(f"file not found: {local}", url=url)
         content = local.read_bytes()
     elif url.startswith(("http://", "https://")):
         try:

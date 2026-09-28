@@ -93,7 +93,7 @@ Each source declares who can hold its inputs. `sentier-importers list` prints it
 | `licensed` | at least one input you obtain from its provider under their terms, e.g. the BAFU-2026 v1 EcoSpold export at `<root>/sources/bafu-2026/` |
 | `private`  | at least one DdS-internal artifact (`dds-agribalyse`, `dds-carbonminds-data`); these sources only run inside DdS |
 
-A missing input fails with the path, the registry input, the root that was used, and the `access` class, so you know whether to fix the root or obtain a file.
+A missing local input is a warning, not an error: `validate` and `run` print the path, the registry input, the root that was used, and the `access` class, then skip that source (`run --all` carries on with the rest). Any other fetch failure is still an error.
 
 ## Contributing
 

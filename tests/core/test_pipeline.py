@@ -5,7 +5,7 @@ import pytest
 import yaml
 from sentier_importers.core import pipeline
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import FetchError
+from sentier_importers.core.errors import FetchError, MissingInputError
 from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.sources.example_csv.source import ExampleCsvSource
 
@@ -225,3 +225,8 @@ def test_missing_named_input_error_names_the_input(tmp_path):
     with pytest.raises(FetchError) as exc:
         pipeline.validate_source(src, _ctx(tmp_path, data_root=tmp_path))
     assert "input:  side of source 'rooted'" in str(exc.value)
+
+
+def test_missing_input_keeps_its_error_type_through_the_context_wrapper(tmp_path):
+    with pytest.raises(MissingInputError):
+        pipeline.validate_source(_rooted_source(tmp_path, "private"), _ctx(tmp_path))

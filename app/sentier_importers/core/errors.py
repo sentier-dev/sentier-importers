@@ -17,6 +17,15 @@ class FetchError(SentierImporterError):
         self.url = url
 
 
+class MissingInputError(FetchError):
+    """A ``file://`` input is not present on this machine.
+
+    Not a bug in the source: the file is a licensed or DdS-private artifact the
+    operator has not placed under the data root. The CLI reports it as a warning
+    and skips the source instead of failing the run.
+    """
+
+
 class ParseError(SentierImporterError):
     """Raised when raw data cannot be parsed into records."""
 

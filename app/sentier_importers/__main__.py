@@ -14,7 +14,7 @@ from pathlib import Path
 from platformdirs import user_cache_dir
 from sentier_importers.core import pipeline, registry
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import SentierImporterError
+from sentier_importers.core.errors import MissingInputError, SentierImporterError
 
 DEFAULT_CACHE_DIR = Path(user_cache_dir("sentier_importers"))
 DEFAULT_OUTPUT_DIR = Path("output")
@@ -67,10 +67,22 @@ def cmd_list(args: argparse.Namespace) -> None:
         )
 
 
+def _warn_skipped(exc: MissingInputError, name: str) -> None:
+    """A licensed or private input is absent on this machine: say so and move on.
+
+    The message already names the input, the root used, and the access class.
+    """
+    print(f"warning: {exc}\nskipped {name}", file=sys.stderr)
+
+
 def cmd_validate(args: argparse.Namespace) -> None:
     config = registry.get_config(args.source, data_root=_data_root(args))
     source = registry.load_source(config)
-    count = pipeline.validate_source(source, _ctx(args))
+    try:
+        count = pipeline.validate_source(source, _ctx(args))
+    except MissingInputError as exc:
+        _warn_skipped(exc, config.name)
+        return
     print(f"{config.name}: {count} rows valid")
 
 
@@ -83,7 +95,11 @@ def cmd_run(args: argparse.Namespace) -> None:
             raise SentierImporterError("run requires a <source> name or --all")
         configs = [registry.get_config(args.source, data_root=ctx.data_root)]
     for config in configs:
-        out = pipeline.run_source(registry.load_source(config), ctx)
+        try:
+            out = pipeline.run_source(registry.load_source(config), ctx)
+        except MissingInputError as exc:
+            _warn_skipped(exc, config.name)
+            continue
         print(f"wrote {out}")
 
 

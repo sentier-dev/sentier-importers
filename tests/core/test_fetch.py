@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import FetchError
+from sentier_importers.core.errors import FetchError, MissingInputError
 
 
 def _ctx(tmp_path, **kw):
@@ -109,3 +109,9 @@ def test_local_path_error_carries_the_url():
     with pytest.raises(FetchError) as exc:
         fetch_mod.local_path("https://example.org/dir", "vocab_dir")
     assert exc.value.url == "https://example.org/dir"
+
+
+def test_missing_file_raises_missing_input_error(tmp_path):
+    with pytest.raises(MissingInputError) as exc:
+        fetch_mod.fetch(f"file://{tmp_path / 'nope.txt'}", _ctx(tmp_path))
+    assert isinstance(exc.value, FetchError)

@@ -85,7 +85,9 @@ def _input_name(config: SourceConfig, url: str | None) -> str:
 
 def _with_input_context(exc: FetchError, config: SourceConfig, ctx: RunContext) -> FetchError:
     """Re-wrap a fetch failure with the source, the registry input, the data root
-    that was used, and what the ``access`` class says about obtaining the file."""
+    that was used, and what the ``access`` class says about obtaining the file.
+    The exception type is preserved so the CLI can tell a missing local input
+    (warn and skip) from any other fetch failure (error)."""
     root = ctx.data_root if ctx.data_root is not None else "(not set)"
     lines = [
         str(exc),
@@ -93,7 +95,7 @@ def _with_input_context(exc: FetchError, config: SourceConfig, ctx: RunContext) 
         f"  root:   {root}  (override with --data-root or {DATA_ROOT_VAR})",
         f"  access: {config.access}. {ACCESS_HINTS[config.access]}",
     ]
-    return FetchError("\n".join(lines), url=exc.url)
+    return type(exc)("\n".join(lines), url=exc.url)
 
 
 def _fetch(source: Source, ctx: RunContext):
