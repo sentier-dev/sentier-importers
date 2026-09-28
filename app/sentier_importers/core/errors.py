@@ -6,7 +6,15 @@ class SentierImporterError(Exception):
 
 
 class FetchError(SentierImporterError):
-    """Raised when a fetch stage cannot retrieve data."""
+    """Raised when a fetch stage cannot retrieve data.
+
+    ``url`` is the input that failed, when known, so the pipeline can name the
+    registry input it came from.
+    """
+
+    def __init__(self, message: str, url: str | None = None) -> None:
+        super().__init__(message)
+        self.url = url
 
 
 class ParseError(SentierImporterError):

@@ -50,6 +50,11 @@ class SourceConfig:
     # compose several upstream artifacts. Fetched through the same cache as
     # ``fetch_url`` and exposed as ``Source.inputs[name]``.
     inputs: dict[str, str] = field(default_factory=dict)
+    # Who can hold this source's local inputs: ``public`` (http(s) or a public
+    # sentier-* checkout), ``licensed`` (obtainable under the provider's terms, e.g.
+    # the BAFU EcoSpold export), ``private`` (a DdS-internal artifact). Drives the
+    # ``list`` column and the missing-input error message (spec 2026-09-28).
+    access: str = "public"
 
 
 class Source(ABC):

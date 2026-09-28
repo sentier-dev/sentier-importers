@@ -25,22 +25,22 @@ def fetch(url: str, ctx: RunContext) -> RawData:
         return RawData(content=cache_path.read_bytes(), source_url=url)
 
     if ctx.offline:
-        raise FetchError(f"offline: no cache entry for {url}")
+        raise FetchError(f"offline: no cache entry for {url}", url=url)
 
     if url.startswith("file://"):
         local = Path(url[len("file://") :])
         if not local.exists():
-            raise FetchError(f"file not found: {local}")
+            raise FetchError(f"file not found: {local}", url=url)
         content = local.read_bytes()
     elif url.startswith(("http://", "https://")):
         try:
             response = httpx.get(url, follow_redirects=True, timeout=60)
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise FetchError(f"failed to fetch {url}: {exc}") from exc
+            raise FetchError(f"failed to fetch {url}: {exc}", url=url) from exc
         content = response.content
     else:
-        raise FetchError(f"unsupported URL scheme: {url}")
+        raise FetchError(f"unsupported URL scheme: {url}", url=url)
 
     ctx.cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(content)
@@ -55,5 +55,5 @@ def local_path(url: str | None, name: str) -> Path:
     ``url`` is ``None``, blank, or not a ``file://`` URL.
     """
     if not url or not url.startswith("file://"):
-        raise FetchError(f"{name} must be a local file:// path, got {url!r}")
+        raise FetchError(f"{name} must be a local file:// path, got {url!r}", url=url)
     return Path(url[len("file://") :])

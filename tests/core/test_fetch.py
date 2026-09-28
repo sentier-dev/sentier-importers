@@ -95,3 +95,17 @@ def test_offline_hit_succeeds(tmp_path):
     raw = fetch_mod.fetch(url, ctx)
     assert raw.content == b"cached"
     assert raw.source_url == url
+
+
+def test_missing_file_error_carries_the_url(tmp_path):
+    url = f"file://{tmp_path / 'nope.txt'}"
+    with pytest.raises(FetchError) as exc:
+        fetch_mod.fetch(url, _ctx(tmp_path))
+    assert exc.value.url == url
+    assert str(tmp_path / "nope.txt") in str(exc.value)
+
+
+def test_local_path_error_carries_the_url():
+    with pytest.raises(FetchError) as exc:
+        fetch_mod.local_path("https://example.org/dir", "vocab_dir")
+    assert exc.value.url == "https://example.org/dir"

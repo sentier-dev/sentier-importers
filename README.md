@@ -74,7 +74,26 @@ tests/             core/ framework tests, sources/ plugin tests
 - Inputs: `file://` and `http(s)://` URLs. Fetches are cached in the user cache dir, `~/.cache/sentier_importers/` on Linux, keyed by the SHA-256 of the URL.
 - Outputs: YAML or JSON for vocabulary terms, Parquet for bulk tables, randonneur JSON for mappings. Never TTL.
 - Most sources are `enabled: false`. Big imports are opt-in so `run --all` stays fast.
-- The Agribalyse, EF and BAFU sources read local `file://` paths. They only run where those files exist.
+- The Agribalyse, EF and BAFU sources read local `file://` paths. See "Local inputs" below.
+
+### Local inputs
+
+Every `file://` input in `registry.yaml` is written as `file://${SENTIER_DATA_ROOT}/<repo-or-folder>/...`.
+The data root is resolved once per run, first hit wins:
+
+1. `--data-root DIR` on `list`, `validate` and `run`.
+2. The `SENTIER_DATA_ROOT` environment variable.
+3. The parent directory of this checkout. Clone the sibling repos beside `sentier-importers` and nothing needs setting.
+
+Each source declares who can hold its inputs. `sentier-importers list` prints it as the last column:
+
+| `access`   | meaning |
+|------------|---------|
+| `public`   | http(s) inputs or a public `sentier-*` checkout beside this repo |
+| `licensed` | at least one input you obtain from its provider under their terms, e.g. the BAFU-2026 v1 EcoSpold export at `<root>/sources/bafu-2026/` |
+| `private`  | at least one DdS-internal artifact (`dds-agribalyse`, `dds-carbonminds-data`); these sources only run inside DdS |
+
+A missing input fails with the path, the registry input, the root that was used, and the `access` class, so you know whether to fix the root or obtain a file.
 
 ## Contributing
 

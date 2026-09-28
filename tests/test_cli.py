@@ -40,3 +40,55 @@ def test_unknown_source_exits_nonzero(tmp_path):
     with pytest.raises(SystemExit) as exc:
         cli.main(["run", "nope", "--output-dir", str(tmp_path / "o")])
     assert exc.value.code != 0
+
+
+def test_list_prints_access_column(capsys):
+    cli.main(["list"])
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith("bafu-ef-biosphere "))
+    assert "private" in line
+    assert "public" in next(ln for ln in out.splitlines() if ln.startswith("example-csv "))
+
+
+def test_data_root_flag_reaches_the_registry(tmp_path, monkeypatch):
+    seen = {}
+    real = cli.registry.load_registry
+
+    def spy(path=cli.registry.REGISTRY_PATH, data_root=None):
+        seen["root"] = data_root
+        return real(path, data_root=data_root)
+
+    monkeypatch.setattr(cli.registry, "load_registry", spy)
+    for argv in (
+        ["list", "--data-root", str(tmp_path)],
+        [
+            "validate",
+            "example-csv",
+            "--data-root",
+            str(tmp_path),
+            "--cache-dir",
+            str(tmp_path / "c"),
+        ],
+        [
+            "run",
+            "--all",
+            "--data-root",
+            str(tmp_path),
+            "--cache-dir",
+            str(tmp_path / "c"),
+            "--output-dir",
+            str(tmp_path / "o"),
+        ],
+    ):
+        seen.clear()
+        cli.main(argv)
+        assert seen["root"] == tmp_path.resolve(), argv
+
+
+def test_data_root_env_var_is_reported_in_the_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("SENTIER_DATA_ROOT", str(tmp_path))
+    with pytest.raises(SystemExit):
+        cli.main(["validate", "bafu-ef-biosphere", "--cache-dir", str(tmp_path / "c")])
+    err = capsys.readouterr().err
+    assert f"root:   {tmp_path}" in err
+    assert "access: private." in err
