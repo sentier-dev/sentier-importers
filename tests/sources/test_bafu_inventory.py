@@ -54,6 +54,17 @@ def test_processes_row_matches_inventory_schema():
     assert row["technology"] == "Combined cycle test turbine"
     assert "electricity / production mix" in row["comment"]
     assert "BAFU:2026" in row["comment"]  # source citation travels with the data
+    assert row["source"] == "bafu-2026"  # machine-readable tag, consumers filter on it
+    assert row["source_version"] == "v1"
+
+
+def test_processes_source_id_is_edition_not_version():
+    # ``source`` names the edition only; a v1 -> v2 re-release must not rename the
+    # database a consumer's project depends on. The release lives in source_version.
+    (row,) = _processes()
+    assert "v1" not in row["source"]
+    assert row["source"] == ecospold.SOURCE_ID
+    assert row["source_version"] == ecospold.SOURCE_VERSION
 
 
 def test_processes_obsolete_sector_flags_comment():

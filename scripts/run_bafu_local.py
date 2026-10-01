@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
+import pyarrow.compute as pc  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 from sentier_importers.core import deliver as deliver_mod  # noqa: E402
 from sentier_importers.core import pipeline, registry  # noqa: E402
@@ -45,8 +46,25 @@ SECTOR_TITLES = {
 }
 
 
+#: sentier-inventory schema contract this script emits (``source`` column + ``sources``).
+INVENTORY_SCHEMA_VERSION = "0.2.0"
+
+
+def staged_sources(folder: Path) -> list[str]:
+    """Distinct ``processes.source`` values in a staged folder, sorted; [] without a file.
+
+    Read from the parquet rather than from a constant so the list stays right when a
+    second importer stages rows into the same sector folder.
+    """
+    path = folder / "processes.parquet"
+    if not path.exists():
+        return []
+    column = pq.read_table(path, columns=["source"]).column("source")
+    return sorted(pc.drop_null(column.combine_chunks()).unique().to_pylist())
+
+
 def sector_metadata(sector: str, folder: Path) -> dict:
-    """metadata.json content for one staged sector folder, row counts included."""
+    """metadata.json content for one staged sector folder, row counts and sources included."""
     row_counts = {}
     for table in ("processes", "exchanges"):
         path = folder / f"{table}.parquet"
@@ -57,7 +75,8 @@ def sector_metadata(sector: str, folder: Path) -> dict:
         "title": SECTOR_TITLES[sector],
         "description": f"Source: {CITATION}.",
         "rank": int(sector.split("-", 1)[0]),
-        "schema_version": "0.1.0",
+        "schema_version": INVENTORY_SCHEMA_VERSION,
+        "sources": staged_sources(folder),
         "row_counts": row_counts,
     }
 

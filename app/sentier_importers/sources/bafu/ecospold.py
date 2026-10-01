@@ -23,6 +23,14 @@ from sentier_importers.core.types import RawData, Record, Records
 #: Required source quotation for the 2026 release.
 CITATION = "Life Cycle Inventory database of the Swiss Federal Administration, BAFU:2026"
 
+#: Datasource id written to every inventory process row (``processes.source``) and the
+#: slug of the vocab Source IRI. Edition only, lower-kebab ``<publisher>-<edition>``: a
+#: re-release of the same edition keeps this id so consumers' database names survive.
+SOURCE_ID = "bafu-2026"
+
+#: Publisher's release of that edition (``processes.source_version``).
+SOURCE_VERSION = "v1"
+
 #: Fixed namespace for deterministic elementary-flow ids (public recipe: locally
 #: regenerated data is bit-identical across users).
 BAFU_FLOW_NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://vocab.sentier.dev/flows/bafu/")
