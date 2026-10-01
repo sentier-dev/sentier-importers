@@ -39,6 +39,8 @@ class BafuInventoryProcessesSource(Source):
                 "reference_amount": record["amount"],
                 "location": record["location"],
                 "process_type": "unit",
+                "source": ecospold.SOURCE_ID,
+                "source_version": ecospold.SOURCE_VERSION,
                 "technology": record["technology"],
                 "comment": process_comment(record),
             }

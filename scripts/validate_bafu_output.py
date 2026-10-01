@@ -8,7 +8,8 @@ Checks, over ``--output-dir`` (default ``output/bafu-2026``):
   5. exchange enum values within the sentier-inventory schema enums;
   6. required columns non-null; per-file size < 50 MB;
   7. every sector metadata.json validates against schema/metadata.schema.json
-     (when a sentier-inventory checkout is given via --inventory-repo);
+     (when a sentier-inventory checkout is given via --inventory-repo), and its
+     ``sources`` list equals the distinct ``source`` values of the sector's processes;
   8. optional LCIA-workbook coverage: every (name, location) in BAFU's own
      results workbook appears in the staged processes (encoding-normalized).
 
@@ -126,11 +127,27 @@ def main() -> None:
         schema = json.loads(
             (Path(args.inventory_repo) / "schema" / "metadata.schema.json").read_text()
         )
+        sources_mismatch = []
         for sector in SECTORS:
             meta_path = inventory / sector / "metadata.json"
-            if meta_path.exists():
-                jsonschema.validate(json.loads(meta_path.read_text()), schema)
+            if not meta_path.exists():
+                continue
+            meta = json.loads(meta_path.read_text())
+            jsonschema.validate(meta, schema)
+            proc_path = inventory / sector / "processes.parquet"
+            if proc_path.exists():
+                column = pq.read_table(proc_path, columns=["source"]).column("source")
+                seen = sorted(set(column.to_pylist()))
+                if None in seen or seen != sorted(meta.get("sources", [])):
+                    sources_mismatch.append(
+                        f"{sector}: parquet {seen} vs metadata {meta.get('sources')}"
+                    )
         check(True, "sector metadata.json files validate")
+        check(
+            not sources_mismatch,
+            f"metadata sources match processes.source ({len(sources_mismatch)} mismatch)"
+            + (": " + "; ".join(sources_mismatch) if sources_mismatch else ""),
+        )
 
     if args.lcia_workbook:
         import pandas as pd

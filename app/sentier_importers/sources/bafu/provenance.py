@@ -6,10 +6,11 @@ Every BAFU vocab term links here via its ``source`` slot.
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Records, Rows
-from sentier_importers.sources.bafu.ecospold import CITATION
+from sentier_importers.sources.bafu.ecospold import CITATION, SOURCE_ID
 
-#: The Source IRI every imported BAFU term links to.
-BAFU_PROVENANCE_IRI = "https://vocab.sentier.dev/sources/bafu-2026"
+#: The Source IRI every imported BAFU term links to; its slug is the inventory
+#: ``processes.source`` id, so the two provenance paths name the dataset identically.
+BAFU_PROVENANCE_IRI = f"https://vocab.sentier.dev/sources/{SOURCE_ID}"
 
 #: Static bibliographic metadata for the BAFU:2026 v1 release.
 BAFU_PROVENANCE: dict = {
