@@ -27,6 +27,7 @@ the matched package then lands Metiram on EF's own flow by name and CAS.
 from __future__ import annotations
 
 import io
+import math
 
 import pyarrow.parquet as pq
 from sentier_importers.core.source import Source
@@ -138,8 +139,15 @@ class BafuBiosphereMappingsSource(Source):
 
         entry: Record = {"source": source, "target": target}
         conversion = record.get("unit_conversion")
-        if conversion is not None and float(conversion) != 1.0:
-            entry["conversion_factor"] = float(conversion)
+        if conversion is not None:
+            try:
+                factor = float(conversion)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{name}: unit_conversion must be positive and finite") from exc
+            if isinstance(conversion, bool) or not math.isfinite(factor) or factor <= 0:
+                raise ValueError(f"{name}: unit_conversion must be positive and finite")
+            if factor != 1.0:
+                entry["conversion_factor"] = factor
 
         if note := _TIER_COMMENT.get(self._clean(record.get("tier"))):
             entry["comment"] = note

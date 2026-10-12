@@ -5,6 +5,7 @@ from pathlib import Path
 import jsonschema
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
@@ -107,6 +108,43 @@ def test_conversion_factor_only_when_units_differ():
     assert "conversion_factor" not in _transform([_row()])[0]
     entry = _transform([_row(unit_conversion=1000.0)])[0]
     assert entry["conversion_factor"] == 1000.0
+
+
+@pytest.mark.parametrize("factor", [0, -1, float("nan"), float("inf"), float("-inf")])
+def test_invalid_conversion_is_refused_before_package_serialisation(factor):
+    with pytest.raises(ValueError, match="unit_conversion must be positive and finite"):
+        _transform([_row(unit_conversion=factor)])
+
+
+@pytest.mark.parametrize(
+    "source_unit,target_unit,factor",
+    [("Bq", "kBq", 0.001), ("km", "m", 1000), ("kWh", "megajoule", 3.6)],
+)
+def test_scaled_source_identity_and_factor_survive_package_assembly(
+    source_unit, target_unit, factor
+):
+    rows = _transform(
+        [_row(source_unit=source_unit, target_unit=target_unit, unit_conversion=factor)]
+    )
+    config = SourceConfig(
+        name="test",
+        module="test",
+        target="sentier_mappings",
+        category="test",
+        fetch_url="file://test",
+        fetch_format="parquet",
+        output_format="json",
+        package_name="test",
+        package_version="0.1.0",
+        package_verb="replace",
+    )
+    entry = _assemble(rows, config)["replace"][0]
+    assert entry["source"]["unit"] == source_unit
+    assert entry["source"]["code"] == flow_id(
+        "Carbon dioxide, fossil", "emissions to air", "unspecified", source_unit
+    )
+    assert entry["target"]["unit"] == target_unit
+    assert entry["conversion_factor"] == factor
 
 
 def test_exact_matches_carry_no_comment():
