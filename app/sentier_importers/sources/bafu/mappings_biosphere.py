@@ -33,6 +33,7 @@ import pyarrow.parquet as pq
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
 from sentier_importers.sources.bafu.ecospold import flow_id
+from sentier_importers.sources.bafu.ef_units import required_scale_factor
 
 #: Only ``ef`` targets exist in the de-bridged table; asserted rather than
 #: filtered, because anything else means the upstream build is wrong.
@@ -139,6 +140,11 @@ class BafuBiosphereMappingsSource(Source):
 
         entry: Record = {"source": source, "target": target}
         conversion = record.get("unit_conversion")
+        expected = required_scale_factor(source.get("unit"), target.get("unit"))
+        if conversion is None and expected is not None:
+            raise ValueError(
+                f"{name}: unit_conversion {expected:g} is required for declared units"
+            )
         if conversion is not None:
             try:
                 factor = float(conversion)
@@ -146,6 +152,10 @@ class BafuBiosphereMappingsSource(Source):
                 raise ValueError(f"{name}: unit_conversion must be positive and finite") from exc
             if isinstance(conversion, bool) or not math.isfinite(factor) or factor <= 0:
                 raise ValueError(f"{name}: unit_conversion must be positive and finite")
+            if expected is not None and not math.isclose(factor, expected, rel_tol=1e-12):
+                raise ValueError(
+                    f"{name}: unit_conversion must be {expected:g} for declared units"
+                )
             if factor != 1.0:
                 entry["conversion_factor"] = factor
 

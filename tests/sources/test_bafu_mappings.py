@@ -116,6 +116,25 @@ def test_invalid_conversion_is_refused_before_package_serialisation(factor):
         _transform([_row(unit_conversion=factor)])
 
 
+@pytest.mark.parametrize("source_unit,target_unit", [("Bq", "kBq"), ("km", "m"), ("kWh", "MJ")])
+@pytest.mark.parametrize("factor", [None, 1.0])
+def test_missing_or_wrong_magnitude_conversion_is_refused(source_unit, target_unit, factor):
+    with pytest.raises(ValueError, match="unit_conversion.*declared units"):
+        _transform(
+            [_row(source_unit=source_unit, target_unit=target_unit, unit_conversion=factor)]
+        )
+
+
+@pytest.mark.parametrize(
+    "source_unit,target_unit", [("kg", "kilogram"), ("Bq", "Becquerel"), ("kWh", "kilowatt hour")]
+)
+def test_genuine_unit_alias_needs_no_multiplier(source_unit, target_unit):
+    entry = _transform(
+        [_row(source_unit=source_unit, target_unit=target_unit, unit_conversion=None)]
+    )[0]
+    assert "conversion_factor" not in entry
+
+
 @pytest.mark.parametrize(
     "source_unit,target_unit,factor",
     [("Bq", "kBq", 0.001), ("km", "m", 1000), ("kWh", "megajoule", 3.6)],
