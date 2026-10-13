@@ -73,7 +73,29 @@ _DIMENSION: dict[str, str] = {
 #: ``nomenclature_target_unit`` (round 5, decision 2026-09-14) for the very same two
 #: scaled pairs -- one table, so a characterised and an uncharacterised match of the
 #: same source unit are never rescaled by two different factors.
-_SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoule"): 3.6}
+_SCALED: dict[tuple[str, str], float] = {
+    ("Bq", "kBq"): 0.001,
+    ("kWh", "megajoule"): 3.6,
+}
+
+
+def required_scale_factor(source_unit: str | None, target_unit: str | None) -> float | None:
+    """Known magnitude changes requiring an explicit multiplier in a mapping.
+
+    Aliases change spelling only. Unknown pairs return None; no density,
+    calorific-value or chemical conversion is inferred from unit strings.
+    """
+    aliases = {
+        "Becquerel": "Bq",
+        "kilo Becquerel": "kBq",
+        "kilowatt hour": "kWh",
+        "MJ": "megajoule",
+        "kilometer": "km",
+        "meter": "m",
+    }
+    pair = (aliases.get(source_unit, source_unit), aliases.get(target_unit, target_unit))
+    return 1000.0 if pair == ("km", "m") else _SCALED.get(pair)
+
 
 #: The fixed mass -> volume factor for water (density, 1 kg == 0.001 m3), shared by
 #: ``conversion_for``'s characterised water-use special case and by
