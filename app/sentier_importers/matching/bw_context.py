@@ -1,6 +1,6 @@
 """Brightway-context crosswalk for EF 3.1 flows that carry no characterization factor.
 
-Every EF 3.1 vocab row (sentier-vocab ``elementary-flows/*.parquet``, ``source ==
+Every EF 3.1 vocab row (sentier-vocab ``terms/*.parquet``, ``source ==
 ef-3.1``) carries an ``additional_notations`` list with exactly one
 ``bw-context:<code>`` entry -- the Brightway/ecoinvent context code the flow was
 imported under. For the ~89,070 flows that carry a factor, the CF table
@@ -11,7 +11,7 @@ only link back to an EF context.
 
 ``BW_CONTEXT_PATH`` below was derived 2026-09-13 by joining every *characterised*
 flow's code (``characterization-factors.parquet``, sentier-methods) to its CF-table
-context through its ``bw-context`` code (``elementary-flows/*.parquet``,
+context through its ``bw-context`` code (``terms/*.parquet``,
 sentier-vocab), and taking, for each code, the EF context path the overwhelming
 majority of its rows carry. For 19 of the 24 codes this join is unambiguous or nearly
 so (a handful of stray rows, well under 1%, sit elsewhere); ``AMBIGUOUS_CODES`` flags

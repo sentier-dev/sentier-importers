@@ -10,15 +10,11 @@ def _config():
         name="agribalyse-ef31-source",
         module="sentier_importers.sources.agribalyse.provenance",
         target="sentier_vocab",
-        category="sources",
+        category="ef-3.1",
+        term_type="source",
         fetch_url="static://agribalyse-ef31-source",
         fetch_format="json",
-        output_format="yaml",
-        collection_class="SourceCollection",
-        collection_items_key="sources",
-        collection_scheme="https://vocab.sentier.dev/sources/",
-        schema_file="source",
-        validate_against="Source",
+        output_format="parquet",
     )
 
 

@@ -12,7 +12,14 @@ from sentier_importers.sources.bafu.mappings_biosphere_coverage import BafuEfCov
 from sentier_importers.sources.bafu.mappings_biosphere_matched import outcome_for
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
-from tests.matching.ef_fixtures import CF_SCHEMA, RES_GROUND, VOCAB_SCHEMA, cf_row, vocab_row
+from tests.matching.ef_fixtures import (
+    CF_SCHEMA,
+    RES_GROUND,
+    TERM_SCHEMA,
+    cf_row,
+    term_row,
+    vocab_row,
+)
 from tests.sources.test_bafu_mappings_matched import (
     CF,
     CO2,
@@ -143,15 +150,17 @@ def test_mine_gas_and_natural_gas_both_convert_via_energy_content(tmp_path):
         pa.Table.from_pylist(cf, schema=CF_SCHEMA), root / "characterization-factors.parquet"
     )
     extra_vocab = [
-        vocab_row(
-            "gas",
-            "Natural gas",
-            alt=["Gas, natural/m3", "Gas, mine, off-gas, process, coal mining/m3"],
+        term_row(
+            vocab_row(
+                "gas",
+                "Natural gas",
+                alt=["Gas, natural/m3", "Gas, mine, off-gas, process, coal mining/m3"],
+            )
         )
     ]
-    vocab_path = root / "elementary-flows" / "air-01.parquet"
+    vocab_path = root / "terms" / "ef-3.1-01.parquet"
     vocab = pq.read_table(vocab_path).to_pylist() + extra_vocab
-    pq.write_table(pa.Table.from_pylist(vocab, schema=VOCAB_SCHEMA), vocab_path)
+    pq.write_table(pa.Table.from_pylist(vocab, schema=TERM_SCHEMA), vocab_path)
     rows = _run(_source(root), tmp_path)
     gas = next(r for r in rows if r["source"]["name"] == "Gas, natural/m3")
     assert gas["status"] == "mapped" and gas["package"] == "biosphere-3-matched"

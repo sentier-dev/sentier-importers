@@ -136,11 +136,6 @@ def sector_for(category: str) -> str:
         raise ParseError(f"BAFU category not in the sector map: {category!r}") from None
 
 
-def compartment_slug(compartment: str) -> str:
-    """File-name slug of a biosphere compartment (``emissions to air`` -> ``emissions-to-air``)."""
-    return re.sub(r"[^a-z0-9]+", "-", compartment.lower()).strip("-")
-
-
 def flow_id(name: str, category: str | None, subcategory: str | None, unit: str | None) -> str:
     """Deterministic elementary-flow id over the (name, category, subCategory, unit) tuple.
 

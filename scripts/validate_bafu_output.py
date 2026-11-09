@@ -147,11 +147,14 @@ def main() -> None:
         f"technosphere/production flows resolved ({tech_unresolved} dangling)",
     )
 
-    vocab_flow_files = sorted((out / "sentier_vocab" / "elementary-flows").glob("*.parquet"))
-    if vocab_flow_files:
+    vocab_term_files = sorted((out / "sentier_vocab" / "terms").glob("*.parquet"))
+    if vocab_term_files:
         vocab_ids: set[str] = set()
-        for path in vocab_flow_files:
-            vocab_ids.update(pq.read_table(path).column("notation").to_pylist())
+        for path in vocab_term_files:
+            flow_terms = pq.read_table(
+                path, columns=["notation"], filters=[("type", "==", "elementary-flow")]
+            )
+            vocab_ids.update(flow_terms.column("notation").to_pylist())
         bio_missing = {
             r["flow"]
             for r in flows
@@ -159,7 +162,7 @@ def main() -> None:
         }
         check(not bio_missing, f"biosphere flows all in vocab terms ({len(bio_missing)} missing)")
     else:
-        check(False, "staged vocab elementary-flows parquet found")
+        check(False, "staged vocab term files found")
 
     if args.inventory_repo:
         import jsonschema

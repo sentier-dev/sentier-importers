@@ -7,7 +7,7 @@ flowchart LR
     imp -->|PR| inv[sentier-inventory]
     imp -->|PR| met[sentier-methods]
     imp -->|PR| map[sentier-mappings]
-    voc -->|fetch schema| imp
+    voc -->|fetch contracts| imp
 ```
 
 ## What it is
@@ -19,7 +19,7 @@ flowchart LR
     fetch --> parse --> transform --> dedup --> assemble --> validate --> emit --> deliver
 ```
 
-- The framework owns the driver and the shared services: cached fetch, parsers, dedup, LinkML validation, YAML/JSON/Parquet writers, PR delivery.
+- The framework owns the driver and the shared services: cached fetch, parsers, dedup, validation against the sentier-vocab contracts, YAML/JSON/Parquet writers, PR delivery.
 - A source declares itself in `app/sentier_importers/registry.yaml` and implements `transform` in `app/sentier_importers/sources/<name>/source.py`.
 
 ## Install
@@ -46,23 +46,30 @@ uv run sentier-importers run <source>
 
 `validate <source>` runs the same pipeline up to the validate step and emits nothing.
 
+sentier-vocab is delivered one source release at a time. Run every source of a release and stage its two layers, `output/sentier_vocab/terms/<release>[-NN].parquet` and `output/sentier_vocab/relations/<release>.parquet`:
+
+```bash
+uv run sentier-importers run --release <release>
+```
+
 Options for `run`. The last three rows also apply to `validate`:
 
 | Option | Effect |
 |---|---|
 | `--all` | run every enabled source instead of one; this is the CI smoke test |
+| `--release <release>` | run every sentier-vocab source of one source release (their registry `category`, e.g. `bafu-2026`) |
 | `--deliver` | also open a PR on the target repo; needs an authenticated `gh` |
 | `--deliver-local <path>` | copy the emitted files into a local checkout of the target; no git, no PR |
 | `--offline` | fail on any fetch cache miss |
 | `--cache-dir`, `--output-dir` | override the fetch cache and the staging dir |
-| `--schema-dir` | validate against local schemas instead of the target's pinned ref |
+| `--schema-dir` | read the sentier-vocab contracts from a local `schemas/` folder, and the existing terms from the `terms/` folder beside it, instead of the target's pinned ref |
 
 ## Layout
 
 ```
 app/sentier_importers/
   registry.yaml    the source registry, one commented block per source
-  core/            pipeline driver, fetch, parse, dedup, validate, write, deliver, targets
+  core/            pipeline driver, fetch, parse, dedup, vocab contracts and layers, write, deliver, targets
   matching/        BAFU to EF flow matching, used by the bafu and eaternity sources
   sources/         one folder per source, example_csv/ is the reference plugin
 scripts/           local BAFU regeneration driver and output checks
@@ -72,9 +79,10 @@ tests/             core/ framework tests, sources/ plugin tests
 ## Data
 
 - Inputs: `file://` and `http(s)://` URLs. Fetches are cached in the user cache dir, `~/.cache/sentier_importers/` on Linux, keyed by the SHA-256 of the URL.
-- Outputs: YAML or JSON for vocabulary terms, Parquet for bulk tables, randonneur JSON for mappings. Never TTL.
+- Outputs: Parquet for vocabulary terms and relations and for bulk tables, randonneur JSON for mappings. Never TTL.
 - Most sources are `enabled: false`. Big imports are opt-in so `run --all` stays fast.
 - The Agribalyse, EF and BAFU sources read local `file://` paths. See "Local inputs" below.
+- Vocabulary terms go to sentier-vocab as two layers per source release: `terms/<release>[-NN].parquet` holds every term of the release, all types mixed, and `relations/<release>.parquet` every edge between terms. A source in `registry.yaml` is one part of a release: its `category` is the release and its `term_type` the value of the `type` column. Rows are checked against `schemas/term.yaml` and `schemas/relation.yaml` of sentier-vocab, read at `main`. A delivery (`--deliver` or `--deliver-local`) replaces the files of its release whole and touches no other release; `python -m sentier_vocab validate` in the target repo then checks the whole tree. A single vocab source is staged under `output/sentier_vocab/parts/<source>/` and is never delivered on its own.
 - Inventory tables go to one folder per source release, `data/<source>-<source_version>/` (the registry `category`, e.g. `bafu-2026-v1`), with the sector as a column on `processes.parquet`. A delivery replaces that folder whole; sources never share a folder.
 
 ### Local inputs

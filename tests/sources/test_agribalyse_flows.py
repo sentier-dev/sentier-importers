@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 import pyarrow.parquet as pq
-import yaml
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core import pipeline
 from sentier_importers.core.context import RunContext
@@ -128,21 +127,16 @@ _FLOWS = [
 ]
 
 
-def _flows_config(emit_filename=None):
+def _flows_config():
     return SourceConfig(
         name="ef31-elementary-flows",
         module="sentier_importers.sources.agribalyse.flows",
         target="sentier_vocab",
-        category="elementary-flows",
+        category="ef-3.1",
+        term_type="elementary-flow",
         fetch_url="unused://",
         fetch_format="json-gz",
         output_format="parquet",
-        emit_filename=emit_filename,
-        collection_class="ElementaryFlowCollection",
-        collection_items_key="flows",
-        collection_scheme="https://vocab.sentier.dev/flows/",
-        schema_file="elementary-flow",
-        validate_against="ElementaryFlow",
         dedup_check_existing=False,  # Layer B needs network; off for unit tests
     )
 
@@ -161,10 +155,8 @@ def test_transform_maps_ef_flows_and_drops_ecoinvent_additions():
     assert co2["formula"] == "CO2"
     assert co2["compartment"] == "air"
     assert co2["additional_notations"] == ["ec:204-696-9", "bw-context:envi-air-unkn"]
-    assert co2["exact_match"] == [
-        "https://vocab.brightway.one/ef/3.1/flow/abc",
-        "https://vocab.brightway.dev/elementary-flows/abc",
-    ]
+    # Brightway correspondences are a sentier-mappings bridge, not vocab relations
+    assert "exact_match" not in co2
     assert co2["source"] == "https://vocab.sentier.dev/sources/ef-3.1"
     assert co2["status"] == "draft"
     assert "definition" not in co2  # empty list -> omitted
@@ -176,44 +168,18 @@ def test_transform_maps_ef_flows_and_drops_ecoinvent_additions():
     assert "formula" not in iron
 
 
-def test_transform_filters_to_compartment_file():
-    # emit_filename is the compartment slug: each registry entry emits one
-    # content-named per-compartment file (no source-named payload files).
-    air = AgribalyseFlowsSource(_flows_config(emit_filename="air")).transform(_FLOWS)
-    assert [r["iri"] for r in air] == ["https://vocab.sentier.dev/flows/abc"]
-    resource = AgribalyseFlowsSource(_flows_config(emit_filename="natural-resource")).transform(
-        _FLOWS
-    )
-    assert [r["iri"] for r in resource] == ["https://vocab.sentier.dev/flows/def"]
-    assert AgribalyseFlowsSource(_flows_config(emit_filename="biota")).transform(_FLOWS) == []
-
-
-def test_transform_filtered_run_rejects_unresolvable_compartment():
-    # A compartment-less flow would silently vanish from every per-compartment
-    # slice — fail loudly instead so a new unmapped context forces a decision.
-    import pytest
-
+def test_transform_keeps_a_flow_without_a_resolvable_compartment():
     orphan = [{"identifier": "xyz", "source": "EF 3.1", "prefLabel": "Weird", "context_iri": None}]
-    with pytest.raises(ValueError, match="compartment"):
-        AgribalyseFlowsSource(_flows_config(emit_filename="air")).transform(orphan)
-    # unfiltered emission keeps accepting it (compartment simply stays unset)
     (row,) = AgribalyseFlowsSource(_flows_config()).transform(orphan)
     assert "compartment" not in row
 
 
-def test_registry_declares_per_compartment_ef31_family():
+def test_registry_declares_one_ef31_flow_source_for_the_release():
     from sentier_importers.core.registry import load_registry
 
-    ef31 = [c for c in load_registry() if c.name.startswith("ef31-elementary-flows")]
-    assert {c.emit_filename for c in ef31} == {
-        "air",
-        "water",
-        "soil",
-        "land-use",
-        "natural-resource",
-        "biota",
-    }
-    assert all(c.category == "elementary-flows" and not c.enabled for c in ef31)
+    (ef31,) = [c for c in load_registry() if c.name.startswith("ef31-elementary-flows")]
+    assert (ef31.category, ef31.term_type) == ("ef-3.1", "elementary-flow")
+    assert ef31.emit_filename is None and not ef31.enabled
 
 
 def test_parse_gunzips_and_reads_flows(tmp_path):
@@ -228,24 +194,29 @@ def test_parse_gunzips_and_reads_flows(tmp_path):
 
 # --- Task 5: offline full pipeline ------------------------------------------
 _FIXTURES = Path(__file__).parent / "fixtures"
+#: A copy of sentier-vocab's schemas/ folder (term.yaml, relation.yaml).
+_VOCAB_SCHEMAS = Path(__file__).parents[1] / "core" / "fixtures" / "vocab"
 
 
-def test_run_source_emits_valid_flow_collection(tmp_path, monkeypatch):
-    flow_schema = yaml.safe_load((_FIXTURES / "elementary_flow_collection.yaml").read_text())
-    monkeypatch.setattr(pipeline.schema_provider, "resolve_schema", lambda *a, **k: flow_schema)
-
+def test_run_source_stages_a_valid_flow_part(tmp_path, monkeypatch):
     gz = _FIXTURES / "harmonised_flows_sample.json.gz"
     src = AgribalyseFlowsSource(_flows_config())
     # Fetch from the bundled fixture so the test is fully offline.
     monkeypatch.setattr(src, "fetch", lambda ctx: fetch_mod.fetch(f"file://{gz}", ctx))
 
-    # Matches tests/sources/test_foodex2.py::_ctx — dry_run defaults True (stage, no PR).
-    ctx = RunContext(cache_dir=tmp_path / "c", output_dir=tmp_path / "o")
+    # dry_run defaults True (stage, no PR); the contracts come from the vendored copy.
+    ctx = RunContext(
+        cache_dir=tmp_path / "c", output_dir=tmp_path / "o", schema_dir=_VOCAB_SCHEMAS
+    )
     out = pipeline.run_source(src, ctx)
 
-    table = pq.read_table(out)
-    assert set(table.column("iri").to_pylist()) == {
+    terms = {t["iri"]: t for t in pq.read_table(out).to_pylist()}
+    assert set(terms) == {
         "https://vocab.sentier.dev/flows/abc",
         "https://vocab.sentier.dev/flows/def",
     }
-    assert table.schema.metadata[b"scheme"] == b"https://vocab.sentier.dev/flows/"
+    assert {t["type"] for t in terms.values()} == {"elementary-flow"}
+    co2 = json.loads(terms["https://vocab.sentier.dev/flows/abc"]["attributes"])
+    assert co2["compartment"] == "air" and co2["cas_number"] == "124-38-9"
+    # no relation file: the flow list carries no IRI-valued slot any more
+    assert not (out.parents[1] / "relations").exists()

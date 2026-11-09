@@ -1,10 +1,13 @@
 """Run the full BAFU-2026 local regeneration: every ``bafu-*`` source, one process.
 
 Stages all vocab + inventory artifacts under ``--output-dir`` (dry-run —
-nothing is pushed anywhere), emits the source folder's ``metadata.json`` beside
-its two inventory parquet files (``sentier_inventory/bafu-2026-v1/``), and
+nothing is pushed anywhere): the vocab release as ``sentier_vocab/terms/`` and
+``sentier_vocab/relations/``, the inventory as ``sentier_inventory/bafu-2026-v1/``
+with the source folder's ``metadata.json`` beside its two parquet files. It
 optionally places that folder into a local sentier-inventory checkout as
-``data/bafu-2026-v1/``, replacing it whole.
+``data/bafu-2026-v1/``, replacing it whole. To place the vocab release into a
+local sentier-vocab checkout, run
+``sentier-importers run --release bafu-2026 --deliver-local ../sentier-vocab``.
 Running all sources in one process lets them share a single parse of the 37 MB
 EcoSpold zip (see the memo in ``sources/bafu/ecospold.py``).
 
@@ -28,7 +31,7 @@ import pyarrow.parquet as pq  # noqa: E402
 from sentier_importers.core import deliver as deliver_mod  # noqa: E402
 from sentier_importers.core import pipeline, registry  # noqa: E402
 from sentier_importers.core.context import RunContext  # noqa: E402
-from sentier_importers.core.targets import get_target  # noqa: E402
+from sentier_importers.core.targets import VOCAB_CONTRACT, get_target  # noqa: E402
 from sentier_importers.sources.bafu import ecospold  # noqa: E402
 from sentier_importers.sources.bafu.provenance import (  # noqa: E402
     BAFU_PROVENANCE,
@@ -96,7 +99,12 @@ def main() -> None:
         help="Directory the registry's file:// inputs are relative to "
         "(default: $SENTIER_DATA_ROOT, else the parent of this checkout).",
     )
-    parser.add_argument("--schema-dir", default=None, help="Local sentier-vocab schemas dir.")
+    parser.add_argument(
+        "--schema-dir",
+        default=None,
+        help="Local sentier-vocab schemas dir holding term.yaml and relation.yaml "
+        "(default: ../sentier-vocab/schemas when present).",
+    )
     parser.add_argument(
         "--inventory-clone",
         default=None,
@@ -120,10 +128,21 @@ def main() -> None:
     )
 
     configs = [c for c in registry.load_registry(data_root=data_root) if c.name.startswith("bafu")]
+    vocab = [c for c in configs if get_target(c.target).validator == VOCAB_CONTRACT]
     for config in configs:
+        if config in vocab:
+            continue  # a vocab source is one part of the release staged below
         start = time.monotonic()
         out = pipeline.run_source(registry.load_source(config), ctx)
         print(f"{config.name:36} -> {out}  ({time.monotonic() - start:.1f}s)", flush=True)
+
+    start = time.monotonic()
+    release_files = pipeline.run_release(
+        ecospold.SOURCE_ID, [registry.load_source(c) for c in vocab], ctx
+    )
+    for file in release_files:
+        print(f"{'vocab release ' + ecospold.SOURCE_ID:36} -> {file}", flush=True)
+    print(f"{'':36}    ({time.monotonic() - start:.1f}s)", flush=True)
 
     folder = ctx.output_dir / "sentier_inventory" / ecospold.SOURCE_FOLDER
     metadata = source_metadata(folder)

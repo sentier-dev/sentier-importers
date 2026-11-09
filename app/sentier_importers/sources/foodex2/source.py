@@ -49,6 +49,9 @@ _TERMTYPE_CATEGORY = {
     "f": "qualifiers",
 }
 
+#: Sentier category (the IRI path segment) -> the vocab term type of its terms.
+_CATEGORY_TERM_TYPE = {"organisms": "organism", "products": "product", "qualifiers": "qualifier"}
+
 #: MTX term ``status`` -> Sentier ``status_enum`` (unknown -> slot omitted).
 _STATUS_MAP = {"APPROVED": "draft", "PRELIMINARY": "draft", "DEPRECATED": "deprecated"}
 
@@ -237,8 +240,8 @@ class Foodex2Source(Source):
     def transform(self, records: Records) -> Rows:
         """Route each term, then mint a ``Concept``-shaped row for the matching slice.
 
-        Optional slots are emitted only when present so closed-world LinkML validation
-        passes. Terms without a ``pref_label`` (schema-required) are skipped.
+        Optional slots are emitted only when present. Terms without a ``pref_label``
+        (required by the term contract) are skipped.
         """
         self._category_index = {
             code: self.classify(term)
@@ -247,7 +250,7 @@ class Foodex2Source(Source):
         }
         rows: Rows = []
         for term in records:
-            if self.classify(term) != self.config.category:
+            if _CATEGORY_TERM_TYPE[self.classify(term)] != self.config.term_type:
                 continue
             label = self.pref_label(term)
             if not label:

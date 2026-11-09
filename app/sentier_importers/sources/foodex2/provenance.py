@@ -1,7 +1,7 @@
 """FoodEx2 bibliographic provenance → a single Sentier ``Source`` record.
 
-Registered as its own ``foodex2-source`` block (category ``sources``) so re-running the
-importer regenerates ``data/sources/foodex2.yaml`` rather than it being hand-maintained.
+Registered as its own ``foodex2-source`` block (term type ``source``) so re-running the
+importer regenerates the release's source term rather than it being hand-maintained.
 The IRI is shared with :mod:`sentier_importers.sources.foodex2.source`, which stamps it
 onto every product's ``source`` slot.
 """

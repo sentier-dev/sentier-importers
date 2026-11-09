@@ -154,11 +154,11 @@ def test_exchanges_uncertainty_mapping():
 
 def test_registry_declares_full_bafu_family():
     bafu = [c for c in load_registry() if c.name.startswith("bafu")]
-    # 2 inventory tables (one source folder) + source record + 11 per-sector process
-    # term files + 6 per-compartment flow term files + the curated crosswalk
+    # 2 inventory tables (one source folder) + the vocab release (source term, process
+    # terms, flow terms) + the curated crosswalk
     # (biosphere-1-curated) + the public-matching crosswalk (biosphere-3-matched)
     # + the coverage sidecar + the nomenclature crosswalk (biosphere-4-nomenclature)
-    assert len(bafu) == 24
+    assert len(bafu) == 9
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
@@ -183,22 +183,15 @@ def test_registry_declares_full_bafu_family():
     assert [c.emit_filename for c in inventory.values()] == ["processes", "exchanges"]
     assert {c.access for c in inventory.values()} == {"licensed"}
 
+    # the vocab release is one source term plus one source per term type
     vocab = [c for c in bafu if c.target == "sentier_vocab"]
-    processes = {c.emit_filename for c in vocab if c.category == "processes"}
-    assert processes == set(ecospold.SECTORS)
-    flows = {c.emit_filename for c in vocab if c.category == "elementary-flows"}
-    assert flows == {
-        "emissions-to-air",
-        "emissions-to-water",
-        "emissions-to-soil",
-        "resources",
-        "non-material-emissions",
-        "economic-issues",
+    assert {c.category for c in vocab} == {ecospold.SOURCE_ID}
+    assert {c.name: c.term_type for c in vocab} == {
+        "bafu-2026-source": "source",
+        "bafu-vocab-processes": "process",
+        "bafu-vocab-flows": "elementary-flow",
     }
-    (provenance,) = [c for c in vocab if c.category == "sources"]
-    assert provenance.emit_filename == "bafu-2026"
-    # delivered payload files are content-named, never source-named
-    assert all("bafu" not in c.emit_filename for c in vocab if c.category != "sources")
+    assert all(c.emit_filename is None for c in vocab)
 
 
 def test_coverage_sidecar_describes_the_same_computation_as_the_matched_payload():

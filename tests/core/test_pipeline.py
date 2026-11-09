@@ -1,15 +1,24 @@
 from pathlib import Path
 
 import orjson
+import pyarrow.parquet as pq
 import pytest
-import yaml
 from sentier_importers.core import pipeline
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import FetchError, MissingInputError
+from sentier_importers.core.errors import (
+    DeliveryError,
+    FetchError,
+    MissingInputError,
+    RegistryError,
+    ValidationError,
+)
 from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.sources.example_csv.source import ExampleCsvSource
 
-COLLECTION_SCHEMA = Path(__file__).parent / "fixtures" / "product_collection.yaml"
+#: A copy of sentier-vocab's schemas/ folder (term.yaml, relation.yaml).
+VOCAB_SCHEMAS = Path(__file__).parent / "fixtures" / "vocab"
+PRODUCTS = "https://vocab.sentier.dev/products/"
+DEMO_SOURCE = "https://vocab.sentier.dev/sources/demo-1"
 
 
 def _source(**overrides):
@@ -60,26 +69,28 @@ def test_validate_source_returns_row_count(tmp_path):
     assert pipeline.validate_source(_source(), _ctx(tmp_path)) == 3
 
 
-def test_assemble_passthrough_without_collection():
+def test_assemble_passes_rows_through():
     rows = [{"a": 1}]
     assert pipeline._assemble(rows, _source().config) is rows
 
 
-def test_assemble_wraps_rows_into_collection():
-    cfg = _source(
-        collection_class="ProductCollection",
-        collection_items_key="products",
-        collection_scheme="https://vocab.sentier.dev/products/",
-    ).config
-    rows = [{"iri": "x", "pref_label": "A"}]
-    assert pipeline._assemble(rows, cfg) == {
-        "scheme": "https://vocab.sentier.dev/products/",
-        "products": rows,
+def test_assemble_wraps_rows_into_a_randonneur_package():
+    cfg = _source(package_name="a__b-biosphere", package_version="0.1.0", package_verb="replace")
+    rows = [{"source": {"name": "x"}, "target": {"name": "y"}}]
+    assert pipeline._assemble(rows, cfg.config) == {
+        "name": "a__b-biosphere",
+        "version": "0.1.0",
+        "replace": rows,
     }
 
 
-class _ProductSource(Source):
-    """Emits two product rows shaped for the ProductCollection schema."""
+# --- sentier-vocab: one source is a part, a release is delivered whole -------
+
+
+class _RowsSource(Source):
+    """Emits the rows it was built with; no fetch input."""
+
+    ROWS: list[dict] = []
 
     def fetch(self, ctx):
         return None
@@ -88,90 +99,171 @@ class _ProductSource(Source):
         return []
 
     def transform(self, records):
-        return [
-            {"iri": "https://vocab.sentier.dev/products/electricity", "pref_label": "Electricity"},
-            {"iri": "https://vocab.sentier.dev/products/wheat", "pref_label": "Wheat"},
-        ]
+        return [dict(row) for row in self.ROWS]
 
 
-def _product_source(**overrides):
+class _ProductSource(_RowsSource):
+    ROWS = [
+        {"iri": PRODUCTS + "cereals", "pref_label": "Cereals", "source": DEMO_SOURCE},
+        {
+            "iri": PRODUCTS + "wheat",
+            "pref_label": "Wheat",
+            "cpc_code": "0111",
+            "broader": PRODUCTS + "cereals",
+            "source": DEMO_SOURCE,
+        },
+    ]
+
+
+class _ProvenanceSource(_RowsSource):
+    ROWS = [{"iri": DEMO_SOURCE, "pref_label": "Demo", "title": "Demo", "status": "published"}]
+
+
+def _vocab_source(cls, name, term_type, **overrides):
     base = dict(
-        name="agribalyse-products",
+        name=name,
         module="m",
         target="sentier_vocab",
-        category="products",
+        category="demo-1",
+        term_type=term_type,
         fetch_url="unused",
-        fetch_format="xlsx",
-        output_format="yaml",
-        collection_class="ProductCollection",
-        collection_items_key="products",
-        collection_scheme="https://vocab.sentier.dev/products/",
-        schema_file="product",
-        validate_against="Product",
-        dedup_check_existing=False,  # no Layer B network in this test
+        fetch_format="json",
+        output_format="parquet",
+        dedup_check_existing=False,  # no Layer B network in these tests
     )
     base.update(overrides)
-    return _ProductSource(SourceConfig(**base))
+    return cls(SourceConfig(**base))
 
 
-def test_run_source_emits_collection_mapping(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        pipeline.schema_provider, "resolve_schema", lambda target, sid, ctx: COLLECTION_SCHEMA
+def _products(**overrides):
+    return _vocab_source(_ProductSource, "demo-products", "product", **overrides)
+
+
+def _provenance():
+    return _vocab_source(_ProvenanceSource, "demo-source", "source")
+
+
+def _vocab_ctx(tmp_path, **kw):
+    return _ctx(tmp_path, schema_dir=VOCAB_SCHEMAS, **kw)
+
+
+def test_run_source_stages_a_vocab_part_as_two_layer_files(tmp_path):
+    out = pipeline.run_source(_products(), _vocab_ctx(tmp_path))
+    part = tmp_path / "o" / "sentier_vocab" / "parts" / "demo-products"
+    assert out == part / "terms" / "demo-1.parquet"
+    terms = pq.read_table(out).to_pylist()
+    assert [t["type"] for t in terms] == ["product", "product"]
+    assert orjson.loads(terms[1]["attributes"]) == {"cpc_code": "0111"}
+    edges = pq.read_table(part / "relations" / "demo-1.parquet").to_pylist()
+    assert [(e["subject"], e["predicate"], e["object"]) for e in edges] == [
+        (PRODUCTS + "wheat", "skos:broader", PRODUCTS + "cereals")
+    ]
+
+
+def test_validate_source_counts_the_terms_of_a_vocab_part(tmp_path):
+    assert pipeline.validate_source(_products(), _vocab_ctx(tmp_path)) == 2
+
+
+class _CerealsSource(_RowsSource):
+    ROWS = [{"iri": PRODUCTS + "cereals", "pref_label": "Cereals"}]
+
+
+def test_vocab_part_is_validated_against_the_term_contract(tmp_path):
+    with pytest.raises(ValidationError, match="not in the organism namespace"):
+        pipeline.validate_source(
+            _vocab_source(_CerealsSource, "demo", "organism"), _vocab_ctx(tmp_path)
+        )
+
+
+def test_vocab_part_of_another_release_is_rejected(tmp_path):
+    with pytest.raises(ValidationError, match="source must be"):
+        pipeline.validate_source(_products(category="other-2"), _vocab_ctx(tmp_path))
+
+
+@pytest.mark.parametrize("delivery", [{"dry_run": False}, {"deliver_local_root": Path("/x")}])
+def test_a_single_vocab_part_is_never_delivered(tmp_path, delivery):
+    with pytest.raises(DeliveryError, match="run --release demo-1"):
+        pipeline.run_source(_products(), _vocab_ctx(tmp_path, **delivery))
+
+
+def test_run_release_writes_every_part_into_one_release(tmp_path):
+    files = pipeline.run_release("demo-1", [_products(), _provenance()], _vocab_ctx(tmp_path))
+    root = tmp_path / "o" / "sentier_vocab"
+    assert files == [root / "terms" / "demo-1.parquet", root / "relations" / "demo-1.parquet"]
+    terms = pq.read_table(files[0]).to_pylist()
+    assert [(t["type"], t["iri"]) for t in terms] == [
+        ("product", PRODUCTS + "cereals"),
+        ("product", PRODUCTS + "wheat"),
+        ("source", DEMO_SOURCE),
+    ]
+    assert {t["source"] for t in terms} == {DEMO_SOURCE}
+
+
+def test_run_release_requires_the_release_source_term(tmp_path):
+    with pytest.raises(ValidationError, match="does not hold its source term"):
+        pipeline.run_release("demo-1", [_products()], _vocab_ctx(tmp_path))
+
+
+def test_run_release_rejects_sources_of_another_release_or_target(tmp_path):
+    with pytest.raises(RegistryError, match="demo-1"):
+        pipeline.run_release("demo-1", [_products(category="other-2")], _vocab_ctx(tmp_path))
+    with pytest.raises(RegistryError):
+        pipeline.run_release("demo-1", [], _vocab_ctx(tmp_path))
+    with pytest.raises(RegistryError, match="not delivered per release"):
+        pipeline.run_release("example", [_source()], _ctx(tmp_path))
+
+
+def test_run_release_replaces_the_release_in_a_local_checkout(tmp_path):
+    clone = tmp_path / "sentier-vocab"
+    (clone / "terms").mkdir(parents=True)
+    (clone / "relations").mkdir()
+    (clone / "terms" / "demo-1-01.parquet").write_bytes(b"old shard")
+    (clone / "terms" / "demo-1-02.parquet").write_bytes(b"old shard")
+    (clone / "terms" / "other.parquet").write_bytes(b"another release")
+    (clone / "relations" / "other.parquet").write_bytes(b"another release")
+
+    pipeline.run_release(
+        "demo-1", [_products(), _provenance()], _vocab_ctx(tmp_path, deliver_local_root=clone)
     )
-    out = pipeline.run_source(_product_source(), _ctx(tmp_path))
-    assert out == tmp_path / "o" / "sentier_vocab" / "products" / "agribalyse-products.yaml"
-    loaded = yaml.safe_load(out.read_text())
-    assert isinstance(loaded, dict)
-    assert loaded["scheme"] == "https://vocab.sentier.dev/products/"
-    assert {p["pref_label"] for p in loaded["products"]} == {"Electricity", "Wheat"}
+    assert sorted(p.name for p in (clone / "terms").iterdir()) == [
+        "demo-1.parquet",
+        "other.parquet",
+    ]
+    assert sorted(p.name for p in (clone / "relations").iterdir()) == [
+        "demo-1.parquet",
+        "other.parquet",
+    ]
+    assert (clone / "terms" / "other.parquet").read_bytes() == b"another release"
 
 
-def test_run_source_resolves_schema_by_file_id(tmp_path, monkeypatch):
-    captured = {}
+def test_run_release_opens_one_pr_for_the_release(tmp_path, monkeypatch):
+    called = {}
 
-    def fake_resolve(target, schema_id, ctx):
-        captured["schema_id"] = schema_id
-        return COLLECTION_SCHEMA
+    def fake_deliver_release(written, target, release, *, branch, title, body, ctx):
+        called.update(release=release, branch=branch, layers=sorted(written), dry_run=ctx.dry_run)
 
-    monkeypatch.setattr(pipeline.schema_provider, "resolve_schema", fake_resolve)
-    pipeline.run_source(_product_source(), _ctx(tmp_path))
-    # Resolves by the schema FILE id ("product"), not the class name ("ProductCollection").
-    assert captured["schema_id"] == "product"
-
-
-def test_collection_source_validates_with_linkml_collection(tmp_path, monkeypatch):
-    captured = {}
-
-    monkeypatch.setattr(pipeline.schema_provider, "resolve_schema", lambda *a: COLLECTION_SCHEMA)
-
-    def fake_validate(payload, validator, schema_path, schema_id):
-        captured["validator"] = validator
-        captured["schema_id"] = schema_id
-        captured["is_mapping"] = isinstance(payload, dict)
-
-    monkeypatch.setattr(pipeline.validate_mod, "validate", fake_validate)
-    pipeline.run_source(_product_source(), _ctx(tmp_path))
-    assert captured["validator"] == "linkml_collection"
-    assert captured["schema_id"] == "ProductCollection"
-    assert captured["is_mapping"] is True
+    monkeypatch.setattr(pipeline.deliver_mod, "deliver_release", fake_deliver_release)
+    pipeline.run_release(
+        "demo-1", [_products(), _provenance()], _vocab_ctx(tmp_path, dry_run=False)
+    )
+    assert called == {
+        "release": "demo-1",
+        "branch": "import/demo-1",
+        "layers": ["relations", "terms"],
+        "dry_run": False,
+    }
 
 
-def test_run_source_validates_when_schema_declared(tmp_path, monkeypatch):
-    captured = {}
+def test_vocab_contracts_come_from_the_pinned_ref_without_a_schema_dir(tmp_path, monkeypatch):
+    asked = []
 
     def fake_resolve(target, schema_id, ctx):
-        captured["schema_id"] = schema_id
-        return tmp_path / "schema.yaml"
-
-    def fake_validate(rows, validator, schema_path, schema_id):
-        captured["validated"] = (validator, schema_id)
+        asked.append((target.name, schema_id))
+        return VOCAB_SCHEMAS / f"{schema_id}.yaml"
 
     monkeypatch.setattr(pipeline.schema_provider, "resolve_schema", fake_resolve)
-    monkeypatch.setattr(pipeline.validate_mod, "validate", fake_validate)
-    src = _source(target="sentier_vocab", validate_against="Widget", output_format="yaml")
-    pipeline.run_source(src, _ctx(tmp_path))
-    assert captured["schema_id"] == "Widget"
-    assert captured["validated"] == ("linkml", "Widget")
+    pipeline.validate_source(_products(), _ctx(tmp_path))
+    assert set(asked) == {("sentier_vocab", "term"), ("sentier_vocab", "relation")}
 
 
 # --- missing local input: error carries source, input, root, access ---------

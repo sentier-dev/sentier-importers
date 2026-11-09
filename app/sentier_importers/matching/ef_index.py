@@ -3,7 +3,7 @@
 - ``characterization-factors.parquet`` (sentier-methods): which EF flows carry a
   factor, their context path, and their CF vector by ``method_id``. A flow that is
   not in this table has no factor and is not a mapping target.
-- ``elementary-flows/*.parquet`` (sentier-vocab, rows with the ef-3.1 source):
+- ``terms/*.parquet`` (sentier-vocab, ``elementary-flow`` terms with the ef-3.1 source):
   preferred label, synonyms (``alt_labels``) and CAS number, keyed by the flow IRI.
 
 The CF vector keeps the global (location-less) factor per method; location-specific
@@ -55,6 +55,7 @@ through ``label_defects.yaml`` exactly as before (see ``load_label_defects``);
 from __future__ import annotations
 
 import io
+import json
 import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -68,14 +69,17 @@ from sentier_importers.matching.compartments import bucket_of_ef_context, leaf_o
 
 EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
 _CF_COLUMNS = ["method_id", "flow", "flow_name", "factor_value", "flow_context", "location"]
+#: Columns read from a sentier-vocab term file; ``cas_number`` is a key of the JSON
+#: ``attributes`` column and is lifted out of it by ``_read_vocab_dir``.
 _VOCAB_COLUMNS = [
     "iri",
     "pref_label",
     "alt_labels",
-    "cas_number",
     "source",
     "additional_notations",
+    "attributes",
 ]
+_FLOW_TYPE = "elementary-flow"
 _SIGNIFICANT_DIGITS = 12
 
 #: EF 3.1 / ILCD reference-unit convention, keyed by the one method that fixes a
@@ -372,7 +376,7 @@ class EfFlowIndex:
         include_uncharacterised: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
     ) -> "EfFlowIndex":
-        """Build an index from CF table rows and vocab shard rows already loaded in memory.
+        """Build an index from CF table rows and vocab flow rows already loaded in memory.
 
         When ``include_uncharacterised`` is ``True``, every EF vocab row whose code
         carries no CF-table context is also indexed (``EfFlow.characterised=False``),
@@ -567,7 +571,7 @@ class EfFlowIndex:
         include_uncharacterised: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
     ) -> "EfFlowIndex":
-        """Build an index by reading the CF parquet file and every vocab shard parquet file."""
+        """Build an index by reading the CF parquet file and every vocab term file."""
         cf_rows = pq.read_table(cf_parquet, columns=_CF_COLUMNS).to_pylist()
         return cls.from_tables(
             cf_rows,
@@ -587,7 +591,7 @@ class EfFlowIndex:
     ) -> "EfFlowIndex":
         """Build an index from the CF parquet file's raw bytes (e.g. already fetched
         through the content-addressed cache, so the cache/offline contract holds) and
-        every vocab shard parquet file read from ``vocab_dir`` on disk.
+        every vocab term file read from ``vocab_dir`` on disk.
         """
         cf_rows = pq.read_table(io.BytesIO(cf_parquet_bytes), columns=_CF_COLUMNS).to_pylist()
         return cls.from_tables(
@@ -599,9 +603,17 @@ class EfFlowIndex:
 
     @staticmethod
     def _read_vocab_dir(vocab_dir: Path) -> list[dict]:
+        """The elementary-flow terms of every file in sentier-vocab's ``terms/`` folder,
+        as flat rows with ``cas_number`` beside the common columns."""
         vocab_rows = []
         for path in sorted(Path(vocab_dir).glob("*.parquet")):
-            vocab_rows += pq.read_table(path, columns=_VOCAB_COLUMNS).to_pylist()
+            table = pq.read_table(
+                path, columns=_VOCAB_COLUMNS, filters=[("type", "==", _FLOW_TYPE)]
+            )
+            for row in table.to_pylist():
+                attributes = json.loads(row.pop("attributes") or "{}")
+                row["cas_number"] = attributes.get("cas_number")
+                vocab_rows.append(row)
         return vocab_rows
 
     def get(self, code: str) -> EfFlow | None:

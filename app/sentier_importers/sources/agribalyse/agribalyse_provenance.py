@@ -1,6 +1,6 @@
 """Agribalyse 3.2 bibliographic provenance → a single Sentier ``Source`` record.
 
-Registered as its own ``agribalyse-source`` block (category ``sources``). The IRI is
+Registered as its own ``agribalyse-source`` block (term type ``source``). The IRI is
 shared with :mod:`agribalyse.products`, which stamps it onto every product's ``source``
 slot. One Source subclass per module (registry contract).
 """

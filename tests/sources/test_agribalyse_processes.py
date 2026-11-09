@@ -29,15 +29,11 @@ def _config():
         name="agribalyse-processes",
         module="sentier_importers.sources.agribalyse.processes",
         target="sentier_vocab",
-        category="processes",
+        category="agribalyse-3.2",
+        term_type="process",
         fetch_url="unused://",
         fetch_format="parquet",
         output_format="parquet",
-        collection_class="ProcessCollection",
-        collection_items_key="processes",
-        collection_scheme="https://vocab.sentier.dev/processes/",
-        schema_file="process",
-        validate_against="Process",
     )
 
 

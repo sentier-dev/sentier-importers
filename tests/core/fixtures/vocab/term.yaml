@@ -1,0 +1,108 @@
+# The one term schema of sentier-vocab. One row per vocabulary term, any type.
+# A file under terms/ holds every term of one source release, all types mixed.
+version: 1.0.0
+description: One row per vocabulary term, any type. Identity and labels only.
+
+prefixes:
+  skos: http://www.w3.org/2004/02/skos/core#
+  dcterms: http://purl.org/dc/terms/
+  ont: https://vocab.sentier.dev/ontology/
+  qudt: http://qudt.org/schema/qudt/
+  xsd: http://www.w3.org/2001/XMLSchema#
+
+# Column order is the parquet column order. 'predicate' is the RDF property the
+# generator emits for the column; columns without one are not serialised.
+columns:
+  iri:                  {type: string, required: true, unique: true}
+  type:                 {type: string, required: true, enum: types}
+  pref_label:           {type: string, required: true, predicate: skos:prefLabel, lang: en}
+  alt_labels:           {type: "list[string]", predicate: skos:altLabel, lang: en}
+  definition:           {type: string, predicate: skos:definition, lang: en}
+  notation:             {type: string, predicate: skos:notation}
+  additional_notations: {type: "list[string]", predicate: skos:notation}
+  source:               {type: string, required: true, predicate: dcterms:source}
+  status:               {type: string, enum: [draft, published, deprecated]}
+  attributes:           {type: json}
+
+# The allowed values of 'type'. 'category' is the key of iris.NAMESPACES and the
+# stem of output/<category>.ttl. 'class' defaults to skos:Concept. An attribute
+# entry declares the predicate the generator emits and the datatype the
+# validator checks: string (default), date, double, uri, list[string]; 'lang: en'
+# tags the literal; 'enum' restricts the value.
+types:
+  elementary-flow:
+    category: flows
+    namespace: https://vocab.sentier.dev/flows/
+    attributes:
+      compartment:     {predicate: ont:compartment}
+      sub_compartment: {predicate: ont:subCompartment}
+      cas_number:      {predicate: ont:casNumber}
+      formula:         {predicate: ont:formula}
+  unit:
+    category: units
+    namespace: https://vocab.sentier.dev/units/
+  unit-group:
+    category: unit-groups
+    namespace: https://vocab.sentier.dev/units/group/
+  product:
+    category: products
+    namespace: https://vocab.sentier.dev/products/
+    attributes:
+      cpc_code: {predicate: ont:cpcCode}
+  process:
+    category: processes
+    namespace: https://vocab.sentier.dev/processes/
+    class: ont:Process
+    attributes:
+      valid_from:   {predicate: ont:validFrom, type: date}
+      technology:   {predicate: ont:technology, lang: en}
+      process_type: {predicate: ont:processType, enum: [unit, system, lci_result]}
+  impact-category:
+    category: impact-categories
+    namespace: https://vocab.sentier.dev/impact-categories/
+    attributes:
+      indicator:            {predicate: ont:indicator, lang: en}
+      time_horizon:         {predicate: ont:timeHorizon}
+      normalization_factor: {predicate: ont:normalizationFactor, type: double}
+      weighting_factor:     {predicate: ont:weightingFactor, type: double}
+  lcia-method:
+    category: lcia-methods
+    namespace: https://vocab.sentier.dev/lcia-methods/
+    attributes:
+      methodology: {predicate: ont:methodology, lang: en}
+      valid_from:  {predicate: ont:validFrom, type: date}
+  flow-property:
+    category: flow-properties
+    namespace: https://vocab.sentier.dev/flow-properties/
+    attributes:
+      data_type: {predicate: ont:dataType, enum: [physical, economic, technical]}
+  model-term:
+    category: model-terms
+    namespace: https://vocab.sentier.dev/model-terms/
+  organism:
+    category: organisms
+    namespace: https://vocab.sentier.dev/organisms/
+  qualifier:
+    category: qualifiers
+    namespace: https://vocab.sentier.dev/qualifiers/
+  source:
+    category: sources
+    namespace: https://vocab.sentier.dev/sources/
+    attributes:
+      title:      {predicate: dcterms:title, lang: en}
+      creators:   {predicate: dcterms:creator, type: "list[string]"}
+      date:       {predicate: dcterms:date, type: date}
+      publisher:  {predicate: dcterms:publisher}
+      identifier: {predicate: dcterms:identifier}
+      citation:   {predicate: ont:citation}
+  contact:
+    category: contacts
+    namespace: https://vocab.sentier.dev/contacts/
+    attributes:
+      email:        {predicate: ont:email}
+      organisation: {predicate: ont:organisation, lang: en}
+      url:          {predicate: ont:url, type: uri}
+  characterization-factor:
+    category: characterization-factors
+    namespace: https://vocab.sentier.dev/characterization-factors/
+    retired: true   # namespace stays reserved; CF rows live in sentier-methods

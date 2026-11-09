@@ -49,15 +49,11 @@ def _config():
         name="agribalyse-products",
         module="sentier_importers.sources.agribalyse.products",
         target="sentier_vocab",
-        category="products",
+        category="agribalyse-3.2",
+        term_type="product",
         fetch_url="unused://",
         fetch_format="parquet",
         output_format="parquet",
-        collection_class="ProductCollection",
-        collection_items_key="products",
-        collection_scheme="https://vocab.sentier.dev/products/",
-        schema_file="product",
-        validate_against="Product",
         dedup_check_existing=False,
     )
 

@@ -9,26 +9,23 @@ per category. The fixture is a tiny hand-built ``MTX.ecf`` — no network.
 import zipfile
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
-import yaml
 from sentier_importers.core import pipeline
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.source import SourceConfig
-from sentier_importers.sources.foodex2.provenance import PROVENANCE_IRI
+from sentier_importers.sources.foodex2.provenance import PROVENANCE_IRI, Foodex2Provenance
 from sentier_importers.sources.foodex2.source import Foodex2Source, _facet_value_codes
 
 FIXTURES = Path(__file__).parent / "fixtures"
-CONCEPT_SCHEMA = FIXTURES / "concept_collection.yaml"
+#: A copy of sentier-vocab's schemas/ folder (term.yaml, relation.yaml).
+VOCAB_SCHEMAS = Path(__file__).parents[1] / "core" / "fixtures" / "vocab"
 
 ROOT = "https://vocab.sentier.dev"
 PRODUCTS = f"{ROOT}/products/"
 
-# Per-category collection wiring, so one helper can build any slice.
-_CATEGORY = {
-    "products": ("ProductCollection", "products", "product", "Product"),
-    "organisms": ("OrganismCollection", "organisms", "organism", "Organism"),
-    "qualifiers": ("QualifierCollection", "qualifiers", "qualifier", "Qualifier"),
-}
+# Sentier category (the IRI path segment) -> the term type of the registry block.
+_CATEGORY = {"products": "product", "organisms": "organism", "qualifiers": "qualifier"}
 
 
 # --- a tiny MTX.ecf fixture ----------------------------------------------------
@@ -120,20 +117,15 @@ def sample_ecf(tmp_path_factory) -> Path:
 
 
 def _config(ecf: Path, category="products", **overrides) -> SourceConfig:
-    cls, items_key, schema_file, validate = _CATEGORY[category]
     base = dict(
         name=f"foodex2-{category}",
         module="sentier_importers.sources.foodex2.source",
         target="sentier_vocab",
-        category=category,
+        category="foodex2",
+        term_type=_CATEGORY[category],
         fetch_url=f"file://{ecf}",
         fetch_format="ecf",
-        output_format="yaml",
-        collection_class=cls,
-        collection_items_key=items_key,
-        collection_scheme=f"{ROOT}/{category}/",
-        schema_file=schema_file,
-        validate_against=validate,
+        output_format="parquet",
         dedup_check_existing=False,  # Layer B needs network; off for unit tests
     )
     base.update(overrides)
@@ -145,7 +137,9 @@ def _source(ecf: Path, category="products", **overrides) -> Foodex2Source:
 
 
 def _ctx(tmp_path, **kw) -> RunContext:
-    return RunContext(cache_dir=tmp_path / "c", output_dir=tmp_path / "o", **kw)
+    return RunContext(
+        cache_dir=tmp_path / "c", output_dir=tmp_path / "o", schema_dir=VOCAB_SCHEMAS, **kw
+    )
 
 
 def _rows(ecf, tmp_path, category="products"):
@@ -266,16 +260,33 @@ def test_facet_value_codes_parsing():
 # --- full pipeline ------------------------------------------------------------
 
 
-def test_run_products_emits_valid_collection(sample_ecf, tmp_path, monkeypatch):
-    monkeypatch.setattr(pipeline.schema_provider, "resolve_schema", lambda *a, **k: CONCEPT_SCHEMA)
+def test_run_products_stages_a_valid_part(sample_ecf, tmp_path):
     out = pipeline.run_source(_source(sample_ecf, "products"), _ctx(tmp_path))
-    assert out == tmp_path / "o" / "sentier_vocab" / "products" / "foodex2-products.yaml"
+    part = tmp_path / "o" / "sentier_vocab" / "parts" / "foodex2-products"
+    assert out == part / "terms" / "foodex2.parquet"
 
-    loaded = yaml.safe_load(out.read_text())
-    assert loaded["scheme"] == PRODUCTS
-    assert {p["pref_label"] for p in loaded["products"]} == {
+    terms = pq.read_table(out).to_pylist()
+    assert {t["type"] for t in terms} == {"product"}
+    assert {t["pref_label"] for t in terms} == {
         "Food",
         "Teff grain",
         "Feed",
         "Obsolete millet term",
     }
+
+
+def test_run_release_joins_the_three_slices_and_the_source_term(sample_ecf, tmp_path):
+    provenance = Foodex2Provenance(
+        _config(sample_ecf, name="foodex2-source", term_type="source", fetch_url="static://x")
+    )
+    sources = [_source(sample_ecf, category) for category in _CATEGORY] + [provenance]
+    terms_file, relations_file = pipeline.run_release("foodex2", sources, _ctx(tmp_path))
+
+    terms = pq.read_table(terms_file).to_pylist()
+    assert {t["type"] for t in terms} == {"product", "organism", "qualifier", "source"}
+    assert {t["source"] for t in terms} == {PROVENANCE_IRI}
+    iris = {t["iri"] for t in terms}
+    edges = pq.read_table(relations_file).to_pylist()
+    assert {e["predicate"] for e in edges} == {"skos:broader", "skos:related"}
+    # a cross-reference into another slice resolves inside the release
+    assert all(e["subject"] in iris and e["object"] in iris for e in edges)

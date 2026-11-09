@@ -1,26 +1,29 @@
 # The human-readable list of all data sources. Read top-to-bottom; one block per
 # source. Adding a source = new folder under sources/ + one block here.
 #
-# Vocab (sentier_vocab) sources additionally declare a `collection` block — the
-# framework wraps the transformed rows into a single `{scheme, <items_key>: [...]}`
-# Collection object and validates it against the tree-root `class`. A `dedup` block
-# tunes the deterministic in-repo dedup (see core/dedup.py). Both are optional;
-# omitting them yields the legacy flat-list behavior used by bulk targets. Example:
+# sentier-vocab stores one source release as terms/<release>[-NN].parquet (every
+# term, all types mixed) and relations/<release>.parquet (every edge). A vocab
+# (sentier_vocab) source is one part of a release: `category` is the release, the
+# identifier of its source term (https://vocab.sentier.dev/sources/<release>), and
+# `term_type` is the value its rows get in the `type` column. The framework turns
+# the literal slots of a row into `attributes` and the IRI-valued slots into
+# relation rows, and checks both against sentier-vocab's schemas/term.yaml and
+# schemas/relation.yaml. A release is delivered whole, never one source at a time:
+#
+#   sentier-importers run --release <release> [--deliver | --deliver-local ../sentier-vocab]
+#
+# A `dedup` block tunes the deterministic dedup (see core/dedup.py). Example:
 #
 #   - name: agribalyse-products
-#     module: sentier_importers.sources.agribalyse.source
+#     module: sentier_importers.sources.agribalyse.products
 #     target: sentier_vocab
-#     category: products
+#     category: agribalyse-3.2                         # the source release
+#     term_type: product                               # a type listed in term.yaml
 #     fetch: { url: "https://…/agribalyse.xlsx", format: xlsx }
-#     output_format: yaml
-#     collection:
-#       class: ProductCollection                      # tree-root class to validate against
-#       items_key: products                           # plural slot holding the items
-#       scheme: https://vocab.sentier.dev/products/    # required ConceptScheme IRI
-#       schema_file: product                          # schema file id (schemas/product.yaml)
-#     validate_against: Product                        # item class — documentation / per-item
+#     output_format: parquet
 #     dedup:
-#       on_existing: skip                              # skip | error | overwrite (default skip)
+#       on_existing: skip                              # skip | error (default skip): an IRI
+#                                                      #   another release already delivers
 #       check_existing: true                           # Layer B on/off (default true)
 #     enabled: true
 sources:
@@ -50,7 +53,6 @@ sources:
       url: "bundled://example.csv"  # overridden by the plugin's fetch(); see source.py
       format: csv
     output_format: json
-    validate_against: null
     enabled: true
 
   # FoodEx2, imported from EFSA's PRIMARY source: the MTX catalogue published at
@@ -58,64 +60,50 @@ sources:
   # commit (catalogue v17.1) so re-imports are deliberate; the pin is recorded in
   # foodex2/provenance.py (CATALOGUE_VERSION / CATALOGUE_COMMIT / MTX_URL). This replaces
   # the former third-party esfc-glossary pull (AGPL, opaque AI transforms).
-  # FoodEx2 routes across three categories by `termType` (see foodex2/source.py).
+  # FoodEx2 routes across three term types by `termType` (see foodex2/source.py).
   # All three blocks fetch the same cached ~3.8MB .ecf and filter to their own slice; opt-in
   # (enabled: false) so the ~31k-term import stays out of the blanket `run --all`.
+  # Release: `run --release foodex2` (the three slices plus the source term).
   - name: foodex2-products            # Commodities + grouping nodes, termType r/d/s/c/g (~5.9k)
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
-    category: products
+    category: foodex2
+    term_type: product
     fetch:
       url: "https://raw.githubusercontent.com/openefsa/efsa-catalogues/242ead56e40a29002a66d63fc64c6a497151af4b/ecf_catalogues/MTX.ecf"
       format: ecf
     output_format: parquet
-    collection:
-      class: ProductCollection
-      items_key: products
-      scheme: https://vocab.sentier.dev/products/
-      schema_file: product
-    validate_against: Product
     dedup:
       on_existing: skip
-      check_existing: true                           # dedup against existing products
+      check_existing: true                           # dedup against the other releases
     enabled: false
 
   - name: foodex2-organisms           # Biological source taxa, termType n (~23.9k)
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
-    category: organisms
+    category: foodex2
+    term_type: organism
     fetch:
       url: "https://raw.githubusercontent.com/openefsa/efsa-catalogues/242ead56e40a29002a66d63fc64c6a497151af4b/ecf_catalogues/MTX.ecf"
       format: ecf
     output_format: parquet
-    collection:
-      class: OrganismCollection
-      items_key: organisms
-      scheme: https://vocab.sentier.dev/organisms/
-      schema_file: organism
-    validate_against: Organism
     dedup:
       on_existing: skip
-      check_existing: false                          # new category; no existing data dir
+      check_existing: false
     enabled: false
 
   - name: foodex2-qualifiers          # Facet descriptors, termType f (~1.9k)
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
-    category: qualifiers
+    category: foodex2
+    term_type: qualifier
     fetch:
       url: "https://raw.githubusercontent.com/openefsa/efsa-catalogues/242ead56e40a29002a66d63fc64c6a497151af4b/ecf_catalogues/MTX.ecf"
       format: ecf
     output_format: parquet
-    collection:
-      class: QualifierCollection
-      items_key: qualifiers
-      scheme: https://vocab.sentier.dev/qualifiers/
-      schema_file: qualifier
-    validate_against: Qualifier
     dedup:
       on_existing: skip
-      check_existing: false                          # new category; no existing data dir
+      check_existing: false
     enabled: false
 
   # Bibliographic provenance for FoodEx2 — one Source record that every imported
@@ -123,17 +111,12 @@ sources:
   - name: foodex2-source
     module: sentier_importers.sources.foodex2.provenance
     target: sentier_vocab
-    category: sources
+    category: foodex2
+    term_type: source
     fetch:
       url: "static://foodex2-source"  # unused: the plugin's fetch() returns no input
       format: json
-    output_format: yaml
-    collection:
-      class: SourceCollection
-      items_key: sources
-      scheme: https://vocab.sentier.dev/sources/
-      schema_file: source
-    validate_against: Source
+    output_format: parquet
     dedup:
       on_existing: skip
       check_existing: false                          # single static record; no Layer B
@@ -145,61 +128,46 @@ sources:
   - name: agribalyse-products
     module: sentier_importers.sources.agribalyse.products
     target: sentier_vocab
-    category: products
+    category: agribalyse-3.2
+    term_type: product
     access: private
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
       format: parquet
     output_format: parquet
-    collection:
-      class: ProductCollection
-      items_key: products
-      scheme: https://vocab.sentier.dev/products/
-      schema_file: product
-    validate_against: Product
     dedup:
       on_existing: skip
-      check_existing: true                           # dedup against existing products (incl. FoodEx2)
+      check_existing: true                           # dedup against the other releases (incl. FoodEx2)
     enabled: false
 
   # Bibliographic provenance for Agribalyse 3.2 — the Source every product links to.
   - name: agribalyse-source
     module: sentier_importers.sources.agribalyse.agribalyse_provenance
     target: sentier_vocab
-    category: sources
+    category: agribalyse-3.2
+    term_type: source
     fetch:
       url: "static://agribalyse-source"  # unused: the plugin's fetch() returns no input
       format: json
-    output_format: yaml
-    collection:
-      class: SourceCollection
-      items_key: sources
-      scheme: https://vocab.sentier.dev/sources/
-      schema_file: source
-    validate_against: Source
+    output_format: parquet
     dedup:
       on_existing: skip
       check_existing: false
     enabled: false
 
-  # Agribalyse process catalog into sentier-vocab (processes). Nomenclature only — the
+  # Agribalyse process catalog into sentier-vocab (process terms). Nomenclature only — the
   # LCI process name per CIQUAL product, linked to its product term via `related`. No
   # geography IRI, no exchanges (amounts are the licensed LCI). ~2.45k processes.
   - name: agribalyse-processes
     module: sentier_importers.sources.agribalyse.processes
     target: sentier_vocab
-    category: processes
+    category: agribalyse-3.2
+    term_type: process
     access: private
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/AGRIBALYSE3.2_reference_synthese_raw.parquet"
       format: parquet
     output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
     dedup:
       on_existing: skip
       check_existing: false
@@ -210,18 +178,13 @@ sources:
   - name: ef-lcia-method
     module: sentier_importers.sources.agribalyse.vocab_lcia_methods
     target: sentier_vocab
-    category: lcia-methods
+    category: ef-3.1
+    term_type: lcia-method
     access: private
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
-    output_format: yaml
-    collection:
-      class: LCIAMethodCollection
-      items_key: lcia_methods
-      scheme: https://vocab.sentier.dev/lcia-methods/
-      schema_file: lcia-method
-    validate_against: LCIAMethod
+    output_format: parquet
     dedup:
       on_existing: skip
       check_existing: false
@@ -230,18 +193,13 @@ sources:
   - name: ef-impact-categories
     module: sentier_importers.sources.agribalyse.vocab_impact_categories
     target: sentier_vocab
-    category: impact-categories
+    category: ef-3.1
+    term_type: impact-category
     access: private
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
       format: parquet
-    output_format: yaml
-    collection:
-      class: ImpactCategoryCollection
-      items_key: impact_categories
-      scheme: https://vocab.sentier.dev/impact-categories/
-      schema_file: impact-category
-    validate_against: ImpactCategory
+    output_format: parquet
     dedup:
       on_existing: skip
       check_existing: false
@@ -282,135 +240,23 @@ sources:
   # Fetches the pinned release asset (see docs/plans/2026-07-10-agribalyse-elementary-flows-import.md
   # Task 0); nomenclature only, NO LCI amounts. Flows tagged "ecoinvent algorithm addition"
   # are excluded in transform(). ~79.3k flows; opt-in so it stays out of `run --all`.
-  # One content-named file per compartment (rule 2026-08-07: payload files are
-  # named by content, never by source); emit_filename is the compartment slug the
-  # source filters on. air/water exceed the vocab 3 MB guard — shard the staged
-  # file with scripts/shard_collection.py (stem = the slug, giving air-01.parquet …)
-  # before delivery; sharded stems also avoid the vocab generator's reserved
-  # primary stems (core/water).
-  - name: ef31-elementary-flows-air
+  # Part of the ef-3.1 release with the method, its impact categories and the source
+  # term; the compartment is an attribute of each flow term. The release exceeds the
+  # vocab 3 MB guard, so `run --release ef-3.1` writes it as ef-3.1-01.parquet ….
+  # The flow list's Brightway exact matches are not vocab relations: they belong to
+  # sentier-mappings (pair ef-3.1__brightway).
+  - name: ef31-elementary-flows
     module: sentier_importers.sources.agribalyse.flows
     target: sentier_vocab
-    category: elementary-flows
+    category: ef-3.1
+    term_type: elementary-flow
     access: private
-    emit_filename: air
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz                                # unused: the plugin overrides parse() to gunzip
     output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
     dedup:
       on_existing: skip                              # do not clobber curated flows/ENVO_* terms
-      check_existing: true
-    enabled: false
-
-  - name: ef31-elementary-flows-water
-    module: sentier_importers.sources.agribalyse.flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: private
-    emit_filename: water
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
-      format: json-gz
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: ef31-elementary-flows-soil
-    module: sentier_importers.sources.agribalyse.flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: private
-    emit_filename: soil
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
-      format: json-gz
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: ef31-elementary-flows-land-use
-    module: sentier_importers.sources.agribalyse.flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: private
-    emit_filename: land-use
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
-      format: json-gz
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: ef31-elementary-flows-natural-resource
-    module: sentier_importers.sources.agribalyse.flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: private
-    emit_filename: natural-resource
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
-      format: json-gz
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: ef31-elementary-flows-biota
-    module: sentier_importers.sources.agribalyse.flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: private
-    emit_filename: biota
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
-      format: json-gz
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
       check_existing: true
     enabled: false
 
@@ -419,17 +265,12 @@ sources:
   - name: agribalyse-ef31-source
     module: sentier_importers.sources.agribalyse.provenance
     target: sentier_vocab
-    category: sources
+    category: ef-3.1
+    term_type: source
     fetch:
       url: "static://agribalyse-ef31-source"  # unused: the plugin's fetch() returns no input
       format: json
-    output_format: yaml
-    collection:
-      class: SourceCollection
-      items_key: sources
-      scheme: https://vocab.sentier.dev/sources/
-      schema_file: source
-    validate_against: Source
+    output_format: parquet
     dedup:
       on_existing: skip
       check_existing: false                          # single static record; no Layer B
@@ -441,11 +282,11 @@ sources:
   # only run on a machine holding the freely downloadable EcoSpold v1 zip.
   # The BAFU §2.2 licence hold was lifted 2026-08-07 — data ships as normal
   # PRs (`--deliver`) or into a local clone (`--deliver-local`).
-  # Vocab payload files are content-named, never source-named (rule
-  # 2026-08-07): one file per sector for process terms, one per compartment
-  # for elementary flows; `emit_filename` is the slug the source filters on.
-  # Inventory files instead live in one folder per source release
-  # (data/bafu-2026-v1/), sector being a column there (spec 2026-10-12).
+  # The vocab release is bafu-2026 (`run --release bafu-2026`): the source term,
+  # the process terms and the elementary-flow terms, sector and compartment being
+  # attributes or columns, never file names. Inventory files live in one folder
+  # per source release (data/bafu-2026-v1/), sector being a column there (spec
+  # 2026-10-12).
   # Citation: "Life Cycle Inventory database of the Swiss Federal
   # Administration, BAFU:2026".
   # ---------------------------------------------------------------------------
@@ -453,382 +294,48 @@ sources:
   - name: bafu-2026-source
     module: sentier_importers.sources.bafu.provenance
     target: sentier_vocab
-    category: sources
-    emit_filename: bafu-2026
+    category: bafu-2026
+    term_type: source
     fetch:
       url: "static://bafu-2026-source"  # unused: the plugin's fetch() returns no input
       format: json
-    output_format: yaml
-    collection:
-      class: SourceCollection
-      items_key: sources
-      scheme: https://vocab.sentier.dev/sources/
-      schema_file: source
-    validate_against: Source
+    output_format: parquet
     dedup:
       on_existing: skip
       check_existing: false
     enabled: false
 
-  # 11,947 BAFU process terms (incl. obsolete link targets), one per-sector
-  # file (emit_filename = sector id from ecospold.SECTORS).
-  - name: bafu-processes-agriculture
+  # 11,947 BAFU process terms (incl. obsolete link targets).
+  - name: bafu-vocab-processes
     module: sentier_importers.sources.bafu.vocab_processes
     target: sentier_vocab
-    category: processes
+    category: bafu-2026
+    term_type: process
     access: licensed
-    emit_filename: agriculture
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
     dedup:
       on_existing: skip
       check_existing: false
     enabled: false
 
-  - name: bafu-processes-electricity
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: electricity
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-chemicals
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: chemicals
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-transport
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: transport
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-energy
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: energy
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-waste
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: waste
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-construction
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: construction
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-materials
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: materials
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-electronics
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: electronics
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-building-services
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: building-services
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  - name: bafu-processes-obsolete
-    module: sentier_importers.sources.bafu.vocab_processes
-    target: sentier_vocab
-    category: processes
-    access: licensed
-    emit_filename: obsolete
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ProcessCollection
-      items_key: processes
-      scheme: https://vocab.sentier.dev/processes/
-      schema_file: process
-    validate_against: Process
-    dedup:
-      on_existing: skip
-      check_existing: false
-    enabled: false
-
-  # 2,515+ distinct BAFU biosphere flows, one per-compartment file; uuid5 ids
-  # shared with the inventory exchanges. Unit is part of identity since 0.2.0,
-  # so Bq/kBq twins mint separate ids.
-  - name: bafu-elementary-flows-emissions-to-air
+  # 2,679 distinct BAFU biosphere flows; uuid5 ids shared with the inventory
+  # exchanges. Unit is part of identity since 0.2.0, so Bq/kBq twins mint
+  # separate ids.
+  - name: bafu-vocab-flows
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab
-    category: elementary-flows
+    category: bafu-2026
+    term_type: elementary-flow
     access: licensed
-    emit_filename: emissions-to-air
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
     dedup:
       on_existing: skip                              # never clobber EF 3.1/ENVO terms
-      check_existing: true
-    enabled: false
-
-  - name: bafu-elementary-flows-emissions-to-water
-    module: sentier_importers.sources.bafu.vocab_flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: licensed
-    emit_filename: emissions-to-water
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: bafu-elementary-flows-emissions-to-soil
-    module: sentier_importers.sources.bafu.vocab_flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: licensed
-    emit_filename: emissions-to-soil
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: bafu-elementary-flows-resources
-    module: sentier_importers.sources.bafu.vocab_flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: licensed
-    emit_filename: resources
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: bafu-elementary-flows-non-material-emissions
-    module: sentier_importers.sources.bafu.vocab_flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: licensed
-    emit_filename: non-material-emissions
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
-      check_existing: true
-    enabled: false
-
-  - name: bafu-elementary-flows-economic-issues
-    module: sentier_importers.sources.bafu.vocab_flows
-    target: sentier_vocab
-    category: elementary-flows
-    access: licensed
-    emit_filename: economic-issues
-    fetch:
-      url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
-      format: zip
-    output_format: parquet
-    collection:
-      class: ElementaryFlowCollection
-      items_key: flows
-      scheme: https://vocab.sentier.dev/flows/
-      schema_file: elementary-flow
-    validate_against: ElementaryFlow
-    dedup:
-      on_existing: skip
       check_existing: true
     enabled: false
 
@@ -849,7 +356,6 @@ sources:
       url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
-    validate_against: null
     enabled: false
 
   - name: bafu-exchanges
@@ -862,7 +368,6 @@ sources:
       url: "file://${SENTIER_DATA_ROOT}/sources/bafu-2026/BAFU-2026 v1_ecoSpold v1.zip"
       format: zip
     output_format: parquet
-    validate_against: null
     enabled: false
 
   # sentier-mappings: BAFU-2026 v1 elementary flows → EF 3.1 CF keys.
@@ -947,7 +452,7 @@ sources:
   # sentier-mappings: bafu-2026-v1 → EF 3.1 by PUBLIC matching (name, land-use class,
   # ore composite, synonym, qualifier spelling, curated alias, the same on the region-stripped
   # name, CAS last)
-  # against sentier-methods' CF table + sentier-vocab's EF shards, for flows neither the
+  # against sentier-methods' CF table + sentier-vocab's EF 3.1 flow terms, for flows neither the
   # curated nor the inferred package maps. Strict sub-compartment placement with an
   # explicit, commented `unspecified` fallback. Plan: dds wiki
   # 2026-09-12-bafu-ef-remaining-flows. Regenerate-locally with a fresh --cache-dir.
@@ -964,7 +469,7 @@ sources:
       curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
       inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
       ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/data/elementary-flows"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/terms"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-biosphere-matched
@@ -996,7 +501,7 @@ sources:
       curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
       inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
       ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/data/elementary-flows"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/terms"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-coverage
@@ -1025,7 +530,7 @@ sources:
       inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
       matched: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-3-matched.json"
       ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/data/elementary-flows"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/terms"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-biosphere-nomenclature

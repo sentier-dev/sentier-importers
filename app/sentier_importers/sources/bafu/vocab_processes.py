@@ -1,4 +1,4 @@
-"""BAFU-2026 process terms -> ``sentier_vocab`` (processes).
+"""BAFU-2026 process terms -> ``sentier_vocab`` (terms of type ``process``).
 
 One ``Process`` term per dataset, keyed on the dataset UUID. Obsolete datasets
 are kept — live processes link into them — and marked in the definition.
@@ -30,23 +30,14 @@ def _definition(record: Record) -> str | None:
 
 
 class BafuVocabProcessesSource(Source):
-    """Map BAFU datasets into ``Process`` terms, one content-named file per sector.
-
-    ``emit_filename`` is the sector slug (``agriculture`` … ``obsolete``): each
-    registry entry emits only the datasets routing to that sector, so the
-    delivered files are named by content, never by source. Without
-    ``emit_filename`` the source emits every dataset.
-    """
+    """Map every BAFU dataset into a process term."""
 
     def parse(self, raw: RawData) -> Records:
         return ecospold.parse_ecospold_zip(raw)
 
     def transform(self, records: Records) -> Rows:
-        sector = self.config.emit_filename
         rows: Rows = []
         for record in records:
-            if sector and ecospold.sector_for(record["category"]) != sector:
-                continue
             row: Record = {
                 "iri": process_iri(record["uuid"]),
                 "pref_label": record["name"],

@@ -22,8 +22,6 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "httpx",
-    "linkml",
-    "linkml-runtime",
     "loguru",
     "openpyxl",
     "orjson",

@@ -25,7 +25,7 @@ from sentier_importers.matching.compartments import (
 #: to override for any other layout; no path here is specific to one machine or user.
 _CHECKOUTS_ROOT = Path(__file__).parents[3]
 _DEFAULT_CF = _CHECKOUTS_ROOT / "sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-_DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/data/elementary-flows"
+_DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/terms"
 _REAL_CF = Path(os.environ.get("SENTIER_METHODS_CF", str(_DEFAULT_CF)))
 _REAL_VOCAB_DIR = Path(os.environ.get("SENTIER_VOCAB_FLOWS", str(_DEFAULT_VOCAB_DIR)))
 _EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
@@ -134,7 +134,7 @@ def test_every_placeable_path_has_a_bucket_and_is_exact_placeable():
 )
 def test_pins_majority_leaf_against_real_data():
     """Re-derive the majority (and, for ambiguous codes, runner-up) EF context path
-    per bw-context code from the real CF table and vocab shards, and assert both match
+    per bw-context code from the real CF table and vocab term files, and assert both match
     this module's checked-in tables exactly (full path strings, not just the leaf) --
     this guards the crosswalk against drift in the underlying data. Also asserts the
     set of codes this derivation actually sees equals the set of codes expected to

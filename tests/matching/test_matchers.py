@@ -41,7 +41,7 @@ from tests.matching.ef_fixtures import (
 #: ``SENTIER_VOCAB_FLOWS`` to override.
 _CHECKOUTS_ROOT = Path(__file__).parents[3]
 _DEFAULT_CF = _CHECKOUTS_ROOT / "sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
-_DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/data/elementary-flows"
+_DEFAULT_VOCAB_DIR = _CHECKOUTS_ROOT / "sentier-vocab/terms"
 _REAL_CF = Path(os.environ.get("SENTIER_METHODS_CF", str(_DEFAULT_CF)))
 _REAL_VOCAB_DIR = Path(os.environ.get("SENTIER_VOCAB_FLOWS", str(_DEFAULT_VOCAB_DIR)))
 _REAL_INPUTS_AVAILABLE = _REAL_CF.exists() and _REAL_VOCAB_DIR.exists()

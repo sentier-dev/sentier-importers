@@ -41,7 +41,6 @@ def test_load_registry_parses_entries(tmp_path):
               url: "file:///tmp/x.csv"
               format: csv
             output_format: json
-            validate_against: null
             enabled: true
         """,
     )
@@ -52,10 +51,10 @@ def test_load_registry_parses_entries(tmp_path):
     assert cfg.name == "demo"
     assert cfg.fetch_url == "file:///tmp/x.csv"
     assert cfg.fetch_format == "csv"
-    assert cfg.validate_against is None
+    assert cfg.term_type is None
 
 
-def test_load_registry_parses_collection_and_dedup(tmp_path):
+def test_load_registry_parses_term_type_and_dedup(tmp_path):
     path = _write_registry(
         tmp_path,
         """
@@ -63,30 +62,23 @@ def test_load_registry_parses_collection_and_dedup(tmp_path):
           - name: agribalyse-products
             module: m.a
             target: sentier_vocab
-            category: products
+            category: agribalyse-3.2
+            term_type: product
             fetch: { url: "file:///a.xlsx", format: xlsx }
-            output_format: yaml
-            collection:
-              class: ProductCollection
-              items_key: products
-              scheme: https://vocab.sentier.dev/products/
-              schema_file: product
-            validate_against: Product
+            output_format: parquet
             dedup:
               on_existing: error
               check_existing: false
         """,
     )
     cfg = registry_mod.load_registry(path)[0]
-    assert cfg.collection_class == "ProductCollection"
-    assert cfg.collection_items_key == "products"
-    assert cfg.collection_scheme == "https://vocab.sentier.dev/products/"
-    assert cfg.schema_file == "product"
+    assert cfg.category == "agribalyse-3.2"
+    assert cfg.term_type == "product"
     assert cfg.dedup_on_existing == "error"
     assert cfg.dedup_check_existing is False
 
 
-def test_collection_and_dedup_default_when_absent(tmp_path):
+def test_term_type_and_dedup_default_when_absent(tmp_path):
     path = _write_registry(
         tmp_path,
         """
@@ -100,12 +92,40 @@ def test_collection_and_dedup_default_when_absent(tmp_path):
         """,
     )
     cfg = registry_mod.load_registry(path)[0]
-    assert cfg.collection_class is None
-    assert cfg.collection_items_key is None
-    assert cfg.collection_scheme is None
-    assert cfg.schema_file is None
+    assert cfg.term_type is None
     assert cfg.dedup_on_existing == "skip"
     assert cfg.dedup_check_existing is True
+
+
+@pytest.mark.parametrize(
+    ("target", "term_type_line"),
+    [("sentier_vocab", ""), ("sentier_inventory", "term_type: product")],
+)
+def test_term_type_belongs_to_vocab_sources_only(tmp_path, target, term_type_line):
+    path = _write_registry(
+        tmp_path,
+        f"""
+        sources:
+          - name: demo
+            module: m.a
+            target: {target}
+            category: c
+            {term_type_line}
+            fetch: {{ url: "file:///a", format: csv }}
+            output_format: parquet
+        """,
+    )
+    with pytest.raises(RegistryError, match="term_type"):
+        registry_mod.load_registry(path)
+
+
+def test_real_registry_vocab_sources_name_a_release_and_a_term_type():
+    vocab = [c for c in registry_mod.load_registry() if c.target == "sentier_vocab"]
+    assert {c.category for c in vocab} == {"foodex2", "agribalyse-3.2", "ef-3.1", "bafu-2026"}
+    # every release delivers its own source term
+    for release in {c.category for c in vocab}:
+        assert [c.term_type for c in vocab if c.category == release].count("source") == 1
+    assert all(c.emit_filename is None for c in vocab)
 
 
 def test_get_config_by_name(tmp_path):

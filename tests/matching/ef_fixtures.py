@@ -1,9 +1,11 @@
-"""Tiny EF CF table + vocab shard builders, written as parquet into a tmp dir."""
+"""Tiny EF CF table + vocab term-file builders, written as parquet into a tmp dir."""
 
+import json
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from sentier_importers.core.vocab_layers import TERM_SCHEMA
 
 IRI = "https://vocab.sentier.dev/flows/"
 AIR_URBAN = "Emissions / Emissions to air / Emissions to urban air close to ground"
@@ -26,16 +28,6 @@ CF_SCHEMA = pa.schema(
         ("unit", pa.string()),
         ("flow_context", pa.string()),
         ("location", pa.string()),
-    ]
-)
-VOCAB_SCHEMA = pa.schema(
-    [
-        ("iri", pa.string()),
-        ("pref_label", pa.string()),
-        ("alt_labels", pa.list_(pa.string())),
-        ("cas_number", pa.string()),
-        ("source", pa.string()),
-        ("additional_notations", pa.list_(pa.string())),
     ]
 )
 EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
@@ -69,20 +61,37 @@ def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE, bw=None):
     }
 
 
+def term_row(row: dict) -> dict:
+    """A flat ``vocab_row`` as a row of sentier-vocab's term layer."""
+    term = {k: v for k, v in row.items() if k != "cas_number"}
+    term["type"] = "elementary-flow"
+    cas = row.get("cas_number")
+    term["attributes"] = json.dumps({"cas_number": cas}) if cas is not None else None
+    return term
+
+
+#: A term of another type in the same release: the index must not read it as a flow.
+_OTHER_TERM = {
+    "iri": "https://vocab.sentier.dev/impact-categories/ef-3.1/acidification",
+    "type": "impact-category",
+    "pref_label": "Acidification",
+    "source": EF_SOURCE,
+}
+
+
 def write_ef_inputs(root: Path, cf_rows, vocab_rows, shards: int = 1) -> tuple[Path, Path]:
     """Write one CF parquet and split ``vocab_rows`` round-robin across ``shards`` vocab
-    parquet files (``air-01.parquet``, ``air-02.parquet``, ...); return (cf_path, vocab_dir).
+    term files (``ef-3.1-01.parquet``, ``ef-3.1-02.parquet``, ...); return (cf_path, terms_dir).
     """
     cf = root / "characterization-factors.parquet"
     pq.write_table(pa.Table.from_pylist(cf_rows, schema=CF_SCHEMA), cf)
-    vocab_dir = root / "elementary-flows"
-    vocab_dir.mkdir(exist_ok=True)
-    rows = list(vocab_rows)
-    groups: list[list[dict]] = [[] for _ in range(shards)]
-    for i, row in enumerate(rows):
-        groups[i % shards].append(row)
+    terms_dir = root / "terms"
+    terms_dir.mkdir(exist_ok=True)
+    groups: list[list[dict]] = [[_OTHER_TERM] for _ in range(shards)]
+    for i, row in enumerate(vocab_rows):
+        groups[i % shards].append(term_row(row))
     for i, group in enumerate(groups, start=1):
         pq.write_table(
-            pa.Table.from_pylist(group, schema=VOCAB_SCHEMA), vocab_dir / f"air-{i:02d}.parquet"
+            pa.Table.from_pylist(group, schema=TERM_SCHEMA), terms_dir / f"ef-3.1-{i:02d}.parquet"
         )
-    return cf, vocab_dir
+    return cf, terms_dir
