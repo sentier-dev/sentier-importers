@@ -56,6 +56,35 @@ def test_a_seed_that_is_not_lists_per_type_is_a_parse_error():
         _source().parse(RawData(content=b"- iri: x\n", source_url="file://seed.yaml"))
 
 
+def _parse(text: str):
+    return _source().parse(RawData(content=text.encode(), source_url="file://seed.yaml"))
+
+
+def test_a_repeated_term_type_block_is_a_parse_error():
+    # PyYAML alone would keep the second block and drop the first without a word.
+    with pytest.raises(ParseError, match="duplicate key 'unit'"):
+        _parse("unit:\n  - iri: a\nprocess:\n  - iri: b\nunit:\n  - iri: c\n")
+
+
+def test_a_repeated_key_inside_a_row_is_a_parse_error():
+    with pytest.raises(ParseError, match="duplicate key 'pref_label'"):
+        _parse("unit:\n  - iri: a\n    pref_label: x\n    pref_label: y\n")
+
+
+def test_a_row_that_is_not_a_mapping_is_a_parse_error():
+    with pytest.raises(ParseError, match="not a mapping"):
+        _parse("unit:\n  - just a string\n")
+
+
+def test_a_row_filed_under_another_type_is_a_parse_error():
+    with pytest.raises(ParseError, match="says type 'process'"):
+        _parse("product:\n  - iri: a\n    type: process\n")
+
+
+def test_a_row_may_repeat_the_type_of_its_block():
+    assert _parse("unit:\n  - iri: a\n    type: unit\n") == [{"iri": "a", "type": "unit"}]
+
+
 def test_release_holds_its_source_term_and_passes_the_contracts(tmp_path):
     terms_file, relations_file = pipeline.run_release("sentier-core", [_source()], _ctx(tmp_path))
     assert terms_file == tmp_path / "o" / "sentier_vocab" / "terms" / "sentier-core.parquet"
