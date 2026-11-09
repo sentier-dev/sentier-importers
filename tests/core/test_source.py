@@ -35,7 +35,7 @@ def test_default_fetch_and_parse(tmp_path):
 
 def test_config_defaults(tmp_path):
     config = _config(tmp_path)
-    assert config.validate_against is None
+    assert config.term_type is None
     assert config.enabled is True
 
 

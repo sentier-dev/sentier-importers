@@ -5,6 +5,9 @@ Commands:
   validate <source>        fetch/parse/transform/validate, no emit or deliver
   run <source> [--deliver] run one source's full pipeline (dry-run unless --deliver)
   run --all [--deliver]    run every enabled source
+  run --release <release> [--deliver]
+                           run every sentier-vocab source of one source release and
+                           deliver its terms/ and relations/ files whole
 """
 
 import argparse
@@ -54,7 +57,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--schema-dir",
         default=None,
-        help="Validate against schemas in this local dir instead of the target's pinned ref.",
+        help="Read the vocab contracts (term.yaml, relation.yaml) from this local dir, and "
+        "the existing terms from the terms/ folder beside it, instead of the target's "
+        "pinned ref.",
     )
 
 
@@ -86,13 +91,33 @@ def cmd_validate(args: argparse.Namespace) -> None:
     print(f"{config.name}: {count} rows valid")
 
 
+def _run_release(release: str, ctx: RunContext) -> None:
+    configs = [
+        config
+        for config in registry.load_registry(data_root=ctx.data_root)
+        if config.term_type is not None and config.category == release
+    ]
+    if not configs:
+        raise SentierImporterError(f"no sentier-vocab source has category {release!r}")
+    try:
+        files = pipeline.run_release(release, [registry.load_source(c) for c in configs], ctx)
+    except MissingInputError as exc:
+        _warn_skipped(exc, release)
+        return
+    for file in files:
+        print(f"wrote {file}")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     ctx = _ctx(args)
+    if args.release:
+        _run_release(args.release, ctx)
+        return
     if args.all:
         configs = [c for c in registry.load_registry(data_root=ctx.data_root) if c.enabled]
     else:
         if not args.source:
-            raise SentierImporterError("run requires a <source> name or --all")
+            raise SentierImporterError("run requires a <source> name, --all or --release")
         configs = [registry.get_config(args.source, data_root=ctx.data_root)]
     for config in configs:
         try:
@@ -119,6 +144,13 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run a source's full pipeline.")
     run.add_argument("source", nargs="?", default=None)
     run.add_argument("--all", action="store_true", help="Run every enabled source.")
+    run.add_argument(
+        "--release",
+        default=None,
+        metavar="RELEASE",
+        help="Run every sentier-vocab source of this source release (their registry "
+        "category, e.g. bafu-2026) and deliver the release whole.",
+    )
     run.add_argument("--deliver", action="store_true", help="Open a PR (default: dry-run).")
     run.add_argument(
         "--deliver-local",

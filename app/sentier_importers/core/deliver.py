@@ -5,12 +5,17 @@ Delivery copies over whatever the target already holds at the same path, no merg
 For inventory targets the category folder is the source folder (``data/<source>-
 <source_version>/``), so a full overwrite is the intended semantics: a run for a
 source rewrites its own folder whole, and sources never share a folder or a file.
+sentier-vocab is delivered one release at a time (``place_release`` /
+``deliver_release``): the release's files in ``terms/`` and ``relations/`` are removed
+and the staged ones copied in, so a release that now needs fewer shards leaves none behind.
 """
 
 import shutil
 import subprocess
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from sentier_importers.core import vocab_layers
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import DeliveryError
 from sentier_importers.core.targets import Target
@@ -56,6 +61,59 @@ def deliver_local(files: list[Path], target: Target, *, category: str, root: Pat
     return dests
 
 
+def place_release(written: Mapping[str, list[Path]], root: Path, release: str) -> list[Path]:
+    """Replace ``release``'s files in a local sentier-vocab checkout — no git, no PR.
+
+    ``written`` maps a layer folder (``terms``, ``relations``) to the staged files of
+    that layer, as returned by ``vocab_layers.write_layers``. In each layer folder
+    under ``root`` every file of ``release`` is deleted before the staged files are
+    copied in; files of other releases are not touched. ``root`` must be an existing
+    directory.
+    """
+    if not root.is_dir():
+        raise DeliveryError(f"local delivery root is not a directory: {root}")
+    dests: list[Path] = []
+    for layer, files in written.items():
+        dest_dir = root / layer
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for old in dest_dir.glob("*.parquet"):
+            if vocab_layers.release_of(old) == release:
+                old.unlink()
+        for file in files:
+            dests.append(Path(shutil.copy2(file, dest_dir / file.name)))
+    return dests
+
+
+def _open_pr(
+    target: Target,
+    *,
+    branch: str,
+    title: str,
+    body: str,
+    ctx: RunContext,
+    place: Callable[[Path], list[str]],
+) -> str:
+    """Clone ``target``, let ``place`` put files into the clone, and open a PR.
+
+    ``place`` receives the clone's root and returns the paths (relative to it) to
+    stage; deletions under those paths are staged too.
+    """
+    workdir = ctx.cache_dir / "delivery" / target.name
+    try:
+        if workdir.exists():
+            shutil.rmtree(workdir)
+        workdir.parent.mkdir(parents=True, exist_ok=True)
+        _run(["git", "clone", "--depth", "1", target.repo, str(workdir)])
+        _run(["git", "checkout", "-b", branch], cwd=workdir)
+        _run(["git", "add", "--all", *place(workdir)], cwd=workdir)
+        _run(["git", "commit", "-m", title], cwd=workdir)
+        _run(["git", "push", "-u", "origin", branch], cwd=workdir)
+        url = _run(["gh", "pr", "create", "--title", title, "--body", body], cwd=workdir)
+        return url.strip()
+    except subprocess.CalledProcessError as exc:
+        raise DeliveryError(f"delivery to {target.name} failed: {exc}") from exc
+
+
 def deliver(
     files: list[Path],
     target: Target,
@@ -74,25 +132,34 @@ def deliver(
     if ctx.dry_run:
         return None
 
-    workdir = ctx.cache_dir / "delivery" / target.name
-    try:
-        if workdir.exists():
-            shutil.rmtree(workdir)
-        workdir.parent.mkdir(parents=True, exist_ok=True)
-        _run(["git", "clone", "--depth", "1", target.repo, str(workdir)])
-        _run(["git", "checkout", "-b", branch], cwd=workdir)
-
+    def place(workdir: Path) -> list[str]:
         dest_dir = workdir / target.output_subdir
         dest_dir.mkdir(parents=True, exist_ok=True)
         for file in files:
             dest = dest_dir / file.name
             _remove_stale_same_stem(dest)
             shutil.copy2(file, dest)
+        return [target.output_subdir]
 
-        _run(["git", "add", target.output_subdir], cwd=workdir)
-        _run(["git", "commit", "-m", title], cwd=workdir)
-        _run(["git", "push", "-u", "origin", branch], cwd=workdir)
-        url = _run(["gh", "pr", "create", "--title", title, "--body", body], cwd=workdir)
-        return url.strip()
-    except subprocess.CalledProcessError as exc:
-        raise DeliveryError(f"delivery to {target.name} failed: {exc}") from exc
+    return _open_pr(target, branch=branch, title=title, body=body, ctx=ctx, place=place)
+
+
+def deliver_release(
+    written: Mapping[str, list[Path]],
+    target: Target,
+    release: str,
+    *,
+    branch: str,
+    title: str,
+    body: str,
+    ctx: RunContext,
+) -> str | None:
+    """Open a PR replacing ``release`` in sentier-vocab. Returns the PR URL, or None in dry-run."""
+    if ctx.dry_run:
+        return None
+
+    def place(workdir: Path) -> list[str]:
+        place_release(written, workdir, release)
+        return list(written)
+
+    return _open_pr(target, branch=branch, title=title, body=body, ctx=ctx, place=place)

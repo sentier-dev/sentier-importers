@@ -119,7 +119,7 @@ def _config(
             "curated": f"file://{root}/curated.json",
             "inferred": f"file://{root}/inferred.json",
             "ef_cfs": f"file://{root}/characterization-factors.parquet",
-            "ef_vocab": f"file://{root}/elementary-flows",
+            "ef_vocab": f"file://{root}/terms",
         },
     )
 

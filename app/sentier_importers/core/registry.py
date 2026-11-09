@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from sentier_importers.core.errors import RegistryError
 from sentier_importers.core.source import Source, SourceConfig
+from sentier_importers.core.targets import TARGETS, VOCAB_CONTRACT
 
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "registry.yaml"
 
@@ -63,7 +64,14 @@ def _to_config(entry: dict, data_root: Path) -> SourceConfig:
             raise RegistryError(
                 f"source {name!r}: access must be one of {ACCESS_VALUES}, got {access!r}"
             )
-        collection = entry.get("collection") or {}
+        term_type = entry.get("term_type")
+        target = TARGETS.get(entry["target"])
+        if target is not None and (target.validator == VOCAB_CONTRACT) != (term_type is not None):
+            raise RegistryError(
+                f"source {name!r}: term_type is required for a {VOCAB_CONTRACT} target "
+                f"and not allowed on any other, got target {target.name!r} with "
+                f"term_type {term_type!r}"
+            )
         dedup = entry.get("dedup") or {}
         package = entry.get("package") or {}
         return SourceConfig(
@@ -74,13 +82,9 @@ def _to_config(entry: dict, data_root: Path) -> SourceConfig:
             fetch_url=_expand(fetch["url"], data_root, name),
             fetch_format=fetch["format"],
             output_format=entry["output_format"],
-            validate_against=entry.get("validate_against"),
             enabled=entry.get("enabled", True),
             emit_filename=entry.get("emit_filename"),
-            collection_class=collection.get("class"),
-            collection_items_key=collection.get("items_key"),
-            collection_scheme=collection.get("scheme"),
-            schema_file=collection.get("schema_file"),
+            term_type=term_type,
             dedup_on_existing=dedup.get("on_existing", "skip"),
             dedup_check_existing=dedup.get("check_existing", True),
             package_name=package.get("name"),

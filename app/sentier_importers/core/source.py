@@ -26,22 +26,20 @@ class SourceConfig:
     fetch_url: str
     fetch_format: str
     output_format: str
-    validate_against: str | None = None
     enabled: bool = True
     # Emitted file name override (without extension). ``None`` ⇒ the source name.
     # Needed when several sources fill one target folder with contract-named files
     # (e.g. sentier-inventory's ``processes.parquet`` / ``exchanges.parquet``).
     emit_filename: str | None = None
-    # Collection (tree-root) emission for vocab targets. ``None`` ⇒ legacy flat-list.
-    collection_class: str | None = None  # tree-root class to validate the collection against
-    collection_items_key: str | None = None  # plural slot holding the items (e.g. "products")
-    collection_scheme: str | None = None  # ConceptScheme IRI for the collection's ``scheme``
-    schema_file: str | None = None  # schema-file id to resolve (decoupled from the class name)
+    # sentier-vocab sources only: the term type every row of this source gets in the
+    # ``type`` column (``elementary-flow``, ``process``, …). ``category`` is then the
+    # source release, the stem of ``terms/<release>.parquet``.
+    term_type: str | None = None
     # Deterministic dedup against the target vocab (see core.dedup).
-    dedup_on_existing: str = "skip"  # skip | error | overwrite
-    dedup_check_existing: bool = True  # Layer B on/off (only active when target has a schema_ref)
+    dedup_on_existing: str = "skip"  # skip | error
+    dedup_check_existing: bool = True  # Layer B on/off (vocab sources only)
     # Randonneur mapping-package emission (sentier_mappings target). ``package_verb`` set ⇒
-    # wrap rows into ``{name, version, <verb>: rows}`` instead of a vocab collection.
+    # wrap rows into ``{name, version, <verb>: rows}``.
     package_name: str | None = None
     package_version: str | None = None
     # replace | update | delete | create | review | coverage (sidecars)

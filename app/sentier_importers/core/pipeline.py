@@ -1,66 +1,51 @@
 """Pipeline driver: run a source through
-fetch → parse → transform → dedup → assemble → validate → emit → deliver."""
+fetch → parse → transform → dedup → assemble → validate → emit → deliver.
+
+A sentier-vocab source is one *part* of a source release: the release is what gets
+delivered, as ``terms/<release>[-NN].parquet`` and ``relations/<release>.parquet``.
+``run_source`` stages a part for inspection only; ``run_release`` runs every part of
+a release, validates the whole against the vocab contracts and delivers it.
+"""
 
 from pathlib import Path
 
 from sentier_importers.core import dedup as dedup_mod
 from sentier_importers.core import deliver as deliver_mod
-from sentier_importers.core import schema_provider
-from sentier_importers.core import validate as validate_mod
+from sentier_importers.core import schema_provider, vocab_contract, vocab_layers
 from sentier_importers.core import write as write_mod
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import FetchError, ValidationError
+from sentier_importers.core.errors import DeliveryError, FetchError, RegistryError
 from sentier_importers.core.registry import DATA_ROOT_VAR
 from sentier_importers.core.source import Source, SourceConfig
-from sentier_importers.core.targets import Target, get_target
+from sentier_importers.core.targets import VOCAB_CONTRACT, Target, get_target
 from sentier_importers.core.types import Payload, Rows
+
+#: Staging folder, under ``<output_dir>/<target>/``, of single vocab parts.
+PARTS_DIR = "parts"
 
 
 def _assemble(rows: Rows, config: SourceConfig) -> Payload:
-    """Wrap rows into a ``{scheme, <items_key>: [...]}`` collection, or pass through.
-
-    Returns ``rows`` unchanged for bulk/non-collection targets (``collection_class``
-    unset); a randonneur mapping package when ``package_verb`` is set; otherwise the
-    assembled collection mapping matching ``data/<category>/*``.
-    """
+    """Wrap rows into a randonneur mapping package when ``package_verb`` is set,
+    else pass them through."""
     if config.package_verb is not None:
         return {
             "name": config.package_name,
             "version": config.package_version,
             config.package_verb: rows,
         }
-    if config.collection_class is None:
-        return rows
-    return {"scheme": config.collection_scheme, config.collection_items_key: rows}
+    return rows
 
 
-def _validate(payload: Payload, config: SourceConfig, target: Target, ctx: RunContext) -> None:
-    """Validate the assembled collection (tree-root) or each row (legacy per-item)."""
-    if config.collection_class is not None:
-        if config.schema_file is None:
-            raise ValidationError(
-                f"source {config.name!r} sets a collection but no schema_file to resolve"
-            )
-        schema_path = schema_provider.resolve_schema(target, config.schema_file, ctx)
-        validate_mod.validate(payload, "linkml_collection", schema_path, config.collection_class)
-    elif config.validate_against is not None:
-        schema_path = schema_provider.resolve_schema(target, config.validate_against, ctx)
-        validate_mod.validate(payload, target.validator, schema_path, config.validate_against)
+def _is_vocab(target: Target) -> bool:
+    return target.validator == VOCAB_CONTRACT
 
 
-def _arrow_schema(config: SourceConfig, target: Target, ctx: RunContext):
-    """Explicit Arrow schema for a Parquet collection target, else None.
-
-    Built from the item class (``validate_against``) in the resolved LinkML schema, so
-    optional columns are never dropped. The schema fetch is a cache hit (already pulled
-    during validation). Non-parquet or non-collection targets need no schema.
-    """
-    if config.output_format != "parquet" or config.collection_class is None:
-        return None
-    if config.schema_file is None or config.validate_against is None:
-        return None
-    schema_path = schema_provider.resolve_schema(target, config.schema_file, ctx)
-    return write_mod.arrow_schema_for(schema_path, config.validate_against)
+def _contract(target: Target, ctx: RunContext) -> vocab_contract.Contract:
+    """The vocab term and relation contracts at the target's pinned ref."""
+    return vocab_contract.load_contract(
+        schema_provider.resolve_schema(target, "term", ctx),
+        schema_provider.resolve_schema(target, "relation", ctx),
+    )
 
 
 #: What to do about a missing local input, by the source's ``access`` class.
@@ -105,31 +90,65 @@ def _fetch(source: Source, ctx: RunContext):
         raise _with_input_context(exc, source.config, ctx) from exc
 
 
-def _produce(source: Source, ctx: RunContext) -> tuple[Rows, Payload, Target]:
-    """Run fetch → parse → transform → dedup → assemble → validate.
-
-    Returns the deduped rows, the emit-ready payload, and the resolved target.
-    """
-    config = source.config
-    target = get_target(config.target)
+def _rows(source: Source, target: Target, ctx: RunContext) -> Rows:
+    """Run fetch → parse → transform → dedup."""
     rows = source.transform(source.parse(_fetch(source, ctx)))
-    rows = dedup_mod.dedup(rows, config, target, ctx)
-    payload = _assemble(rows, config)
-    _validate(payload, config, target, ctx)
-    return rows, payload, target
+    return dedup_mod.dedup(rows, source.config, target, ctx)
+
+
+def _vocab_part(source: Source, target: Target, ctx: RunContext) -> tuple[Rows, Rows]:
+    """One vocab source's rows as ``(term rows, relation rows)`` of its release."""
+    config = source.config
+    return vocab_layers.to_layers(
+        _rows(source, target, ctx),
+        term_type=config.term_type,
+        release=config.category,
+        contract=_contract(target, ctx),
+    )
 
 
 def validate_source(source: Source, ctx: RunContext) -> int:
     """Run the pipeline up to and including validation; return the row count."""
-    rows, _, _ = _produce(source, ctx)
-    return len(rows)
+    config = source.config
+    target = get_target(config.target)
+    if not _is_vocab(target):
+        return len(_rows(source, target, ctx))
+    terms, relations = _vocab_part(source, target, ctx)
+    vocab_contract.validate(
+        terms, relations, _contract(target, ctx), release=config.category, complete=False
+    )
+    return len(terms)
+
+
+def _run_vocab_part(source: Source, target: Target, ctx: RunContext) -> Path:
+    config = source.config
+    if ctx.deliver_local_root is not None or not ctx.dry_run:
+        raise DeliveryError(
+            f"source {config.name!r} is one part of the vocab release {config.category!r}; "
+            f"a release is delivered whole: run --release {config.category}"
+        )
+    terms, relations = _vocab_part(source, target, ctx)
+    vocab_contract.validate(
+        terms, relations, _contract(target, ctx), release=config.category, complete=False
+    )
+    root = ctx.output_dir / config.target / PARTS_DIR / config.name
+    return vocab_layers.write_layers(terms, relations, root, config.category)[
+        vocab_layers.TERMS_DIR
+    ][0]
 
 
 def run_source(source: Source, ctx: RunContext) -> Path:
-    """Run the full pipeline. Emits to ``output_dir``; delivers a PR unless dry-run."""
-    config = source.config
-    _, payload, target = _produce(source, ctx)
+    """Run the full pipeline. Emits to ``output_dir``; delivers a PR unless dry-run.
 
+    A vocab source is staged as its two layer files under
+    ``<output_dir>/<target>/parts/<source>/`` and is never delivered on its own.
+    """
+    config = source.config
+    target = get_target(config.target)
+    if _is_vocab(target):
+        return _run_vocab_part(source, target, ctx)
+
+    payload = _assemble(_rows(source, target, ctx), config)
     filename = config.emit_filename or config.name
     out_path = (
         ctx.output_dir
@@ -137,8 +156,7 @@ def run_source(source: Source, ctx: RunContext) -> Path:
         / config.category
         / f"{filename}{write_mod.EXTENSIONS[config.output_format]}"
     )
-    arrow_schema = _arrow_schema(config, target, ctx)
-    write_mod.write(payload, out_path, config.output_format, arrow_schema)
+    write_mod.write(payload, out_path, config.output_format)
 
     if ctx.deliver_local_root is not None:
         deliver_mod.deliver_local(
@@ -155,3 +173,47 @@ def run_source(source: Source, ctx: RunContext) -> Path:
             ctx=ctx,
         )
     return out_path
+
+
+def run_release(release: str, sources: list[Source], ctx: RunContext) -> list[Path]:
+    """Run every part of the vocab release ``release`` and deliver it whole.
+
+    ``sources`` are the registry's sources whose ``category`` is ``release``; they
+    must share one vocab target. Stages ``terms/<release>[-NN].parquet`` and
+    ``relations/<release>.parquet`` under ``<output_dir>/<target>/``, then places
+    them into ``ctx.deliver_local_root`` and/or opens a PR, replacing the release's
+    previous files. Returns the staged files.
+    """
+    targets = {source.config.target for source in sources}
+    if len(targets) != 1 or any(source.config.category != release for source in sources):
+        raise RegistryError(
+            f"release {release!r} needs at least one source, all with category "
+            f"{release!r} and the same target"
+        )
+    target = get_target(targets.pop())
+    if not _is_vocab(target):
+        raise RegistryError(f"target {target.name!r} is not delivered per release")
+
+    terms: Rows = []
+    relations: Rows = []
+    for source in sources:
+        part_terms, part_relations = _vocab_part(source, target, ctx)
+        terms.extend(part_terms)
+        relations.extend(part_relations)
+    vocab_contract.validate(
+        terms, relations, _contract(target, ctx), release=release, complete=True
+    )
+    written = vocab_layers.write_layers(terms, relations, ctx.output_dir / target.name, release)
+
+    if ctx.deliver_local_root is not None:
+        deliver_mod.place_release(written, ctx.deliver_local_root, release)
+    deliver_mod.deliver_release(
+        written,
+        target,
+        release,
+        branch=f"import/{release}",
+        title=f"Import {release}",
+        body=f"Automated import of the {release} release by sentier_importers.",
+        ctx=ctx,
+    )
+    return [path for files in written.values() for path in files]

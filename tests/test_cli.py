@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 import sentier_importers.__main__ as cli
 
@@ -130,3 +132,61 @@ def test_run_all_skips_missing_input_sources_and_continues(tmp_path, monkeypatch
     assert "skipped needs-private-file" in captured.err
     assert (tmp_path / "o" / "sentier_inventory" / "example" / "example-csv.json").exists()
     assert "wrote" in captured.out
+
+
+# --- sentier-vocab releases ---------------------------------------------------
+
+VOCAB_SCHEMAS = str(Path(__file__).parent / "core" / "fixtures" / "vocab")
+
+
+def _release_args(tmp_path, *extra):
+    return [
+        "run",
+        *extra,
+        "--schema-dir",
+        VOCAB_SCHEMAS,
+        "--cache-dir",
+        str(tmp_path / "c"),
+        "--output-dir",
+        str(tmp_path / "o"),
+    ]
+
+
+def test_run_release_stages_the_two_layers(tmp_path, monkeypatch, capsys):
+    # the provenance source needs no input, so the release can be built anywhere
+    source_only = [cli.registry.get_config("bafu-2026-source")]
+    monkeypatch.setattr(cli.registry, "load_registry", lambda *a, **k: source_only)
+    cli.main(_release_args(tmp_path, "--release", "bafu-2026"))
+    staged = tmp_path / "o" / "sentier_vocab" / "terms" / "bafu-2026.parquet"
+    assert staged.exists()
+    assert f"wrote {staged}" in capsys.readouterr().out
+
+
+def test_run_release_delivers_into_a_local_checkout(tmp_path, monkeypatch):
+    source_only = [cli.registry.get_config("bafu-2026-source")]
+    monkeypatch.setattr(cli.registry, "load_registry", lambda *a, **k: source_only)
+    clone = tmp_path / "sentier-vocab"
+    clone.mkdir()
+    cli.main(_release_args(tmp_path, "--release", "bafu-2026", "--deliver-local", str(clone)))
+    assert (clone / "terms" / "bafu-2026.parquet").exists()
+
+
+def test_run_release_unknown_release_exits_nonzero(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(_release_args(tmp_path, "--release", "nope-1"))
+    assert exc.value.code != 0
+
+
+def test_run_release_with_a_missing_input_is_skipped_whole(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("SENTIER_DATA_ROOT", str(tmp_path))  # no BAFU archive here
+    cli.main(_release_args(tmp_path, "--release", "bafu-2026"))
+    captured = capsys.readouterr()
+    assert "skipped bafu-2026" in captured.err
+    assert not (tmp_path / "o" / "sentier_vocab" / "terms").exists()
+
+
+def test_a_vocab_source_cannot_be_delivered_on_its_own(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(_release_args(tmp_path, "bafu-2026-source", "--deliver-local", str(tmp_path)))
+    assert exc.value.code != 0
+    assert "run --release bafu-2026" in capsys.readouterr().err

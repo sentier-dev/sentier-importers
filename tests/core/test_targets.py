@@ -11,10 +11,11 @@ def test_known_targets_present():
         assert name in targets_mod.TARGETS
 
 
-def test_vocab_target_uses_linkml_and_is_pinned():
+def test_vocab_target_uses_the_contracts_and_is_pinned():
     vocab = targets_mod.get_target("sentier_vocab")
-    assert vocab.validator == "linkml"
+    assert vocab.validator == targets_mod.VOCAB_CONTRACT
     assert vocab.schema_ref is not None
+    assert vocab.output_subdir == ""  # terms/ and relations/ sit at the repo root
 
 
 def test_bulk_target_has_no_schema():

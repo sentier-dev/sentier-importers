@@ -1,7 +1,7 @@
-"""BAFU-2026 elementary flows -> ``sentier_vocab`` (elementary-flows).
+"""BAFU-2026 elementary flows -> ``sentier_vocab`` (terms of type ``elementary-flow``).
 
 The distinct biosphere flows across all exchanges (name × category ×
-subCategory), with the deterministic uuid5 id shared with the inventory
+subCategory × unit), with the deterministic uuid5 id shared with the inventory
 ``exchanges.flow`` column. Dedup is ``on_existing: skip`` in the registry so
 curated EF 3.1/ENVO terms are never clobbered.
 """
@@ -16,29 +16,21 @@ FLOWS_SCHEME = "https://vocab.sentier.dev/flows/"
 
 
 class BafuVocabFlowsSource(Source):
-    """Map distinct BAFU biosphere flows into ``ElementaryFlow`` terms, one file per compartment.
+    """Map the distinct BAFU biosphere flows into elementary-flow terms.
 
-    ``emit_filename`` is the compartment slug (``emissions-to-air``,
-    ``resources``, …): each registry entry emits only that compartment's flows,
-    so the delivered files are named by content, never by source. Without
-    ``emit_filename`` the source emits every distinct flow.
+    The compartment is an attribute of the term; every flow of the release is
+    emitted by this one source.
     """
 
     def parse(self, raw: RawData) -> Records:
         return ecospold.parse_ecospold_zip(raw)
 
     def transform(self, records: Records) -> Rows:
-        compartment = self.config.emit_filename
         rows: Rows = []
         seen: set[str] = set()
         for record in records:
             for exchange in record["exchanges"]:
                 if exchange["group_code"] != 4:  # FromNature / ToNature only
-                    continue
-                if (
-                    compartment
-                    and ecospold.compartment_slug(exchange["category"] or "") != compartment
-                ):
                     continue
                 fid = ecospold.flow_id(
                     exchange["name"],

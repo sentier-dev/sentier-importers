@@ -1,0 +1,34 @@
+# The one relation schema of sentier-vocab. One row per directed edge from a
+# vocab term to a vocab term or to an allow-listed external IRI.
+version: 1.0.0
+description: One row per directed edge between a vocab term and a term or an allow-listed external IRI.
+
+prefixes:
+  skos: http://www.w3.org/2004/02/skos/core#
+  ont: https://vocab.sentier.dev/ontology/
+  qudt: http://qudt.org/schema/qudt/
+
+columns:
+  subject:   {type: string, required: true}
+  predicate: {type: string, required: true, enum: predicates}
+  object:    {type: string, required: true}
+  source:    {type: string, required: true}
+  status:    {type: string, enum: [draft, published, deprecated]}
+
+# 'subject' and 'object' name term types, 'any' (any term), or 'external' (only an
+# external IRI). 'external' lists the IRI prefixes an object may carry instead
+# of a term. 'max_one_per_subject' forbids a second edge from the same subject.
+# The predicates are exactly the properties the TTL emitted before the migration.
+predicates:
+  skos:broader:              {subject: any, object: any}
+  skos:related:              {subject: any, object: any}
+  skos:exactMatch:           {subject: any, object: external, external: [http://purl.obolibrary.org/obo/]}
+  skos:closeMatch:           {subject: any, object: external, external: [http://purl.obolibrary.org/obo/]}
+  qudt:hasUnit:              {subject: [elementary-flow, impact-category, unit-group, flow-property, model-term], object: unit, external: [http://qudt.org/vocab/unit/], max_one_per_subject: true}
+  ont:hasUnit:               {subject: unit-group, object: unit, external: [http://qudt.org/vocab/unit/]}
+  qudt:hasQuantityKind:      {subject: [unit-group, model-term], object: external, external: [http://qudt.org/vocab/quantitykind/]}
+  ont:method:                {subject: impact-category, object: lcia-method}
+  ont:impactCategory:        {subject: lcia-method, object: impact-category}
+  ont:defaultUnitGroup:      {subject: flow-property, object: unit-group}
+  ont:referenceFlowProperty: {subject: product, object: flow-property}
+  ont:geography:             {subject: process, object: external, external: [https://sws.geonames.org/]}

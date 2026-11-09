@@ -1,4 +1,4 @@
-"""Deterministic, in-repo dedup — supersedes the deferred ``sentier_mappings`` layer.
+"""Deterministic dedup of a source's rows.
 
 A term's identity is its ``iri``. Sources mint IRIs deterministically from a stable
 source key via :func:`slugify`, so re-running a source yields identical IRIs. The
@@ -6,20 +6,25 @@ source key via :func:`slugify`, so re-running a source yields identical IRIs. Th
 
 - **Layer A (intra-source, always on):** collapse identical same-``iri`` rows, raise on
   conflicting same-``iri`` rows (a transform bug), warn on same-label/different-``iri``.
-- **Layer B (against the target vocab, default on for schema-bearing targets):** read the
-  target's existing ``data/<category>/*.yaml`` collections at the pinned ref and apply an
-  ``on_existing`` policy (``skip`` | ``error`` | ``overwrite``) to colliding IRIs.
+- **Layer B (against the target vocab, default on for vocab sources):** read the IRIs
+  of every *other* release in the target's ``terms/`` folder at the pinned ref and apply
+  an ``on_existing`` policy (``skip`` | ``error``) to colliding IRIs. A release replaces
+  its own files whole, so its own previous delivery is never a collision; an IRI that
+  another release already delivers can only be skipped or refused, because sentier-vocab
+  rejects an IRI that appears in two files.
 
 No fuzzy matching, no external files — fully deterministic and offline-testable.
 """
 
+import io
 import re
 import unicodedata
 
 import orjson
-import yaml
+import pyarrow.parquet as pq
 from loguru import logger
 from sentier_importers.core import fetch as fetch_mod
+from sentier_importers.core import vocab_layers
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.source import SourceConfig
@@ -76,67 +81,49 @@ def _dedup_intra(rows: Rows) -> Rows:
     return result
 
 
-def _existing_index(
-    target: Target, category: str, items_key: str, ctx: RunContext
-) -> tuple[set[str], dict[str, str]]:
-    """Read the target's ``data/<category>`` collections at the pinned ref.
+def _existing_iris(target: Target, release: str, ctx: RunContext) -> set[str]:
+    """IRIs the target already holds in the term files of every release but ``release``.
 
-    Lists the directory via the GitHub contents API and fetches each ``*.yaml`` file,
-    all through the cached fetcher so CI can run offline against a seeded cache. The
-    directory is the ``category`` (the on-disk data folder), while ``items_key`` is the
-    plural slot each collection stores its items under — the two differ when they must
-    (e.g. category ``elementary-flows`` / items_key ``flows``).
-    Returns the set of existing IRIs and a normalized-label → IRI index.
+    With ``ctx.schema_dir`` set (the ``schemas/`` folder of a local sentier-vocab
+    checkout) the ``terms/`` folder beside it is read. Otherwise the folder is listed
+    via the GitHub contents API at the pinned ref and each file fetched, all through
+    the cached fetcher so tests can run offline against a seeded cache.
     """
+    if ctx.schema_dir is not None:
+        return vocab_layers.read_iris(
+            ctx.schema_dir.parent / vocab_layers.TERMS_DIR, skip_release=release
+        )
+
     repo = target.repo.removesuffix(".git").removeprefix("https://github.com/")
     listing_url = (
-        f"https://api.github.com/repos/{repo}/contents/data/{category}?ref={target.schema_ref}"
+        f"https://api.github.com/repos/{repo}/contents/{vocab_layers.TERMS_DIR}"
+        f"?ref={target.schema_ref}"
     )
     entries = orjson.loads(fetch_mod.fetch(listing_url, ctx).content)
 
     iris: set[str] = set()
-    labels: dict[str, str] = {}
     for entry in entries:
         name = entry.get("name", "")
-        if not name.endswith((".yaml", ".yml")):
+        if not name.endswith(".parquet") or vocab_layers.release_of(name) == release:
             continue
-        collection = yaml.safe_load(fetch_mod.fetch(entry["download_url"], ctx).content) or {}
-        for item in collection.get(items_key, []) or []:
-            iri = item.get("iri")
-            if iri is not None:
-                iris.add(iri)
-            label = item.get("pref_label")
-            if label is not None and iri is not None:
-                labels.setdefault(_normalize_label(label), iri)
-    return iris, labels
+        content = fetch_mod.fetch(entry["download_url"], ctx).content
+        iris.update(pq.read_table(io.BytesIO(content), columns=["iri"]).column("iri").to_pylist())
+    return iris
 
 
-def _dedup_against_existing(
-    rows: Rows, existing_iris: set[str], existing_labels: dict[str, str], on_existing: str
-) -> Rows:
-    """Layer B: apply the ``on_existing`` policy to IRIs already in the target."""
-    if on_existing not in {"skip", "error", "overwrite"}:
+def _dedup_against_existing(rows: Rows, existing_iris: set[str], on_existing: str) -> Rows:
+    """Layer B: apply the ``on_existing`` policy to IRIs another release already delivers."""
+    if on_existing not in {"skip", "error"}:
         raise ValidationError(f"unknown on_existing policy: {on_existing!r}")
 
     result: Rows = []
     for row in rows:
         iri = row.get("iri")
         if iri in existing_iris:
-            if on_existing == "skip":
-                continue  # idempotent re-import — drop the already-present term
             if on_existing == "error":
                 raise ValidationError(f"iri already exists in target vocab: {iri!r}")
-            # overwrite — keep the imported version (source is authoritative)
+            continue  # skip: the other release keeps the term
         result.append(row)
-
-        label = row.get("pref_label")
-        if label is not None:
-            existing_iri = existing_labels.get(_normalize_label(label))
-            if existing_iri is not None and existing_iri != iri:
-                logger.warning(
-                    f"cross-source label collision: {label!r} ({iri!r}) shares a label with "
-                    f"existing {existing_iri!r}; not auto-merging — set crosswalk links explicitly"
-                )
     return result
 
 
@@ -147,13 +134,9 @@ def dedup(rows: Rows, config: SourceConfig, target: Target, ctx: RunContext) -> 
     layer_b_active = (
         config.dedup_check_existing
         and target.schema_ref is not None
-        and config.collection_items_key is not None
+        and config.term_type is not None
     )
     if layer_b_active:
-        existing_iris, existing_labels = _existing_index(
-            target, config.category, config.collection_items_key, ctx
-        )
-        rows = _dedup_against_existing(
-            rows, existing_iris, existing_labels, config.dedup_on_existing
-        )
+        existing_iris = _existing_iris(target, config.category, ctx)
+        rows = _dedup_against_existing(rows, existing_iris, config.dedup_on_existing)
     return rows
