@@ -12,7 +12,12 @@ import pytest
 from sentier_importers.core import registry as registry_mod
 from sentier_importers.core import vocab_layers
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import FetchError, ParseError, ValidationError
+from sentier_importers.core.errors import (
+    FetchError,
+    MissingInputError,
+    ParseError,
+    ValidationError,
+)
 from sentier_importers.core.pipeline import _assemble
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.sources.randonneur_data.ecoinvent_ef_biosphere import (
@@ -169,11 +174,83 @@ def test_entry_without_a_uuid_is_an_error(tmp_path):
         _rows(tmp_path, entries)
 
 
+def _source_and_ctx(tmp_path, upstream, terms_dir):
+    src = EcoinventEfBiosphereSource(_config(upstream, terms_dir))
+    return src, RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+
+
+def test_match_rule_and_vocab_flag_are_joined(tmp_path):
+    entries = [_upstream("kg", {"uuid": "ef-not-in-vocab"}, comment="Manual name match")]
+    rows, _ = _rows(tmp_path, entries)
+    assert rows[0]["comment"] == f"Manual name match; {NO_VOCAB_TERM}"
+
+
+def test_target_unit_is_emitted_as_upstream_spells_it(tmp_path):
+    rows, _ = _rows(tmp_path, [_upstream("m2*a", {"unit_name": "m2*year"})])
+    assert rows[0]["target"]["unit"] == "m2*year"
+    assert "conversion_factor" not in rows[0]
+
+
+def test_entry_without_a_source_uuid_is_an_error(tmp_path):
+    with pytest.raises(ValidationError, match="uuid"):
+        _rows(tmp_path, [_upstream("kg", {}, uuid=None)])
+
+
+def test_entry_without_a_target_name_is_an_error(tmp_path):
+    with pytest.raises(ValidationError, match="target name"):
+        _rows(tmp_path, [_upstream("kg", {"name": None})])
+
+
+@pytest.mark.parametrize("factor", [0, -1.0, "nine", float("nan")])
+def test_conversion_factor_must_be_a_positive_number(tmp_path, factor):
+    entries = [_upstream("kg", {"unit_name": "MJ"}, conversion_factor=factor)]
+    with pytest.raises(ValidationError, match="conversion_factor"):
+        _rows(tmp_path, entries)
+
+
+def test_transform_keeps_no_state_from_parse(tmp_path):
+    src, _ = _source_and_ctx(tmp_path, *_write_inputs(tmp_path))
+    rows = src.transform(ENTRIES)  # parse() never ran
+    assert "comment" not in rows[3] and rows[1]["comment"] == NO_VOCAB_TERM
+
+
 def test_vocab_folder_must_be_declared(tmp_path):
     upstream, _ = _write_inputs(tmp_path)
     src = EcoinventEfBiosphereSource(replace(_config(upstream, "unused"), inputs={}))
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     with pytest.raises(FetchError, match="ef_vocab"):
+        src.fetch(ctx)
+
+
+def test_missing_vocab_folder_is_a_missing_input(tmp_path):
+    upstream, _ = _write_inputs(tmp_path)
+    src, ctx = _source_and_ctx(tmp_path, upstream, tmp_path / "nowhere")
+    with pytest.raises(MissingInputError, match="nowhere"):
+        src.fetch(ctx)
+
+
+def test_vocab_folder_without_flow_terms_does_not_flag_every_entry(tmp_path):
+    upstream, _ = _write_inputs(tmp_path)
+    empty = tmp_path / "empty-terms"
+    empty.mkdir()
+    src, ctx = _source_and_ctx(tmp_path, upstream, empty)
+    with pytest.raises(MissingInputError, match="no elementary-flow term"):
+        src.transform(src.parse(src.fetch(ctx)))
+
+
+def test_truncated_download_is_a_parse_error(tmp_path):
+    upstream, terms_dir = _write_inputs(tmp_path)
+    upstream.write_bytes(upstream.read_bytes()[:40])
+    src, ctx = _source_and_ctx(tmp_path, upstream, terms_dir)
+    with pytest.raises(ParseError, match="gzipped randonneur package"):
+        src.parse(src.fetch(ctx))
+
+
+def test_replace_that_is_not_a_list_of_entries_is_a_parse_error(tmp_path):
+    upstream, terms_dir = _write_inputs(tmp_path)
+    upstream.write_bytes(gzip.compress(json.dumps({"replace": {"a": 1}}).encode()))
+    src, ctx = _source_and_ctx(tmp_path, upstream, terms_dir)
+    with pytest.raises(ParseError, match="not a list of entries"):
         src.parse(src.fetch(ctx))
 
 
