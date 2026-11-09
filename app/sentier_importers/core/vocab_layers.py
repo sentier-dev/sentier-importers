@@ -22,7 +22,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.types import Record, Rows
-from sentier_importers.core.vocab_contract import SOURCE_TYPE, Contract
+from sentier_importers.core.vocab_contract import Contract
 
 TERMS_DIR = "terms"
 RELATIONS_DIR = "relations"
@@ -30,6 +30,9 @@ RELATIONS_DIR = "relations"
 MAX_FILE_BYTES = 2_400_000
 COMPRESSION = "snappy"
 DEFAULT_STATUS = "draft"
+#: ``term_type`` of a source whose rows are of several types: each row names its own
+#: in a ``type`` slot (the hand-curated sentier-core seed).
+ROW_TYPE = "per-row"
 
 TERM_SCHEMA = pa.schema(
     [
@@ -66,10 +69,21 @@ COMMON_RELATION_SLOTS = {
 
 #: IRI-valued slots of one term type, with the predicate sentier-vocab stores them under.
 TYPE_RELATION_SLOTS: dict[str, dict[str, str]] = {
+    "elementary-flow": {"unit": "qudt:hasUnit"},
+    "flow-property": {
+        "default_unit_group": "ont:defaultUnitGroup",
+        "default_unit": "qudt:hasUnit",
+    },
     "impact-category": {"reference_unit": "qudt:hasUnit", "method": "ont:method"},
     "lcia-method": {"impact_categories": "ont:impactCategory"},
+    "model-term": {"quantity_kind": "qudt:hasQuantityKind", "unit": "qudt:hasUnit"},
     "process": {"geography": "ont:geography"},
     "product": {"reference_flow_property": "ont:referenceFlowProperty"},
+    "unit-group": {
+        "reference_unit": "qudt:hasUnit",
+        "units": "ont:hasUnit",
+        "quantity_kind": "qudt:hasQuantityKind",
+    },
 }
 
 _SHARD_SUFFIX = re.compile(r"-\d{2}$")
@@ -92,8 +106,7 @@ def _split(row: Record, term_type: str, source: str, contract: Contract) -> tupl
     declared = contract.types[term_type].attributes
     relation_slots = {**COMMON_RELATION_SLOTS, **TYPE_RELATION_SLOTS.get(term_type, {})}
     present = {slot: value for slot, value in row.items() if _present(value)}
-    # A source term is delivered by its own release, so it is its own source.
-    term_source = present.get("iri") if term_type == SOURCE_TYPE else present.get("source", source)
+    term_source = present.get("source", source)
     status = present.get("status", DEFAULT_STATUS)
 
     term: Record = {}
@@ -126,17 +139,38 @@ def _split(row: Record, term_type: str, source: str, contract: Contract) -> tupl
     return term, relations
 
 
+def _type_of(row: Record, term_type: str, contract: Contract) -> str:
+    """The term type of ``row``: the source's one type, or the row's own for ``ROW_TYPE``."""
+    own = row.get("type")
+    if term_type != ROW_TYPE:
+        if own not in (None, term_type):
+            raise ValidationError(
+                f"{row.get('iri')}: row sets 'type' {own!r} but its source emits {term_type!r}"
+            )
+        return term_type
+    if own is None:
+        raise ValidationError(f"{row.get('iri')}: row of a mixed-type source names no type")
+    if own not in contract.types:
+        raise ValidationError(f"{row.get('iri')}: type {own!r} is not listed in the term contract")
+    return own
+
+
 def to_layers(
     rows: Rows, *, term_type: str, release: str, contract: Contract
 ) -> tuple[Rows, Rows]:
-    """Split a source's flat rows into ``(term rows, relation rows)`` for ``release``."""
-    if term_type not in contract.types:
+    """Split a source's flat rows into ``(term rows, relation rows)`` for ``release``.
+
+    Every row gets the release's source term as ``source`` unless it names one.
+    ``term_type`` is the type of every row, or ``ROW_TYPE`` when each row carries its
+    own in a ``type`` slot.
+    """
+    if term_type != ROW_TYPE and term_type not in contract.types:
         raise ValidationError(f"term type {term_type!r} is not listed in the vocab term contract")
     source = contract.sources_namespace + release
     terms: Rows = []
     relations: Rows = []
     for row in rows:
-        term, edges = _split(row, term_type, source, contract)
+        term, edges = _split(row, _type_of(row, term_type, contract), source, contract)
         terms.append(term)
         relations.extend(edges)
     return terms, relations
