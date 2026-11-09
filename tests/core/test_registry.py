@@ -121,10 +121,13 @@ def test_term_type_belongs_to_vocab_sources_only(tmp_path, target, term_type_lin
 
 def test_real_registry_vocab_sources_name_a_release_and_a_term_type():
     vocab = [c for c in registry_mod.load_registry() if c.target == "sentier_vocab"]
-    assert {c.category for c in vocab} == {"foodex2", "agribalyse-3.2", "ef-3.1", "bafu-2026"}
-    # every release delivers its own source term
-    for release in {c.category for c in vocab}:
-        assert [c.term_type for c in vocab if c.category == release].count("source") == 1
+    releases = {c.category for c in vocab}
+    assert releases == {"sentier-core", "foodex2", "agribalyse-3.2", "ef-3.1", "bafu-2026"}
+    # every release delivers its own source term: a block of type source, or a seed
+    # whose rows name their own types
+    for release in releases:
+        types = [c.term_type for c in vocab if c.category == release]
+        assert types.count("source") == 1 or types == ["per-row"]
     assert all(c.emit_filename is None for c in vocab)
 
 

@@ -4,10 +4,12 @@ from pathlib import Path
 
 import orjson
 import pyarrow.parquet as pq
+import pytest
 from sentier_importers.core import pipeline
 from sentier_importers.core.context import RunContext
+from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.source import SourceConfig
-from sentier_importers.sources.bafu import ecospold
+from sentier_importers.sources.bafu import ecospold, units
 from sentier_importers.sources.bafu.provenance import BAFU_PROVENANCE_IRI, BafuProvenance
 from sentier_importers.sources.bafu.vocab_flows import BafuVocabFlowsSource
 from sentier_importers.sources.bafu.vocab_processes import BafuVocabProcessesSource
@@ -66,6 +68,8 @@ def test_vocab_flows_distinct_biosphere_terms():
     assert co2["compartment"] == "emissions to air"
     assert co2["sub_compartment"] == "unspecified"
     assert co2["cas_number"] == "000124-38-9"
+    assert co2["unit"] == "http://qudt.org/vocab/unit/KiloGM"
+    assert co2["additional_notations"] == ["bafu-unit:kg"]  # the uuid5 input stays readable
     assert co2["source"] == BAFU_PROVENANCE_IRI
     water = next(r for r in rows if r["pref_label"] == "Water, river")
     assert water["compartment"] == "resources"
@@ -82,7 +86,7 @@ def test_run_release_writes_the_whole_bafu_release(tmp_path):
         BafuVocabFlowsSource(_cfg("bafu-vocab-flows", "elementary-flow", "vocab_flows", url)),
     ]
     ctx = RunContext(cache_dir=tmp_path / "c", output_dir=tmp_path / "o", schema_dir=VOCAB_SCHEMAS)
-    (out,) = pipeline.run_release("bafu-2026", sources, ctx)  # no relations yet
+    out, relations_file = pipeline.run_release("bafu-2026", sources, ctx)
 
     assert out == tmp_path / "o" / "sentier_vocab" / "terms" / "bafu-2026.parquet"
     terms = pq.read_table(out).to_pylist()
@@ -96,3 +100,24 @@ def test_run_release_writes_the_whole_bafu_release(tmp_path):
     }
     process = next(t for t in terms if t["notation"] == UUID_ELEC)
     assert orjson.loads(process["attributes"]) == {"process_type": "unit"}
+    # every flow, and only flows, has exactly one unit edge
+    edges = pq.read_table(relations_file).to_pylist()
+    flows = {t["iri"] for t in terms if t["type"] == "elementary-flow"}
+    assert {e["predicate"] for e in edges} == {"qudt:hasUnit"}
+    assert sorted(e["subject"] for e in edges) == sorted(flows)
+    assert (co2["iri"], "http://qudt.org/vocab/unit/KiloGM") in {
+        (e["subject"], e["object"]) for e in edges
+    }
+
+
+def test_every_unit_maps_to_qudt_or_to_a_sentier_unit():
+    assert all(iri.startswith((units.QUDT, units.SENTIER)) for iri in units.UNIT_IRI.values())
+    assert units.unit_iri("Nm3") == "http://qudt.org/vocab/unit/NCM"
+    assert units.unit_iri("m2a") == "https://vocab.sentier.dev/units/unit/M2-YR"
+    # Bq and kBq twins must stay distinguishable by their unit edge
+    assert units.unit_iri("Bq") != units.unit_iri("kBq")
+
+
+def test_an_unmapped_unit_is_an_error_not_a_missing_edge():
+    with pytest.raises(ValidationError, match="'furlong'"):
+        units.unit_iri("furlong")

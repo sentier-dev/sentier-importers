@@ -8,7 +8,7 @@ curated EF 3.1/ENVO terms are never clobbered.
 
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
-from sentier_importers.sources.bafu import ecospold
+from sentier_importers.sources.bafu import ecospold, units
 from sentier_importers.sources.bafu.provenance import BAFU_PROVENANCE_IRI
 
 #: Base of every published Sentier flow IRI.
@@ -47,6 +47,8 @@ class BafuVocabFlowsSource(Source):
                     "notation": fid,
                     "compartment": exchange["category"],
                     "sub_compartment": exchange["subcategory"],
+                    "unit": units.unit_iri(exchange["unit"]),
+                    "additional_notations": [units.NOTATION_PREFIX + exchange["unit"]],
                     "source": BAFU_PROVENANCE_IRI,
                     "status": "draft",
                 }

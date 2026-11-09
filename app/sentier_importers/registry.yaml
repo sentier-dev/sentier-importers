@@ -55,6 +55,24 @@ sources:
     output_format: json
     enabled: true
 
+  # The terms Sentier.dev curates itself (units QUDT lacks, unit groups, flow properties,
+  # model terms, sources, contacts, pilot terms), authored in sources/sentier_core/data/seed.yaml
+  # and delivered as the release sentier-core: `run --release sentier-core`. The seed
+  # mixes term types, so each row names its own (`term_type: per-row`).
+  - name: sentier-core
+    module: sentier_importers.sources.sentier_core.source
+    target: sentier_vocab
+    category: sentier-core
+    term_type: per-row
+    fetch:
+      url: "bundled://sentier_core/data/seed.yaml"  # unused: the plugin reads the bundled seed
+      format: yaml
+    output_format: parquet
+    dedup:
+      on_existing: error                             # a curated IRI must not exist elsewhere
+      check_existing: true
+    enabled: false
+
   # FoodEx2, imported from EFSA's PRIMARY source: the MTX catalogue published at
   # openefsa/efsa-catalogues as MTX.ecf (a ZIP wrapping MTX.xml). Pinned to a specific
   # commit (catalogue v17.1) so re-imports are deliberate; the pin is recorded in
@@ -323,7 +341,9 @@ sources:
 
   # 2,679 distinct BAFU biosphere flows; uuid5 ids shared with the inventory
   # exchanges. Unit is part of identity since 0.2.0, so Bq/kBq twins mint
-  # separate ids.
+  # separate ids; each flow carries its unit as a qudt:hasUnit relation
+  # (sources/bafu/units.py). Four of the units are sentier-core terms, so the
+  # sentier-core release must be in sentier-vocab before this one validates there.
   - name: bafu-vocab-flows
     module: sentier_importers.sources.bafu.vocab_flows
     target: sentier_vocab

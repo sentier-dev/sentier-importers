@@ -104,6 +104,55 @@ def test_a_source_term_is_delivered_by_its_own_release(contract):
     assert terms[0]["attributes"] == {"title": "Demo"}
 
 
+def test_another_source_term_in_a_release_is_delivered_by_that_release(contract):
+    other = "https://vocab.sentier.dev/sources/ipcc-ar6"
+    terms, _ = _layers([{"iri": other, "pref_label": "IPCC AR6"}], "source", contract)
+    assert terms[0]["source"] == SOURCE
+
+
+def test_rows_name_their_own_type_when_the_source_mixes_types(contract):
+    rows = [
+        {"type": "unit", "iri": "https://vocab.sentier.dev/units/unit/M2-YR", "pref_label": "m2a"},
+        {
+            "type": "unit-group",
+            "iri": "https://vocab.sentier.dev/units/group/mass",
+            "pref_label": "Units of mass",
+            "reference_unit": "http://qudt.org/vocab/unit/KiloGM",
+            "units": ["http://qudt.org/vocab/unit/GM", "http://qudt.org/vocab/unit/KiloGM"],
+            "quantity_kind": "http://qudt.org/vocab/quantitykind/Mass",
+        },
+    ]
+    terms, relations = _layers(rows, vocab_layers.ROW_TYPE, contract)
+    assert [t["type"] for t in terms] == ["unit", "unit-group"]
+    assert sorted((r["predicate"], r["object"].rsplit("/", 1)[-1]) for r in relations) == [
+        ("ont:hasUnit", "GM"),
+        ("ont:hasUnit", "KiloGM"),
+        ("qudt:hasQuantityKind", "Mass"),
+        ("qudt:hasUnit", "KiloGM"),
+    ]
+    assert vocab_contract.check(terms, relations, contract, release="demo-1", complete=False) == []
+
+
+def test_a_mixed_source_row_without_a_type_is_an_error(contract):
+    with pytest.raises(ValidationError, match="names no type"):
+        _layers([{"iri": FLOWS + "a", "pref_label": "a"}], vocab_layers.ROW_TYPE, contract)
+
+
+def test_a_row_type_is_refused_when_the_source_has_one_type(contract):
+    rows = [{"type": "process", "iri": FLOWS + "a", "pref_label": "a"}]
+    with pytest.raises(ValidationError, match="'type'"):
+        _layers(rows, "elementary-flow", contract)
+
+
+def test_flow_unit_becomes_a_unit_relation(contract):
+    rows = [{"iri": FLOWS + "a", "pref_label": "a", "unit": "http://qudt.org/vocab/unit/KiloGM"}]
+    terms, relations = _layers(rows, "elementary-flow", contract)
+    assert "unit" not in terms[0]
+    assert [(r["predicate"], r["object"]) for r in relations] == [
+        ("qudt:hasUnit", "http://qudt.org/vocab/unit/KiloGM")
+    ]
+
+
 def test_null_and_empty_values_are_dropped(contract):
     rows = [{"iri": FLOWS + "a", "pref_label": "a", "definition": None, "cas_number": None}]
     terms, _ = _layers(rows, "elementary-flow", contract)

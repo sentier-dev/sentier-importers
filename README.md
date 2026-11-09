@@ -83,6 +83,7 @@ tests/             core/ framework tests, sources/ plugin tests
 - Most sources are `enabled: false`. Big imports are opt-in so `run --all` stays fast.
 - The Agribalyse, EF and BAFU sources read local `file://` paths. See "Local inputs" below.
 - Vocabulary terms go to sentier-vocab as two layers per source release: `terms/<release>[-NN].parquet` holds every term of the release, all types mixed, and `relations/<release>.parquet` every edge between terms. A source in `registry.yaml` is one part of a release: its `category` is the release and its `term_type` the value of the `type` column. Rows are checked against `schemas/term.yaml` and `schemas/relation.yaml` of sentier-vocab, read at `main`. A delivery (`--deliver` or `--deliver-local`) replaces the files of its release whole and touches no other release; `python -m sentier_vocab validate` in the target repo then checks the whole tree. A single vocab source is staged under `output/sentier_vocab/parts/<source>/` and is never delivered on its own.
+- The terms Sentier.dev curates itself (units QUDT lacks, unit groups, flow properties, sources, contacts) are authored in `app/sentier_importers/sources/sentier_core/data/seed.yaml` and delivered as the release `sentier-core`. Edit the seed, then `run --release sentier-core`.
 - Inventory tables go to one folder per source release, `data/<source>-<source_version>/` (the registry `category`, e.g. `bafu-2026-v1`), with the sector as a column on `processes.parquet`. A delivery replaces that folder whole; sources never share a folder.
 
 ### Local inputs

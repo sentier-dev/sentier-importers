@@ -1,0 +1,144 @@
+# The terms Sentier.dev curates itself, delivered to sentier-vocab as the release
+# `sentier-core`. One list of rows per term type (a type listed in sentier-vocab's
+# schemas/term.yaml). A row holds the common columns (iri, pref_label, alt_labels,
+# definition, notation, additional_notations, status), the attributes its type
+# declares, and the IRI-valued slots that become relations (broader, exact_match,
+# method, reference_unit, units, ...). Every row gets the release's source term,
+# https://vocab.sentier.dev/sources/sentier-core, as its source.
+#
+# Edit this file, then: sentier-importers run --release sentier-core
+contact:
+- iri: https://vocab.sentier.dev/contacts/sentier-dev
+  pref_label: Sentier.dev
+  status: published
+  email: info@sentier.dev
+  organisation: Sentier.dev
+  url: https://sentier.dev
+elementary-flow:
+- iri: https://vocab.sentier.dev/flows/ENVO_00002006
+  pref_label: Freshwater
+  definition: Water with low concentrations of dissolved salts and other dissolved solids.
+  status: published
+  compartment: water
+  exact_match:
+  - http://purl.obolibrary.org/obo/ENVO_00002006
+- iri: https://vocab.sentier.dev/flows/ENVO_00002010
+  pref_label: Saline water
+  definition: Water that contains a significant concentration of dissolved salts.
+  status: published
+  compartment: water
+  broader: https://vocab.sentier.dev/flows/ENVO_00002006
+  exact_match:
+  - http://purl.obolibrary.org/obo/ENVO_00002010
+flow-property:
+- iri: https://vocab.sentier.dev/flow-properties/energy
+  pref_label: Energy
+  definition: Energy content of a flow.
+  status: published
+  data_type: physical
+  default_unit: http://qudt.org/vocab/unit/J
+- iri: https://vocab.sentier.dev/flow-properties/mass
+  pref_label: Mass
+  definition: Physical mass of a flow.
+  status: published
+  data_type: physical
+  default_unit: http://qudt.org/vocab/unit/KiloGM
+impact-category:
+- iri: https://vocab.sentier.dev/impact-categories/climate-change
+  pref_label: Climate change
+  definition: Impact on the global climate system.
+  status: published
+  indicator: Radiative forcing
+  normalization_factor: 1.0
+  time_horizon: 100 years
+  weighting_factor: 1.0
+  method: https://vocab.sentier.dev/lcia-methods/ipcc-2021
+  reference_unit: http://qudt.org/vocab/unit/KiloGM
+lcia-method:
+- iri: https://vocab.sentier.dev/lcia-methods/ipcc-2021
+  pref_label: IPCC 2021
+  definition: IPCC sixth assessment report characterization factors.
+  status: published
+  methodology: Global warming potentials
+  valid_from: '2021-01-01'
+  impact_categories:
+  - https://vocab.sentier.dev/impact-categories/climate-change
+model-term:
+- iri: https://vocab.sentier.dev/model-terms/efficiency
+  pref_label: Efficiency
+  definition: Ratio of useful output to input.
+  status: published
+  quantity_kind: http://qudt.org/vocab/quantitykind/DimensionlessRatio
+process:
+- iri: https://vocab.sentier.dev/processes/steel-production
+  pref_label: Steel production
+  definition: Production of crude steel.
+  status: published
+  process_type: unit
+  technology: Basic oxygen furnace
+  valid_from: '2020-01-01'
+  geography: https://sws.geonames.org/6295630/
+product:
+- iri: https://vocab.sentier.dev/products/electricity
+  pref_label: Electricity
+  definition: Electrical energy as a product.
+  status: published
+  cpc_code: '17100'
+  reference_flow_property: https://vocab.sentier.dev/flow-properties/energy
+source:
+- iri: https://vocab.sentier.dev/sources/ipcc-ar6
+  pref_label: IPCC AR6
+  status: published
+  citation: 'IPCC, 2021. Climate Change 2021: The Physical Science Basis.'
+  creators:
+  - IPCC
+  date: '2021-08-09'
+  identifier: 10.1017/9781009157896
+  publisher: Cambridge University Press
+  title: 'Climate Change 2021: The Physical Science Basis'
+- iri: https://vocab.sentier.dev/sources/sentier-core
+  pref_label: Sentier.dev curated terms
+  definition: Terms curated by Sentier.dev itself, not imported from a published source.
+  status: published
+unit:
+# Units QUDT does not define. The IRIs are the ones Sentier's units scheme already
+# publishes (sentier-vocab, importers/input/extra-data.ttl); a term here makes them
+# valid objects of qudt:hasUnit relations.
+- iri: https://vocab.sentier.dev/units/unit/KiloM-TONNE
+  pref_label: Tonne (metric) kilometre
+  alt_labels:
+  - Tonne (metric) kilometer
+  definition: One metric tonne carried over a distance of one kilometer
+  notation: tkm
+  status: published
+- iri: https://vocab.sentier.dev/units/unit/M2-YR
+  pref_label: Square metre year
+  alt_labels:
+  - Square meter year
+  definition: Square meter-year
+  notation: m2a
+  status: published
+- iri: https://vocab.sentier.dev/units/unit/M3-YR
+  pref_label: Cubic metre year
+  alt_labels:
+  - Cubic meter year
+  definition: One cubic meter over one year
+  notation: m3a
+  status: published
+- iri: https://vocab.sentier.dev/units/unit/PERSON-KiloM
+  pref_label: Person kilometre
+  alt_labels:
+  - Person kilometer
+  definition: Transport of one person over one kilometer. Does not depend on mass of person or
+    duration of transport.
+  notation: personkm
+  status: published
+unit-group:
+- iri: https://vocab.sentier.dev/units/group/mass
+  pref_label: Units of mass
+  status: published
+  units:
+  - http://qudt.org/vocab/unit/GM
+  - http://qudt.org/vocab/unit/KiloGM
+  quantity_kind: http://qudt.org/vocab/quantitykind/Mass
+  reference_unit: http://qudt.org/vocab/unit/KiloGM
