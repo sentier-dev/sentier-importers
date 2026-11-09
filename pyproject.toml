@@ -40,12 +40,13 @@ tracker = "https://github.com/sentier-dev/sentier-importers/issues"
 sentier-importers = "sentier_importers.__main__:main"
 
 [project.optional-dependencies]
-testing = ["sentier_importers", "pytest", "pytest-cov", "pytest-randomly"]
+testing = ["sentier_importers", "jsonschema", "pytest", "pytest-cov", "pytest-randomly"]
 dev = [
     "black",
     "build",
     "ruff",
     "isort",
+    "jsonschema",
     "pre-commit",
     "pytest",
     "pytest-cov",
