@@ -45,6 +45,28 @@ sources:
       verb: replace
     enabled: false
 
+  # sentier-mappings: ecoinvent biosphere → EF 3.1 elementary flows, the correspondences
+  # sentier-vocab carried as exact_match until its term and relation layers (issue #34).
+  # Upstream is Brightway's randonneur_data package (CC-BY-4.0, Chris Mutel with the UNEP
+  # GLAD taskforce), pinned by commit. The ecoinvent side keeps the exchange UUID only; a
+  # target without a sentier-vocab term says so in its comment. Emits biosphere.json.
+  - name: ecoinvent-ef-biosphere
+    module: sentier_importers.sources.randonneur_data.ecoinvent_ef_biosphere
+    target: sentier_mappings
+    category: ecoinvent-3.11-biosphere__ef-3.1
+    emit_filename: biosphere
+    fetch:
+      url: "https://raw.githubusercontent.com/brightway-lca/randonneur_data/0c9693b7ae1946ace6846968f3890c4cf8e5fa72/randonneur_data/data/ecoinvent-3.11-biosphere-EF-3.1-biosphere.gz"
+      format: json                                   # unused: the plugin overrides parse() to gunzip
+    inputs:
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/terms"
+    output_format: json
+    package:
+      name: ecoinvent-3.11-biosphere__ef-3.1-biosphere
+      version: 0.1.0
+      verb: replace
+    enabled: false
+
   - name: example-csv
     module: sentier_importers.sources.example_csv.source
     target: sentier_inventory
