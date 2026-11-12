@@ -11,13 +11,21 @@ from sentier_importers.core.errors import (
     ParseError,
     RegistryError,
     SentierImporterError,
+    SourceContractError,
     ValidationError,
 )
 from sentier_importers.core.types import RawData
 
 
 def test_error_hierarchy():
-    for error in (FetchError, ParseError, ValidationError, DeliveryError, RegistryError):
+    for error in (
+        FetchError,
+        ParseError,
+        ValidationError,
+        DeliveryError,
+        RegistryError,
+        SourceContractError,
+    ):
         assert issubclass(error, SentierImporterError)
 
 
@@ -36,5 +44,6 @@ def test_runcontext_defaults():
     ctx = RunContext(cache_dir=Path("/tmp/cache"), output_dir=Path("/tmp/out"))
     assert ctx.dry_run is True
     assert ctx.offline is False
+    assert ctx.lineage_dir is None
     with pytest.raises(dataclasses.FrozenInstanceError):
         ctx.dry_run = False

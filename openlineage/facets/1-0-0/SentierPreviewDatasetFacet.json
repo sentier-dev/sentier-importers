@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sentier-dev/sentier-importers/main/openlineage/facets/1-0-0/SentierPreviewDatasetFacet.json",
+  "$defs": {
+    "SentierPreviewDatasetFacet": {
+      "allOf": [
+        {
+          "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/DatasetFacet"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {"type": "object"}
+            },
+            "rowCount": {"type": "integer", "minimum": 0},
+            "truncated": {"type": "boolean"},
+            "jsonEncodedColumns": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Columns whose object values are JSON text in previews to avoid cross-dataset search-index type conflicts. Actual data and schema retain their original types."
+            }
+          },
+          "required": ["rows", "rowCount", "truncated"]
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "properties": {
+    "sentier_preview": {"$ref": "#/$defs/SentierPreviewDatasetFacet"}
+  }
+}

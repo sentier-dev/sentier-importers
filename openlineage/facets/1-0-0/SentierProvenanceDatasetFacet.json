@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sentier-dev/sentier-importers/main/openlineage/facets/1-0-0/SentierProvenanceDatasetFacet.json",
+  "$defs": {
+    "SentierProvenanceDatasetFacet": {
+      "allOf": [
+        {
+          "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/DatasetFacet"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "available",
+                "not-recorded"
+              ]
+            },
+            "role": {
+              "type": "string"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "sha256"
+                ]
+              }
+            }
+          },
+          "required": [
+            "status",
+            "role"
+          ]
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "properties": {
+    "sentier_provenance": {
+      "$ref": "#/$defs/SentierProvenanceDatasetFacet"
+    }
+  }
+}

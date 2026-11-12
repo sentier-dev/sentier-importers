@@ -29,7 +29,7 @@ from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.targets import Target
-from sentier_importers.core.types import Record, Rows
+from sentier_importers.core.types import RawData, Record, Rows
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
@@ -90,6 +90,19 @@ def _existing_iris(target: Target, release: str, ctx: RunContext) -> set[str]:
     the cached fetcher so tests can run offline against a seeded cache.
     """
     if ctx.schema_dir is not None:
+        if ctx.dependency_observer:
+            iris: set[str] = set()
+            for path in sorted((ctx.schema_dir.parent / vocab_layers.TERMS_DIR).glob("*.parquet")):
+                if vocab_layers.release_of(path) == release:
+                    continue
+                raw = RawData(content=path.read_bytes(), source_url=f"file://{path}")
+                ctx.dependency_observer("existing-vocab", raw.source_url, raw)
+                iris.update(
+                    pq.read_table(io.BytesIO(raw.content), columns=["iri"])
+                    .column("iri")
+                    .to_pylist()
+                )
+            return iris
         return vocab_layers.read_iris(
             ctx.schema_dir.parent / vocab_layers.TERMS_DIR, skip_release=release
         )
@@ -99,15 +112,22 @@ def _existing_iris(target: Target, release: str, ctx: RunContext) -> set[str]:
         f"https://api.github.com/repos/{repo}/contents/{vocab_layers.TERMS_DIR}"
         f"?ref={target.schema_ref}"
     )
-    entries = orjson.loads(fetch_mod.fetch(listing_url, ctx).content)
+    listing = fetch_mod.fetch(listing_url, ctx)
+    if ctx.dependency_observer:
+        ctx.dependency_observer("existing-vocab-index", listing_url, listing)
+    entries = orjson.loads(listing.content)
 
     iris: set[str] = set()
     for entry in entries:
         name = entry.get("name", "")
         if not name.endswith(".parquet") or vocab_layers.release_of(name) == release:
             continue
-        content = fetch_mod.fetch(entry["download_url"], ctx).content
-        iris.update(pq.read_table(io.BytesIO(content), columns=["iri"]).column("iri").to_pylist())
+        raw = fetch_mod.fetch(entry["download_url"], ctx)
+        if ctx.dependency_observer:
+            ctx.dependency_observer("existing-vocab", entry["download_url"], raw)
+        iris.update(
+            pq.read_table(io.BytesIO(raw.content), columns=["iri"]).column("iri").to_pylist()
+        )
     return iris
 
 

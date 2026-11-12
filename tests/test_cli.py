@@ -2,6 +2,11 @@ from pathlib import Path
 
 import pytest
 import sentier_importers.__main__ as cli
+from sentier_importers.core import registry as registry_mod
+from sentier_importers.core.inventory_lineage import read_bundle
+from sentier_importers.core.source import SourceConfig
+
+from tests.sources.test_agribalyse_mappings import _raw
 
 
 def test_list_prints_sources(capsys):
@@ -36,6 +41,59 @@ def test_run_all_dry_run(tmp_path):
         ["run", "--all", "--output-dir", str(tmp_path / "o"), "--cache-dir", str(tmp_path / "c")]
     )
     assert (tmp_path / "o" / "sentier_inventory" / "example" / "example-csv.json").exists()
+
+
+def test_local_mapping_input_and_cut_provenance_use_normal_run(tmp_path):
+    path = tmp_path / "mapping cut.parquet"
+    path.write_bytes(_raw().content)
+    cli.main(
+        [
+            "run",
+            "biosphere",
+            "--input-file",
+            str(path),
+            "--source-provenance",
+            "agribalyse-3.2-ef-3.1-curated-cut",
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+        ]
+    )
+    artifact = tmp_path / "output/sentier_mappings/agribalyse-3.2__ef-3.1/biosphere.json"
+    manifest, _ = read_bundle(artifact)
+    assert manifest["dependencies"][0]["sourceMetadata"]["metadata"]["source"] == (
+        "agribalyse-3.2-ef-3.1-curated-cut"
+    )
+
+
+@pytest.mark.parametrize(
+    "option,value",
+    [
+        ("--input-file", "input.parquet"),
+        ("--source-provenance", "bafu-2026-v1"),
+    ],
+)
+def test_single_input_options_cannot_apply_to_all_sources(option, value):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["run", "--all", option, value])
+    assert exc.value.code == 1
+
+
+def test_unknown_source_provenance_fails_before_running(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "run",
+                "biosphere",
+                "--source-provenance",
+                "missing",
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+    assert exc.value.code == 1
+    assert not (tmp_path / "output").exists()
 
 
 def test_unknown_source_exits_nonzero(tmp_path):
@@ -99,9 +157,6 @@ def test_missing_local_input_is_a_warning_not_an_error(tmp_path, monkeypatch, ca
 
 
 def test_run_all_skips_missing_input_sources_and_continues(tmp_path, monkeypatch, capsys):
-    from sentier_importers.core import registry as registry_mod
-    from sentier_importers.core.source import SourceConfig
-
     example = registry_mod.get_config("example-csv")
     missing = SourceConfig(
         name="needs-private-file",

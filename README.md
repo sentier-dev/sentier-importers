@@ -32,6 +32,15 @@ uv sync --extra dev
 
 ## Use
 
+See the [lineage guide](openlineage/README.md) for the source/transform contracts,
+provenance declarations, recording locations, and Marquez inspection commands.
+Normal `run` and `validate` commands support `--input-file` for a local primary
+input and `--source-provenance` for its reusable registry declaration. Generated
+data and lineage records are local outputs, not part of this repository.
+`--deliver` packages data and portable lineage together in the target PR;
+`--deliver-local` exports the same layout to a checkout. Inspection accepts
+`--marquez-url` for another instance and `--no-upload` for an existing public index.
+
 List registered sources, their targets, and whether they are enabled:
 
 ```bash

@@ -56,8 +56,10 @@ def test_run_source_dry_run_does_not_deliver(tmp_path, monkeypatch):
 def test_run_source_delivers_when_not_dry_run(tmp_path, monkeypatch):
     called = {}
 
-    def fake_deliver(files, target, *, branch, title, body, ctx):
+    def fake_deliver(files, target, *, branch, title, body, ctx, category, with_lineage):
         called["branch"] = branch
+        assert category == "example"
+        assert with_lineage
         return "https://github.com/o/r/pull/9"
 
     monkeypatch.setattr(pipeline.deliver_mod, "deliver", fake_deliver)
@@ -225,11 +227,11 @@ def test_run_release_replaces_the_release_in_a_local_checkout(tmp_path):
     pipeline.run_release(
         "demo-1", [_products(), _provenance()], _vocab_ctx(tmp_path, deliver_local_root=clone)
     )
-    assert sorted(p.name for p in (clone / "terms").iterdir()) == [
+    assert sorted(p.name for p in (clone / "terms").iterdir() if p.is_file()) == [
         "demo-1.parquet",
         "other.parquet",
     ]
-    assert sorted(p.name for p in (clone / "relations").iterdir()) == [
+    assert sorted(p.name for p in (clone / "relations").iterdir() if p.is_file()) == [
         "demo-1.parquet",
         "other.parquet",
     ]
@@ -239,7 +241,8 @@ def test_run_release_replaces_the_release_in_a_local_checkout(tmp_path):
 def test_run_release_opens_one_pr_for_the_release(tmp_path, monkeypatch):
     called = {}
 
-    def fake_deliver_release(written, target, release, *, branch, title, body, ctx):
+    def fake_deliver_release(written, target, release, *, branch, title, body, ctx, with_lineage):
+        assert with_lineage
         called.update(release=release, branch=branch, layers=sorted(written), dry_run=ctx.dry_run)
 
     monkeypatch.setattr(pipeline.deliver_mod, "deliver_release", fake_deliver_release)

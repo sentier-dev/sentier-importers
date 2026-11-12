@@ -75,6 +75,19 @@ def test_processes_sector_column_sits_after_process_type():
     ]
 
 
+def test_processes_declares_mapping_for_whole_source_release():
+    source = BafuInventoryProcessesSource(_cfg("bafu-processes", "inventory_processes"))
+    assert [step.name for step in source.declared_transform_steps()] == [
+        "map-process-rows",
+    ]
+    records = source.parse(fixture_zip())
+    rows = records
+    for step in source.declared_transform_steps():
+        rows = step.function(rows)
+    assert rows == source.transform(records)
+    assert {row["process_id"] for row in rows} == set(FIXTURE_SECTORS)
+
+
 def test_processes_row_matches_inventory_schema():
     row = _process(UUID_ELEC)
     assert row["name"] == "Electricity, at test plant"

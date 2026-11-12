@@ -1,6 +1,7 @@
 """Content-addressed cached fetcher for file:// and http(s):// sources."""
 
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -22,7 +23,12 @@ def fetch(url: str, ctx: RunContext) -> RawData:
     """
     cache_path = ctx.cache_dir / _cache_key(url)
     if cache_path.exists():
-        return RawData(content=cache_path.read_bytes(), source_url=url)
+        return RawData(
+            content=cache_path.read_bytes(),
+            source_url=url,
+            read_at=datetime.now(timezone.utc).isoformat(),
+            acquisition_method="cache",
+        )
 
     if ctx.offline:
         raise FetchError(f"offline: no cache entry for {url}", url=url)
@@ -44,7 +50,12 @@ def fetch(url: str, ctx: RunContext) -> RawData:
 
     ctx.cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(content)
-    return RawData(content=content, source_url=url)
+    return RawData(
+        content=content,
+        source_url=url,
+        read_at=datetime.now(timezone.utc).isoformat(),
+        acquisition_method="local-file" if url.startswith("file://") else "download",
+    )
 
 
 def local_path(url: str | None, name: str) -> Path:

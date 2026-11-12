@@ -1,6 +1,6 @@
 """EF 3.1 methods table for sentier-methods: one row per (method, impact category)."""
 
-from sentier_importers.core.source import Source
+from sentier_importers.core.source import Source, TransformStep
 from sentier_importers.core.types import RawData, Records, Rows
 from sentier_importers.sources.agribalyse.ef_common import (
     DATASOURCE,
@@ -18,6 +18,16 @@ class AgribalyseEfMethodsSource(Source):
 
     def parse(self, raw: RawData) -> Records:
         return parse_cf_table(raw)
+
+    def transform_steps(self):
+        return (
+            TransformStep(
+                "map-method-rows",
+                "Enumerate EF 3.1 impact categories and assign method IDs and units.",
+                self.transform,
+                code_dependencies=("app/sentier_importers/sources/agribalyse/ef_common.py",),
+            ),
+        )
 
     def transform(self, records: Records) -> Rows:
         return [

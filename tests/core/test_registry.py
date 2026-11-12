@@ -267,10 +267,11 @@ def _root_registry(tmp_path, access_line=""):
 
 
 def test_placeholder_expands_in_fetch_url_and_every_input(tmp_path):
-    cfg = registry_mod.load_registry(_root_registry(tmp_path), data_root=Path("/data"))[0]
-    assert cfg.fetch_url == "file:///data/sub/main.csv"
+    root = Path("/data").resolve()
+    cfg = registry_mod.load_registry(_root_registry(tmp_path), data_root=root)[0]
+    assert cfg.fetch_url == f"file://{root}/sub/main.csv"
     assert cfg.inputs == {
-        "side": "file:///data/other/side.json",
+        "side": f"file://{root}/other/side.json",
         "plain": "file:///abs/untouched.json",
     }
 
@@ -337,7 +338,7 @@ def test_real_registry_has_no_machine_paths():
 
 def test_real_registry_access_matches_input_origin():
     for cfg in registry_mod.load_registry(data_root=Path("/root")):
-        urls = [cfg.fetch_url, *cfg.inputs.values()]
+        urls = [u.replace("\\", "/") for u in (cfg.fetch_url, *cfg.inputs.values())]
         if any("/dds-carbonminds-data/" in u or "/dds-agribalyse/" in u for u in urls):
             assert cfg.access == "private", cfg.name
         elif any("/root/sources/" in u for u in urls):

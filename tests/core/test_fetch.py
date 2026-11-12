@@ -18,6 +18,8 @@ def test_fetch_file_url(tmp_path):
     raw = fetch_mod.fetch(f"file://{src}", ctx)
     assert raw.content == b"hello"
     assert raw.source_url == f"file://{src}"
+    assert raw.acquisition_method == "local-file"
+    assert raw.read_at is not None
 
 
 def test_fetch_writes_cache(tmp_path):
@@ -39,6 +41,8 @@ def test_cache_hit_skips_source(tmp_path):
     src.write_bytes(b"second")  # change source after caching
     raw = fetch_mod.fetch(url, ctx)
     assert raw.content == b"first"  # served from cache
+    assert raw.acquisition_method == "cache"
+    assert raw.read_at is not None
 
 
 def test_offline_miss_raises(tmp_path):
@@ -70,6 +74,8 @@ def test_http_fetch_uses_httpx(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     raw = fetch_mod.fetch("https://example.com/data", ctx)
     assert raw.content == b"net-bytes"
+    assert raw.acquisition_method == "download"
+    assert raw.read_at is not None
     key = hashlib.sha256(b"https://example.com/data").hexdigest()
     assert (ctx.cache_dir / key).read_bytes() == b"net-bytes"
 

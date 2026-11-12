@@ -6,7 +6,7 @@ its BAFU category routes to into the ``sector`` column. Rows follow the
 sentier-inventory ``schema/process.yaml`` contract exactly, column order included.
 """
 
-from sentier_importers.core.source import Source
+from sentier_importers.core.source import Source, TransformStep
 from sentier_importers.core.types import RawData, Record, Records, Rows
 from sentier_importers.sources.bafu import ecospold
 
@@ -27,6 +27,20 @@ class BafuInventoryProcessesSource(Source):
         return ecospold.parse_ecospold_zip(raw)
 
     def transform(self, records: Records) -> Rows:
+        """Compatibility entry point; the pipeline uses ``transform_steps``."""
+        return self._map_process_rows(records)
+
+    def transform_steps(self) -> tuple[TransformStep, ...]:
+        return (
+            TransformStep(
+                name="map-process-rows",
+                description=("Map BAFU process records to inventory rows with source and sector."),
+                function=self._map_process_rows,
+                code_dependencies=("app/sentier_importers/sources/bafu/ecospold.py",),
+            ),
+        )
+
+    def _map_process_rows(self, records: Records) -> Rows:
         rows: Rows = []
         for record in records:
             row: Record = {

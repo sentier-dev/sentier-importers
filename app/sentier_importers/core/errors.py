@@ -40,3 +40,7 @@ class DeliveryError(SentierImporterError):
 
 class RegistryError(SentierImporterError):
     """Raised when the source registry is malformed or a source is missing."""
+
+
+class SourceContractError(SentierImporterError):
+    """Raised when a source declares an invalid transformation-step contract."""

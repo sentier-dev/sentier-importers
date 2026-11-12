@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 from sentier_importers.core.errors import RegistryError
+from sentier_importers.core.provenance import resolve_provenance
 from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.core.targets import TARGETS, VOCAB_CONTRACT
 
@@ -55,7 +56,7 @@ def _expand(url: str, data_root: Path, source_name: str) -> str:
     return expanded
 
 
-def _to_config(entry: dict, data_root: Path) -> SourceConfig:
+def _to_config(entry: dict, data_root: Path, source_datasets=None) -> SourceConfig:
     try:
         name = entry["name"]
         fetch = entry["fetch"]
@@ -95,6 +96,7 @@ def _to_config(entry: dict, data_root: Path) -> SourceConfig:
                 for key, value in (entry.get("inputs") or {}).items()
             },
             access=access,
+            input_provenance=resolve_provenance(entry, source_datasets or {}),
         )
     except (KeyError, TypeError) as exc:
         raise RegistryError(f"invalid source entry {entry!r}: {exc}") from exc
@@ -105,7 +107,9 @@ def load_registry(path: Path = REGISTRY_PATH, data_root: Path | None = None) -> 
     ``${SENTIER_DATA_ROOT}`` expanded to ``data_root`` (see :func:`resolve_data_root`)."""
     root = resolve_data_root(data_root)
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return [_to_config(entry, root) for entry in raw.get("sources", [])]
+    return [
+        _to_config(entry, root, raw.get("source_datasets", {})) for entry in raw.get("sources", [])
+    ]
 
 
 def get_config(
@@ -118,6 +122,12 @@ def get_config(
         if config.name == name:
             return config
     raise RegistryError(f"no source named {name!r}")
+
+
+def source_provenance(name: str, path: Path = REGISTRY_PATH) -> dict:
+    """Resolve a reusable declaration for an explicitly selected primary input."""
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return resolve_provenance({"provenance": {"source": name}}, raw.get("source_datasets", {}))
 
 
 def load_source(config: SourceConfig) -> Source:
