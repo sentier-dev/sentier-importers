@@ -300,6 +300,27 @@ sources:
       check_existing: true
     enabled: false
 
+  # The characterised EF 3.1 flows the harmonised list lacks (13,774 at 2026-11-10: long-term
+  # water emissions, soil duplicates), from the JRC CF table, so that every sentier-methods
+  # key is a term. Emits only UUIDs the block above does not; same release, same shards.
+  # Spec: dds wiki 2026-11-10-ef31-flows-missing-from-vocab.
+  - name: ef31-elementary-flows-jrc
+    module: sentier_importers.sources.agribalyse.flows_jrc
+    target: sentier_vocab
+    category: ef-3.1
+    term_type: elementary-flow
+    access: private
+    fetch:
+      url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+      format: parquet
+    inputs:
+      harmonised: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+    output_format: parquet
+    dedup:
+      on_existing: skip
+      check_existing: true
+    enabled: false
+
   # Bibliographic provenance for the EF 3.1 flow list — one Source record every flow
   # links to via its `source` slot. Static metadata, no fetch input.
   - name: agribalyse-ef31-source
