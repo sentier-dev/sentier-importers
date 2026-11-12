@@ -11,8 +11,10 @@ target and a vocab term are one IRI (spec 2026-11-10-ef31-flows-missing-from-voc
 - One row per flow UUID the harmonised part does not emit (its ``source == "EF 3.1"``
   flows, read from the same file through the ``harmonised`` input).
 - Label: the JRC name; when the table spells one flow in two casings, the cased one.
-- ``compartment`` from the context path, ``bw-context:<code>`` from the reverse of
-  ``matching.bw_context.BW_CONTEXT_PATH`` when the path has a code.
+- ``compartment`` from the context path. No ``bw-context`` notation: that code is the
+  harmonised list's own identifier, and ``matching.bw_context`` derives its crosswalk
+  from the rows that carry it; a code computed here from that crosswalk would feed it
+  its own output.
 - No CAS, formula or unit: the CF table carries none.
 """
 
@@ -25,7 +27,6 @@ import pyarrow.parquet as pq
 from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
-from sentier_importers.matching.bw_context import BW_CONTEXT_PATH
 from sentier_importers.sources.agribalyse.flows import FLOWS_SCHEME, is_emitted
 from sentier_importers.sources.agribalyse.provenance import PROVENANCE_IRI
 
@@ -41,8 +42,6 @@ _EMISSION_COMPARTMENT = {
     "Emissions to soil": "soil",
 }
 _TOP_COMPARTMENT = {"Resources": "natural resource", "Land use": "land use"}
-#: First path level -> the ``bw-context`` domain whose code names that path.
-_DOMAIN = {"Emissions": "envi", "Resources": "reso", "Land use": "laus"}
 
 
 def context_path(record: Record) -> str:
@@ -58,33 +57,6 @@ def compartment_for_path(path: str) -> str | None:
     if levels[0] == "Emissions" and len(levels) > 1:
         return _EMISSION_COMPARTMENT.get(levels[1])
     return _TOP_COMPARTMENT.get(levels[0])
-
-
-def _reverse_crosswalk() -> dict[str, str]:
-    """EF context path -> ``bw-context`` code, one code per path: the code of the
-    path's own domain (``reso-air`` for a resource, not ``envi-air-grle-unkn``)."""
-    by_path: dict[str, list[str]] = {}
-    for code, path in BW_CONTEXT_PATH.items():
-        if path is not None:
-            by_path.setdefault(path, []).append(code)
-    codes: dict[str, str] = {}
-    for path, candidates in by_path.items():
-        domain = _DOMAIN.get(path.split(_SEP)[0], "")
-        own = (
-            [c for c in candidates if c.startswith(domain)] if len(candidates) > 1 else candidates
-        )
-        if len(own) != 1:
-            raise ValueError(f"bw-context crosswalk: no single code for {path!r}: {candidates}")
-        codes[path] = own[0]
-    return codes
-
-
-_PATH_CODE = _reverse_crosswalk()
-
-
-def bw_context_code(path: str) -> str | None:
-    """The ``bw-context`` code for an EF context path, or ``None`` when none maps to it."""
-    return _PATH_CODE.get(path)
 
 
 def _label(names: list[str]) -> str:
@@ -144,8 +116,6 @@ class JrcFlowsSource(Source):
             row: Record = {"iri": f"{FLOWS_SCHEME}{uuid}", "pref_label": _label(variants)}
             if (compartment := compartment_for_path(paths[uuid])) is not None:
                 row["compartment"] = compartment
-            if (code := bw_context_code(paths[uuid])) is not None:
-                row["additional_notations"] = [f"bw-context:{code}"]
             row["source"] = PROVENANCE_IRI
             row["status"] = "draft"
             rows.append(row)
