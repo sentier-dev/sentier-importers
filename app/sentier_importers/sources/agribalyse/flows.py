@@ -103,6 +103,20 @@ def _definition(flow: Record) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def is_emitted(flow: Record) -> bool:
+    """Whether :class:`AgribalyseFlowsSource` emits a term for ``flow``.
+
+    Ecoinvent algorithm additions are excluded (see plan §guardrails), and so is a flow
+    without a label or an identifier. ``flows_jrc`` uses the same rule to know which
+    flows this part already covers, so the two parts of the release cannot drift apart.
+    """
+    return bool(
+        flow.get("source") == ALLOWED_SOURCE
+        and (flow.get("prefLabel") or "").strip()
+        and flow.get("identifier")
+    )
+
+
 class AgribalyseFlowsSource(Source):
     """Map the EF 3.1 harmonised flow list into elementary-flow term rows.
 
@@ -118,12 +132,10 @@ class AgribalyseFlowsSource(Source):
     def transform(self, records: Records) -> Rows:
         rows: Rows = []
         for flow in records:
-            if flow.get("source") != ALLOWED_SOURCE:
-                continue  # exclude ecoinvent algorithm additions (see plan §guardrails)
+            if not is_emitted(flow):
+                continue
             label = (flow.get("prefLabel") or "").strip()
             identifier = flow.get("identifier")
-            if not label or not identifier:
-                continue
 
             row: Record = {"iri": f"{FLOWS_SCHEME}{identifier}", "pref_label": label}
 

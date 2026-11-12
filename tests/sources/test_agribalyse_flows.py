@@ -174,12 +174,15 @@ def test_transform_keeps_a_flow_without_a_resolvable_compartment():
     assert "compartment" not in row
 
 
-def test_registry_declares_one_ef31_flow_source_for_the_release():
+def test_registry_declares_the_two_ef31_flow_parts_of_the_release():
     from sentier_importers.core.registry import load_registry
 
-    (ef31,) = [c for c in load_registry() if c.name.startswith("ef31-elementary-flows")]
-    assert (ef31.category, ef31.term_type) == ("ef-3.1", "elementary-flow")
-    assert ef31.emit_filename is None and not ef31.enabled
+    parts = [c for c in load_registry() if c.name.startswith("ef31-elementary-flows")]
+    # the harmonised list, and the JRC flows it lacks (flows_jrc); one release, one type
+    assert [c.name for c in parts] == ["ef31-elementary-flows", "ef31-elementary-flows-jrc"]
+    for part in parts:
+        assert (part.category, part.term_type) == ("ef-3.1", "elementary-flow")
+        assert part.emit_filename is None and not part.enabled
 
 
 def test_parse_gunzips_and_reads_flows(tmp_path):
