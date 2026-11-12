@@ -5,7 +5,9 @@ from pathlib import Path
 import jsonschema
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 from sentier_importers.core.pipeline import _assemble
+from sentier_importers.core.randonneur import positive_finite_factor
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.core.types import RawData
 from sentier_importers.sources.agribalyse.mappings_biosphere import (
@@ -160,3 +162,23 @@ def test_assembled_package_matches_randonneur_schema():
 
     schema = json.loads(_SCHEMA.read_text())
     jsonschema.validate(package, schema)  # raises if invalid
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1000.0])
+def test_transform_refuses_non_positive_or_non_finite_conversion(bad):
+    src = AgribalyseBiosphereMappingsSource(_config())
+    records = src.parse(_raw())
+    water = next(r for r in records if r["source_name"] == "Water m3")
+    water["unit_conversion"] = bad
+    with pytest.raises(ValueError, match="Water m3: unit_conversion must be positive and finite"):
+        src.transform(records)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1.0, None, "", "abc", 10**400])
+def test_positive_finite_factor_refuses(bad):
+    with pytest.raises(ValueError, match="row: unit_conversion must be positive and finite"):
+        positive_finite_factor(bad, "row")
+
+
+def test_positive_finite_factor_returns_float():
+    assert positive_finite_factor(1000, "row") == 1000.0

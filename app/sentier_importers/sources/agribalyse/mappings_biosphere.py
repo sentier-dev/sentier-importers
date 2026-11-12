@@ -13,6 +13,7 @@ Scope guardrail (2026-07-10 decision — ignore ecoinvent nomenclature):
 import io
 
 import pyarrow.parquet as pq
+from sentier_importers.core.randonneur import positive_finite_factor
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
 
@@ -81,8 +82,12 @@ class AgribalyseBiosphereMappingsSource(Source):
 
             entry: Record = {"source": source, "target": target}
             conversion = rec.get("unit_conversion")
-            if conversion is not None and conversion != 1.0:
-                entry["conversion_factor"] = float(conversion)
+            if conversion is not None:
+                # NaN != 1.0, so without this check a NaN reached the package as
+                # "conversion_factor": NaN, which is not valid JSON.
+                factor = positive_finite_factor(conversion, source_name)
+                if factor != 1.0:
+                    entry["conversion_factor"] = factor
             provenance = rec.get("provenance") or ""
             tier = rec.get("priority_tier")
             entry["comment"] = f"{provenance} (priority tier {tier})"
