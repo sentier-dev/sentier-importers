@@ -12,6 +12,9 @@ build/
 # Framework working dirs
 /cache/
 /output/
+**/.lineage/
+*.openlineage.jsonl
+/source_data/
 
 # Local docs (design specs, plans)
 /docs/

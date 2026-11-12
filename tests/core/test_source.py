@@ -1,12 +1,13 @@
 import pytest
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.source import Source, SourceConfig
+from sentier_importers.core.errors import SourceContractError
+from sentier_importers.core.source import Source, SourceConfig, TransformStep
 from sentier_importers.core.types import RawData
 
 
 def _config(tmp_path):
     src = tmp_path / "in.csv"
-    src.write_text("id,name\n1,alpha\n")
+    src.write_text("id,name\n1,alpha\n", newline="\n")
     return SourceConfig(
         name="demo",
         module="x.y",
@@ -82,3 +83,38 @@ def test_named_inputs_are_fetched_alongside_the_primary(tmp_path):
 
 def test_inputs_default_to_empty(tmp_path):
     assert _config(tmp_path).inputs == {}
+
+
+def test_default_transform_step_adapts_existing_source(tmp_path):
+    source = _Demo(_config(tmp_path))
+    steps = source.declared_transform_steps()
+    assert [step.name for step in steps] == ["transform"]
+    assert steps[0].function([{"id": "1", "name": "alpha"}]) == [{"id": "1", "label": "ALPHA"}]
+
+
+def test_transform_step_requires_stable_lower_kebab_name():
+    with pytest.raises(SourceContractError, match="lower-kebab"):
+        TransformStep("Filter Rows", "Filter records.", lambda rows: rows)
+
+
+class _DuplicateSteps(_Demo):
+    def transform_steps(self):
+        return (
+            TransformStep("filter", "First filter.", lambda rows: rows),
+            TransformStep("filter", "Second filter.", lambda rows: rows),
+        )
+
+
+def test_transform_step_names_are_unique(tmp_path):
+    with pytest.raises(SourceContractError, match="repeats"):
+        _DuplicateSteps(_config(tmp_path)).declared_transform_steps()
+
+
+class _ReservedStep(_Demo):
+    def transform_steps(self):
+        return (TransformStep("emit", "Conflicts with framework.", lambda rows: rows),)
+
+
+def test_transform_steps_cannot_shadow_framework_steps(tmp_path):
+    with pytest.raises(SourceContractError, match="framework step"):
+        _ReservedStep(_config(tmp_path)).declared_transform_steps()

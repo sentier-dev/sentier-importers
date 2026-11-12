@@ -36,6 +36,8 @@ def test_real_run_invokes_git_and_gh(tmp_path, monkeypatch):
 
     def fake_run(cmd, cwd=None):
         calls.append(cmd)
+        if cmd[:2] == ["git", "clone"]:
+            src.__class__(cmd[-1]).mkdir(parents=True)
         if cmd[:2] == ["gh", "pr"]:
             return "https://github.com/o/r/pull/1\n"
         return ""
@@ -77,10 +79,17 @@ def test_remove_stale_same_stem(tmp_path):
     (tmp_path / "foodex2.yaml").write_text("old")
     (tmp_path / "foodex2.parquet").write_text("new")
     (tmp_path / "other.yaml").write_text("keep")
+    for name in ("foodex2.yaml", "foodex2.parquet", "other.yaml"):
+        folder = tmp_path / ".lineage" / name
+        folder.mkdir(parents=True)
+        (folder / "manifest.json").write_text("{}")
     deliver_mod._remove_stale_same_stem(tmp_path / "foodex2.parquet")
     assert not (tmp_path / "foodex2.yaml").exists()  # stale prior format removed
     assert (tmp_path / "foodex2.parquet").exists()  # incoming file untouched
     assert (tmp_path / "other.yaml").exists()  # unrelated file kept
+    assert not (tmp_path / ".lineage/foodex2.yaml").exists()
+    assert (tmp_path / ".lineage/foodex2.parquet/manifest.json").exists()
+    assert (tmp_path / ".lineage/other.yaml/manifest.json").exists()
 
 
 # --- sentier-vocab: a release replaces its own files in both layer folders ----

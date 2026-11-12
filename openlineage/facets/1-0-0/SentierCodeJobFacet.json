@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sentier-dev/sentier-importers/main/openlineage/facets/1-0-0/SentierCodeJobFacet.json",
+  "$defs": {
+    "SentierCodeJobFacet": {
+      "allOf": [
+        {
+          "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/JobFacet"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "codeDirty": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "scope": {
+              "const": "declared-files"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "dirty": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256",
+                  "dirty"
+                ]
+              }
+            },
+            "linkRepresents": {
+              "enum": [
+                "committed-baseline",
+                "recorded-source"
+              ]
+            }
+          },
+          "required": [
+            "commit",
+            "codeDirty",
+            "scope",
+            "files"
+          ]
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "properties": {
+    "sentier_code": {
+      "$ref": "#/$defs/SentierCodeJobFacet"
+    }
+  }
+}

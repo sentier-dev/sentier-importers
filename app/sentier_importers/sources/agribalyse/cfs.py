@@ -16,7 +16,7 @@ from loguru import logger
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import FetchError
-from sentier_importers.core.source import Source
+from sentier_importers.core.source import Source, TransformStep
 from sentier_importers.core.types import RawData, Records, Rows
 from sentier_importers.sources.agribalyse.ef_cf_dedup import (
     SIMAPRO_INPUT,
@@ -58,6 +58,26 @@ class AgribalyseEfCfsSource(Source):
 
     def parse(self, raw: RawData) -> Records:
         return parse_cf_table(raw)
+
+    def transform_steps(self):
+        arbiter = SIMAPRO_INPUT in self.inputs
+        policy = (
+            "with the supplied SimaPro arbiter"
+            if arbiter
+            else "without a SimaPro arbiter; ambiguous land CFs use the larger-|value| fallback"
+        )
+        return (
+            TransformStep(
+                "resolve-and-map-cf-rows",
+                f"Resolve global duplicates, harmonise water CFs and map factors {policy}.",
+                self.transform,
+                inputs=tuple(self.config.inputs),
+                code_dependencies=(
+                    "app/sentier_importers/sources/agribalyse/ef_common.py",
+                    "app/sentier_importers/sources/agribalyse/ef_cf_dedup.py",
+                ),
+            ),
+        )
 
     def transform(self, records: Records) -> Rows:
         simapro_index = parse_simapro_index(self.inputs.get(SIMAPRO_INPUT))

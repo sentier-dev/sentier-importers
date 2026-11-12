@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sentier-dev/sentier-importers/main/openlineage/facets/1-0-0/SentierSourceDatasetFacet.json",
+  "$defs": {
+    "Metadata": {
+      "type": "object",
+      "description": "Declared source facts. Null means unknown, not inferred from an import run.",
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "source_version": {"type": ["string", "null"]},
+        "title": {"type": "string", "minLength": 1},
+        "publisher": {"type": ["string", "null"]},
+        "creators": {"type": ["array", "null"], "items": {"type": "string"}},
+        "date": {"type": ["string", "null"], "description": "Provider publication date, not acquisition time."},
+        "identifier": {"type": ["string", "null"]},
+        "citation": {"type": ["string", "null"]},
+        "source_url": {"type": ["string", "null"]},
+        "license": {"type": ["string", "null"]},
+        "license_url": {"type": ["string", "null"]},
+        "format": {"type": ["string", "null"]},
+        "format_version": {"type": ["string", "null"]},
+        "coverage": {"type": ["string", "null"]}
+      },
+      "required": ["source", "source_version", "title", "publisher", "license", "citation"],
+      "additionalProperties": false
+    },
+    "Observation": {
+      "type": "object",
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sizeBytes": {"type": ["integer", "null"], "minimum": 0},
+        "observedAt": {"type": "string", "format": "date-time"},
+        "readAt": {"type": ["string", "null"], "format": "date-time"},
+        "acquisitionMethod": {"enum": ["cache", "local-file", "download", "direct-file", null]},
+        "downloadedAt": {"type": ["string", "null"], "format": "date-time"}
+      },
+      "required": ["sha256", "sizeBytes", "observedAt", "readAt", "acquisitionMethod", "downloadedAt"],
+      "additionalProperties": false
+    },
+    "SentierSourceDatasetFacet": {
+      "allOf": [
+        {"$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/DatasetFacet"},
+        {
+          "type": "object",
+          "properties": {
+            "metadata": {"$ref": "#/$defs/Metadata"},
+            "observation": {"$ref": "#/$defs/Observation"}
+          },
+          "required": ["metadata", "observation"]
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "properties": {"sentier_source": {"$ref": "#/$defs/SentierSourceDatasetFacet"}}
+}

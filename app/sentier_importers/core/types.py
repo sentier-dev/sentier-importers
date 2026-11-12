@@ -4,7 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-# A record/row is a JSON-serializable mapping. `Records` (parse output) and `Rows`
+# A record/row is a mapping.
+# `Records` (parse output) and `Rows`
 # (transform output) are structurally identical but mark distinct pipeline stages.
 Record = dict[str, Any]
 Records = list[Record]
@@ -23,3 +24,5 @@ class RawData:
     content: bytes
     source_url: str
     media_type: str | None = None
+    read_at: str | None = None
+    acquisition_method: str | None = None

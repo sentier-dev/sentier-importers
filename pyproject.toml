@@ -38,6 +38,7 @@ tracker = "https://github.com/sentier-dev/sentier-importers/issues"
 
 [project.scripts]
 sentier-importers = "sentier_importers.__main__:main"
+inspect-lineage = "sentier_importers.core.inventory_lineage:main"
 
 [project.optional-dependencies]
 testing = ["sentier_importers", "jsonschema", "pytest", "pytest-cov", "pytest-randomly"]

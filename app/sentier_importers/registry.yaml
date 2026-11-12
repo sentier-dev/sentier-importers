@@ -26,11 +26,94 @@
 #                                                      #   another release already delivers
 #       check_existing: true                           # Layer B on/off (default true)
 #     enabled: true
+source_datasets:
+  bafu-2026-v1:
+    source: bafu-2026
+    source_version: v1
+    title: "Life Cycle Inventory database of the Swiss Federal Administration, BAFU:2026 (v1)"
+    publisher: "Swiss Federal Office for the Environment (BAFU/FOEN)"
+    creators: ["Swiss Federal Office for the Environment (BAFU/FOEN)"]
+    date: null
+    identifier: https://vocab.sentier.dev/sources/bafu-2026
+    citation: "Life Cycle Inventory database of the Swiss Federal Administration, BAFU:2026. Version 1, EcoSpold v1 export (11,947 datasets)."
+    source_url: null
+    license: "BAFU Terms of Use; see the provider's terms supplied with the dataset."
+    license_url: null
+    format: "ZIP containing EcoSpold XML"
+    format_version: "1"
+    coverage: null
+
+  jrc-ef-3.1-cfs:
+    source: ef-3.1
+    source_version: "3.1"
+    title: "JRC Environmental Footprint 3.1 characterisation factor table"
+    publisher: "European Commission, Joint Research Centre"
+    creators: ["European Commission, Joint Research Centre"]
+    date: null
+    identifier: https://vocab.sentier.dev/sources/ef-3.1
+    citation: "European Commission, Joint Research Centre. Environmental Footprint (EF) 3.1 characterisation factors."
+    source_url: https://eplca.jrc.ec.europa.eu/LCDN/EF.xhtml
+    license: "European Commission reuse terms (as recorded in sentier-methods)."
+    license_url: https://commission.europa.eu/legal-notice_en
+    format: Parquet
+    format_version: null
+    coverage: "Provider-supplied JRC EF 3.1 CF table, declared unchanged; preprocessing history is not recorded."
+
+  agribalyse-3.2-ef-3.1-curated-cut:
+    source: agribalyse-3.2-ef-3.1-curated-cut
+    source_version: null
+    title: "Agribalyse 3.2 to EF 3.1 curated biosphere crosswalk, provider-supplied cut"
+    publisher: null
+    creators: null
+    date: null
+    identifier: null
+    citation: "Provider-supplied cut of the Agribalyse biosphere mapping registry; curated and LLM-reviewed crosswalks."
+    source_url: null
+    license: null
+    license_url: null
+    format: Parquet
+    format_version: null
+    coverage: "1,095 rows retained after the provider's EF/biosphere3, non-ecoinvent, non-identity guardrail. The full registry and its preparation history were not supplied."
+
+  optional-simapro-ef31-reference:
+    source: simapro-ef31-adapted-reference
+    source_version: null
+    title: "Optional SimaPro EF 3.1 adapted CF reference"
+    publisher: null
+    license: null
+    citation: null
+
+  efsa-foodex2-mtx-17.1:
+    source: foodex2
+    source_version: "17.1"
+    title: "EFSA FoodEx2 MTX catalogue v17.1"
+    publisher: "European Food Safety Authority"
+    creators: ["European Food Safety Authority"]
+    date: null
+    identifier: https://vocab.sentier.dev/sources/foodex2
+    citation: "EFSA. FoodEx2 MTX catalogue v17.1; openefsa/efsa-catalogues commit 242ead56e40a29002a66d63fc64c6a497151af4b."
+    source_url: https://github.com/openefsa/efsa-catalogues
+    license: null
+    license_url: null
+    format: "EFSA ECF (ZIP containing MTX XML)"
+    format_version: null
+    coverage: null
+
+  agribalyse-biosphere-registry:
+    source: agribalyse-biosphere-registry
+    source_version: null
+    title: "Agribalyse biosphere mapping registry"
+    publisher: null
+    license: null
+    citation: null
+
 sources:
   # sentier-mappings: Agribalyse 3.2 → EF 3.1 biosphere crosswalk (randonneur package).
   # Non-ecoinvent, hand-authored entries only (curated + LLM-reviewed); see
   # docs/specs/2026-07-10-sentier-mappings-target.md. Emits data/<category>/biosphere.json.
   - name: biosphere
+    provenance:
+      source: agribalyse-biosphere-registry
     module: sentier_importers.sources.agribalyse.mappings_biosphere
     target: sentier_mappings
     category: agribalyse-3.2__ef-3.1
@@ -105,6 +188,8 @@ sources:
   # (enabled: false) so the ~31k-term import stays out of the blanket `run --all`.
   # Release: `run --release foodex2` (the three slices plus the source term).
   - name: foodex2-products            # Commodities + grouping nodes, termType r/d/s/c/g (~5.9k)
+    provenance:
+      source: efsa-foodex2-mtx-17.1
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
     category: foodex2
@@ -119,6 +204,8 @@ sources:
     enabled: false
 
   - name: foodex2-organisms           # Biological source taxa, termType n (~23.9k)
+    provenance:
+      source: efsa-foodex2-mtx-17.1
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
     category: foodex2
@@ -133,6 +220,8 @@ sources:
     enabled: false
 
   - name: foodex2-qualifiers          # Facet descriptors, termType f (~1.9k)
+    provenance:
+      source: efsa-foodex2-mtx-17.1
     module: sentier_importers.sources.foodex2.source
     target: sentier_vocab
     category: foodex2
@@ -216,6 +305,8 @@ sources:
   # EF 3.1 descriptive terms in sentier-vocab (the ID authority). The method + its 25
   # impact categories as SKOS terms; the numeric CF *values* live in sentier-methods.
   - name: ef-lcia-method
+    provenance:
+      source: jrc-ef-3.1-cfs
     module: sentier_importers.sources.agribalyse.vocab_lcia_methods
     target: sentier_vocab
     category: ef-3.1
@@ -231,6 +322,8 @@ sources:
     enabled: false
 
   - name: ef-impact-categories
+    provenance:
+      source: jrc-ef-3.1-cfs
     module: sentier_importers.sources.agribalyse.vocab_impact_categories
     target: sentier_vocab
     category: ef-3.1
@@ -250,6 +343,8 @@ sources:
   # and the CF table (one row per CF, keyed to the vocab flow IRIs). CF values are
   # JRC-public and uncapped; no ecoinvent involvement. Fills data/01-ef-3.1/.
   - name: methods
+    provenance:
+      source: jrc-ef-3.1-cfs
     module: sentier_importers.sources.agribalyse.methods
     target: sentier_methods
     category: 01-ef-3.1
@@ -261,6 +356,9 @@ sources:
     enabled: false
 
   - name: characterization-factors
+    provenance:
+      source: jrc-ef-3.1-cfs
+      simapro: optional-simapro-ef31-reference
     module: sentier_importers.sources.agribalyse.cfs
     target: sentier_methods
     category: 01-ef-3.1
@@ -410,6 +508,8 @@ sources:
   # gives the contract file names.
 
   - name: bafu-processes
+    provenance:
+      source: bafu-2026-v1
     module: sentier_importers.sources.bafu.inventory_processes
     target: sentier_inventory
     category: bafu-2026-v1
@@ -422,6 +522,8 @@ sources:
     enabled: false
 
   - name: bafu-exchanges
+    provenance:
+      source: bafu-2026-v1
     module: sentier_importers.sources.bafu.inventory_exchanges
     target: sentier_inventory
     category: bafu-2026-v1

@@ -13,7 +13,7 @@ Scope guardrail (2026-07-10 decision — ignore ecoinvent nomenclature):
 import io
 
 import pyarrow.parquet as pq
-from sentier_importers.core.source import Source
+from sentier_importers.core.source import Source, TransformStep
 from sentier_importers.core.types import RawData, Record, Records, Rows
 
 #: target_db values that are license-free (EF = JRC, biosphere3 = open Brightway).
@@ -56,10 +56,28 @@ class AgribalyseBiosphereMappingsSource(Source):
         )
 
     def transform(self, records: Records) -> Rows:
+        return self._map_rows(self._filter_rows(records))
+
+    def transform_steps(self):
+        return (
+            TransformStep(
+                "filter-shippable-mappings",
+                "Keep EF/biosphere3 targets; exclude ecoinvent provenance and identity rows.",
+                self._filter_rows,
+            ),
+            TransformStep(
+                "map-replacement-rows",
+                "Map retained crosswalk rows to randonneur replacement entries.",
+                self._map_rows,
+            ),
+        )
+
+    def _filter_rows(self, records):
+        return [rec for rec in records if self._shippable(rec)]
+
+    def _map_rows(self, records: Records) -> Rows:
         rows: Rows = []
         for rec in records:
-            if not self._shippable(rec):
-                continue
             source_name = (rec.get("source_name") or "").strip()
             target_name = (rec.get("target_name") or "").strip()
             if not source_name or not target_name:

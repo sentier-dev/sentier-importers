@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sentier-dev/sentier-importers/main/openlineage/facets/1-0-0/SentierTransformationRunFacet.json",
+  "$defs": {
+    "SentierTransformationRunFacet": {
+      "allOf": [
+        {
+          "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunFacet"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "inputRowCount": {"type": "integer", "minimum": 0},
+            "outputRowCount": {"type": "integer", "minimum": 0},
+            "rowsRemoved": {"type": "integer", "minimum": 0},
+            "inputColumnCount": {"type": "integer", "minimum": 0},
+            "outputColumnCount": {"type": "integer", "minimum": 0},
+            "columnsRemoved": {"type": "array", "items": {"type": "string"}},
+            "columnsAdded": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": [
+            "inputRowCount",
+            "outputRowCount",
+            "rowsRemoved",
+            "inputColumnCount",
+            "outputColumnCount",
+            "columnsRemoved",
+            "columnsAdded"
+          ]
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "properties": {
+    "sentier_transformation": {"$ref": "#/$defs/SentierTransformationRunFacet"}
+  }
+}
