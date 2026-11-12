@@ -16,7 +16,6 @@ from sentier_importers.sources.agribalyse.flows import AgribalyseFlowsSource
 from sentier_importers.sources.agribalyse.flows_jrc import (
     HARMONISED,
     JrcFlowsSource,
-    bw_context_code,
     compartment_for_path,
     context_path,
 )
@@ -109,15 +108,15 @@ def test_one_row_per_flow_with_the_cased_spelling(tmp_path):
     }
 
 
-def test_context_gives_compartment_and_bw_context_notation(tmp_path):
-    by_code = {r["iri"].rsplit("/", 1)[1]: r for r in _rows(tmp_path)}
+def test_context_gives_the_compartment_and_no_bw_context_notation(tmp_path):
+    rows = _rows(tmp_path)
+    by_code = {r["iri"].rsplit("/", 1)[1]: r for r in rows}
     assert by_code["jrc-2"]["compartment"] == "soil"
-    assert by_code["jrc-2"]["additional_notations"] == ["bw-context:envi-grou-indu"]
     assert by_code["jrc-3"]["compartment"] == "natural resource"
-    assert by_code["jrc-3"]["additional_notations"] == ["bw-context:reso-air"]
     assert by_code["jrc-4"]["compartment"] == "land use"
-    assert by_code["jrc-4"]["additional_notations"] == ["bw-context:laus-occu"]
-    assert "additional_notations" not in by_code["jrc-1"]  # no code for long-term water
+    # the bw-context code belongs to the harmonised list; computing one here would
+    # feed matching.bw_context its own crosswalk back
+    assert all("additional_notations" not in r for r in rows)
 
 
 def test_context_helpers():
@@ -134,20 +133,6 @@ def test_context_helpers():
     assert compartment_for_path("Resources / Resources from ground / x") == "natural resource"
     assert compartment_for_path("Land use / Land transformation") == "land use"
     assert compartment_for_path("Something else") is None
-    assert (
-        bw_context_code("Emissions / Emissions to air / Emissions to air, unspecified")
-        == "envi-air-unkn"
-    )
-    assert (
-        bw_context_code("Resources / Resources from air / Renewable material resources from air")
-        == "reso-air"
-    )
-    assert (
-        bw_context_code(
-            "Emissions / Emissions to air / Emissions to non-urban air very high stack"
-        )
-        is None
-    )
 
 
 def test_a_flow_with_two_contexts_is_an_error(tmp_path):
