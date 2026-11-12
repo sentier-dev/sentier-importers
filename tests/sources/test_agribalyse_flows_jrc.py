@@ -10,8 +10,9 @@ import pytest
 from sentier_importers.core import registry as registry_mod
 from sentier_importers.core import vocab_contract, vocab_layers
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import ValidationError
+from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.core.source import SourceConfig
+from sentier_importers.sources.agribalyse.flows import AgribalyseFlowsSource
 from sentier_importers.sources.agribalyse.flows_jrc import (
     HARMONISED,
     JrcFlowsSource,
@@ -179,3 +180,36 @@ def test_registry_block_is_a_part_of_the_ef31_release():
     assert set(config.inputs) == {HARMONISED}
     assert config.inputs[HARMONISED].endswith("harmonised-flows-simple.json.gz")
     assert config.fetch_url.endswith("lciamethods_CF.parquet")
+
+
+def _harmonised_gz(tmp_path, flows):
+    path = tmp_path / "h.json.gz"
+    path.write_bytes(gzip.compress(json.dumps({"flows": flows}).encode()))
+    return path
+
+
+def test_the_two_parts_are_disjoint_and_cover_every_jrc_flow(tmp_path):
+    """The exclusion is the harmonised part's own emission rule, not a copy of it."""
+    harmonised = [
+        {"identifier": "a", "source": "EF 3.1", "prefLabel": "A"},
+        {"identifier": "b", "source": "EF 3.1", "prefLabel": "  "},  # not emitted: no label
+        {"identifier": "c", "source": "ecoinvent algorithm addition", "prefLabel": "C"},
+    ]
+    cf = tmp_path / "cf.parquet"
+    pq.write_table(_table([(u, u, *AIR) for u in "abcd"]), cf)
+    src = JrcFlowsSource(_config(cf, _harmonised_gz(tmp_path, harmonised)))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    jrc = {r["iri"] for r in src.transform(src.parse(src.fetch(ctx)))}
+    first = {r["iri"] for r in AgribalyseFlowsSource(_config(cf, "unused")).transform(harmonised)}
+    assert first == {FLOWS + "a"}
+    assert jrc == {FLOWS + "b", FLOWS + "c", FLOWS + "d"}
+    assert not first & jrc
+
+
+@pytest.mark.parametrize("flows", [{}, ["not a record"], []])
+def test_a_harmonised_list_that_excludes_nothing_is_a_parse_error(tmp_path, flows):
+    cf, _ = _write_inputs(tmp_path)
+    src = JrcFlowsSource(_config(cf, _harmonised_gz(tmp_path, flows)))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    with pytest.raises(ParseError, match="harmonised"):
+        src.transform(src.parse(src.fetch(ctx)))

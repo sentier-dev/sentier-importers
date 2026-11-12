@@ -26,7 +26,7 @@ from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
 from sentier_importers.matching.bw_context import BW_CONTEXT_PATH
-from sentier_importers.sources.agribalyse.flows import ALLOWED_SOURCE, FLOWS_SCHEME
+from sentier_importers.sources.agribalyse.flows import FLOWS_SCHEME, is_emitted
 from sentier_importers.sources.agribalyse.provenance import PROVENANCE_IRI
 
 #: Registry input: the harmonised flow list, whose EF 3.1 flows this part never emits.
@@ -63,13 +63,19 @@ def compartment_for_path(path: str) -> str | None:
 def _reverse_crosswalk() -> dict[str, str]:
     """EF context path -> ``bw-context`` code, one code per path: the code of the
     path's own domain (``reso-air`` for a resource, not ``envi-air-grle-unkn``)."""
-    codes: dict[str, str] = {}
+    by_path: dict[str, list[str]] = {}
     for code, path in BW_CONTEXT_PATH.items():
-        if path is None:
-            continue
-        domain = _DOMAIN.get(path.split(_SEP)[0])
-        if path not in codes or (domain and code.startswith(domain)):
-            codes[path] = code
+        if path is not None:
+            by_path.setdefault(path, []).append(code)
+    codes: dict[str, str] = {}
+    for path, candidates in by_path.items():
+        domain = _DOMAIN.get(path.split(_SEP)[0], "")
+        own = (
+            [c for c in candidates if c.startswith(domain)] if len(candidates) > 1 else candidates
+        )
+        if len(own) != 1:
+            raise ValueError(f"bw-context crosswalk: no single code for {path!r}: {candidates}")
+        codes[path] = own[0]
     return codes
 
 
@@ -83,21 +89,23 @@ def bw_context_code(path: str) -> str | None:
 
 def _label(names: list[str]) -> str:
     """The JRC spelling of a flow name: of several casings, the one with capitals."""
-    cased = [n for n in names if n != n.lower()]
+    cased = sorted(n for n in names if n != n.lower())
     return cased[0] if cased else names[0]
 
 
 def _harmonised_identifiers(raw: bytes) -> frozenset[str]:
-    """Identifiers the harmonised part emits (its ``source == "EF 3.1"`` flows)."""
+    """Identifiers the harmonised part emits (the rule is ``flows.is_emitted``)."""
     try:
         flows = json.loads(gzip.decompress(raw))["flows"]
     except (OSError, EOFError, ValueError, KeyError, TypeError) as exc:
         raise ParseError(f"{HARMONISED} is not the gzipped harmonised flow list: {exc!r}") from exc
-    return frozenset(
-        str(f["identifier"])
-        for f in flows
-        if f.get("source") == ALLOWED_SOURCE and f.get("identifier")
-    )
+    if not isinstance(flows, list) or not all(isinstance(f, dict) for f in flows):
+        raise ParseError(f"{HARMONISED}: 'flows' is not a list of flow records")
+    identifiers = frozenset(str(f["identifier"]) for f in flows if is_emitted(f))
+    if not identifiers:
+        # Nothing to exclude would re-emit every flow of the harmonised part.
+        raise ParseError(f"{HARMONISED}: no EF 3.1 flow found in the harmonised flow list")
+    return identifiers
 
 
 class JrcFlowsSource(Source):
