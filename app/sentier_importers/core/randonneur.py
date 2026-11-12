@@ -15,12 +15,15 @@ def codes_of(package: dict) -> set[str]:
     }
 
 
-def positive_finite_factor(value: float, name: str) -> float:
+def positive_finite_factor(value: object, name: str) -> float:
     """A mapping conversion factor, refused unless it is positive and finite.
 
     ``name`` labels the offending source row in the error.
     """
-    factor = float(value)
+    try:
+        factor = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name}: unit_conversion must be positive and finite") from exc
     if not math.isfinite(factor) or factor <= 0:
         raise ValueError(f"{name}: unit_conversion must be positive and finite")
     return factor

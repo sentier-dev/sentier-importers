@@ -174,7 +174,7 @@ def test_transform_refuses_non_positive_or_non_finite_conversion(bad):
         src.transform(records)
 
 
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1.0])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1.0, None, "", "abc", 10**400])
 def test_positive_finite_factor_refuses(bad):
     with pytest.raises(ValueError, match="row: unit_conversion must be positive and finite"):
         positive_finite_factor(bad, "row")
