@@ -11,6 +11,7 @@ from sentier_importers.sources.bafu.ef_units import (
     conversion_for,
     nomenclature_target_unit,
     nomenclature_unit_mismatch,
+    required_scale_factor,
     unit_conversion,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow
@@ -318,3 +319,29 @@ def test_nomenclature_unit_mismatch_allows_the_matching_dimension():
 def test_nomenclature_unit_mismatch_ignores_a_name_outside_the_table():
     flow = BafuFlow("Basalt", "resources", "in ground", "m3")
     assert nomenclature_unit_mismatch(flow, _ef_flow("Basalt")) is None
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "factor"),
+    [
+        ("Bq", "kBq", 0.001),
+        ("kBq", "Bq", 1000.0),
+        ("km", "m", 1000.0),
+        ("m", "km", 0.001),
+        ("kWh", "MJ", 3.6),
+        ("MJ", "kWh", 1 / 3.6),
+        ("kilowatt hour", "megajoule", 3.6),
+        ("ha", "m2", 10000.0),
+        ("m2", "hectare", 0.0001),
+    ],
+)
+def test_required_scale_factor_covers_both_directions(source, target, factor):
+    assert required_scale_factor(source, target) == pytest.approx(factor, rel=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [("kBq", "kBq"), ("MJ", "megajoule"), ("kg", "MJ"), ("Nm3", "m3"), (None, "kBq")],
+)
+def test_required_scale_factor_is_none_without_a_magnitude_change(source, target):
+    assert required_scale_factor(source, target) is None

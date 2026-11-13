@@ -73,7 +73,50 @@ _DIMENSION: dict[str, str] = {
 #: ``nomenclature_target_unit`` (round 5, decision 2026-09-14) for the very same two
 #: scaled pairs -- one table, so a characterised and an uncharacterised match of the
 #: same source unit are never rescaled by two different factors.
-_SCALED: dict[tuple[str, str], float] = {("Bq", "kBq"): 0.001, ("kWh", "megajoule"): 3.6}
+_SCALED: dict[tuple[str, str], float] = {
+    ("Bq", "kBq"): 0.001,
+    ("kWh", "megajoule"): 3.6,
+}
+
+
+def required_scale_factor(source_unit: str | None, target_unit: str | None) -> float | None:
+    """Known magnitude changes requiring an explicit multiplier in a mapping.
+
+    Aliases change spelling only. Unknown pairs return None; no density,
+    calorific-value or chemical conversion is inferred from unit strings.
+    """
+    aliases = {
+        "Becquerel": "Bq",
+        "kilo Becquerel": "kBq",
+        "kilowatt hour": "kWh",
+        "MJ": "megajoule",
+        "kilometer": "km",
+        "meter": "m",
+        "square meter": "m2",
+        "hectare": "ha",
+    }
+    source = _MAGNITUDE.get(aliases.get(source_unit, source_unit))
+    target = _MAGNITUDE.get(aliases.get(target_unit, target_unit))
+    if source is None or target is None or source[0] != target[0] or source == target:
+        return None
+    return source[1] / target[1]
+
+
+#: Each unit's size in a common base unit of its dimension, so ``required_scale_factor``
+#: knows every declared magnitude change in both directions. A mapping may declare a
+#: pair the matcher never produces (kBq -> Bq, MJ -> kWh), and must then carry the
+#: right factor, not a silent 1.0. ``_SCALED`` stays the matcher's own table.
+_MAGNITUDE: dict[str, tuple[str, float]] = {
+    "Bq": ("activity", 1.0),
+    "kBq": ("activity", 1000.0),
+    "m": ("length", 1.0),
+    "km": ("length", 1000.0),
+    "megajoule": ("energy", 1.0),
+    "kWh": ("energy", 3.6),
+    "m2": ("area", 1.0),
+    "ha": ("area", 10000.0),
+}
+
 
 #: The fixed mass -> volume factor for water (density, 1 kg == 0.001 m3), shared by
 #: ``conversion_for``'s characterised water-use special case and by
