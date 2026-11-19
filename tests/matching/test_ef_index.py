@@ -939,9 +939,11 @@ def test_real_index_counters_pin_the_current_ef_table(real_index):
 # --- ef-context: the exact EF context path of a factorless flow ----------------
 
 
-def _uncharacterised(tmp_path, vocab):
+def _uncharacterised(tmp_path, vocab, read_ef_context=True):
     return EfFlowIndex.from_files(
-        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+        *write_ef_inputs(tmp_path, [], vocab),
+        include_uncharacterised=True,
+        read_ef_context=read_ef_context,
     )
 
 
@@ -987,5 +989,56 @@ def test_an_energy_resource_with_an_exact_ef_context_is_not_uncertain(tmp_path):
 
 def test_ef_context_is_not_read_without_include_uncharacterised(tmp_path):
     vocab = [vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT)]
-    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, [], vocab))
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, [], vocab), read_ef_context=True)
     assert index.get("lt-water") is None
+
+
+def test_ef_context_is_not_read_by_default(tmp_path):
+    # read_ef_context is off unless asked for: a row that has only an ef-context
+    # notation is skipped, exactly like a row with no notation at all.
+    vocab = [
+        vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT),
+        vocab_row("bw-only", "Gadget", bw="envi-wate-suwa"),
+    ]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+    assert index.get("lt-water") is None
+    assert index.by_name("widget", "water") == []
+    assert index.get("bw-only") is not None
+
+
+def test_bw_context_alone_places_a_row_when_ef_context_is_not_read(tmp_path):
+    # a row with both notations is placed as before the ef-context notation existed:
+    # through the bw-context crosswalk, uncertain where that code is ambiguous.
+    vocab = [vocab_row("both", "Widget", bw="envi-wate-unkn", ef_context=WATER_UNSPEC_LT)]
+    both = _uncharacterised(tmp_path, vocab, read_ef_context=False).get("both")
+    assert (both.context_path, both.context_uncertain) == (WATER_UNSPEC, True)
+
+
+def test_an_energy_resource_is_uncertain_again_when_ef_context_is_not_read(tmp_path):
+    vocab = [
+        vocab_row("energy", "Energy, tidal, converted", bw="reso-wate", ef_context=RES_ENERGY)
+    ]
+    flow = _uncharacterised(tmp_path, vocab, read_ef_context=False).get("energy")
+    assert flow.bucket == "resource" and flow.context_path != RES_ENERGY
+    assert flow.context_uncertain is True
+
+
+def test_read_ef_context_is_the_same_flag_through_every_constructor(tmp_path):
+    vocab = [vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT)]
+    cf_path, terms_dir = write_ef_inputs(tmp_path, [], vocab)
+    off = EfFlowIndex.from_bytes(cf_path.read_bytes(), terms_dir, include_uncharacterised=True)
+    on = EfFlowIndex.from_bytes(
+        cf_path.read_bytes(), terms_dir, include_uncharacterised=True, read_ef_context=True
+    )
+    assert off.get("lt-water") is None
+    assert on.get("lt-water").context_path == WATER_UNSPEC_LT
+    rows = [vocab[0]]
+    assert EfFlowIndex.from_tables([], rows, include_uncharacterised=True).get("lt-water") is None
+    assert (
+        EfFlowIndex.from_tables([], rows, include_uncharacterised=True, read_ef_context=True).get(
+            "lt-water"
+        )
+        is not None
+    )

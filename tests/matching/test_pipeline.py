@@ -1294,7 +1294,9 @@ def test_label_collision_discloses_candidates_without_cas_separately(nocas_pipel
 
 def _inclusive_pipeline(tmp_path, vocab, cf=()):
     index = EfFlowIndex.from_files(
-        *write_ef_inputs(tmp_path, list(cf), vocab, shards=1), include_uncharacterised=True
+        *write_ef_inputs(tmp_path, list(cf), vocab, shards=1),
+        include_uncharacterised=True,
+        read_ef_context=True,
     )
     return default_pipeline(index, {})
 

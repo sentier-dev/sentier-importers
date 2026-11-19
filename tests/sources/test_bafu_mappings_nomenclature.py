@@ -4,6 +4,7 @@ from dataclasses import replace
 import pytest
 from sentier_importers.core.context import RunContext
 from sentier_importers.matching.ef_index import EfFlowIndex
+from sentier_importers.matching.matchers import load_aliases
 from sentier_importers.matching.pipeline import Match, default_pipeline
 from sentier_importers.sources.bafu.mappings_biosphere_matched import ParsedInputs
 from sentier_importers.sources.bafu.mappings_biosphere_nomenclature import BafuEfNomenclatureSource
@@ -388,10 +389,21 @@ def test_name_only_alignment_prefers_the_namesake_on_its_own_unspecified_leaf(tm
 
 
 def _name_only_rows(tmp_path, vocab, flow):
+    # The source itself does not read ef-context notations (EfFlowIndex's
+    # read_ef_context is off for it), and no bw-context code reaches the long-term
+    # water leaf. The index is rebuilt here with the notation read, so the
+    # long-term rule is exercised through transform() for whenever it is turned on.
     root = _stage(tmp_path, vocab=VOCAB + vocab)
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     inputs = source.parse(source.fetch(ctx))[0]["inputs"]
+    index = EfFlowIndex.from_files(
+        root / "characterization-factors.parquet",
+        root / "terms",
+        include_uncharacterised=True,
+        read_ef_context=True,
+    )
+    inputs = replace(inputs, index=index, pipeline=default_pipeline(index, load_aliases()))
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
     rows = source.transform([{"inputs": augmented}])
     return [r for r in rows if r["source"]["name"] == flow.name]

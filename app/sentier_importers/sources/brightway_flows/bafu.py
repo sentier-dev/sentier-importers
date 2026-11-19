@@ -346,7 +346,12 @@ class BafuBrightwayFlowsBase(Source):
             by_id={item.source_id: item for item in bw.links[LIST]},
             universe=universe,
             packages=packages,
-            index=EfFlowIndex.from_bytes(cf_bytes, vocab_dir, include_uncharacterised=True),
+            # the one index that reads ef-context notations: the flows of the
+            # Brightway Flows 1.1 part of the ef-3.1 release are reachable through
+            # their links here, and stay out of our own name matcher's index
+            index=EfFlowIndex.from_bytes(
+                cf_bytes, vocab_dir, include_uncharacterised=True, read_ef_context=True
+            ),
             vectors=factor_vectors(cf_bytes),
             vocab_codes=vocab_flow_codes(vocab_dir),
             defects=load_label_defects(),
