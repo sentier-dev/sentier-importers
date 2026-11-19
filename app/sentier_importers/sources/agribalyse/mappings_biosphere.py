@@ -14,6 +14,7 @@ Scope guardrail (2026-07-10 decision — ignore ecoinvent nomenclature):
 """
 
 import io
+import json
 
 import pyarrow.parquet as pq
 from sentier_importers.core.source import Source
@@ -44,6 +45,9 @@ _COLUMNS = [
     "provenance",
 ]
 
+#: Optional input: the first package of the pair, whose keys this one must not repeat.
+_FIRST_PACKAGE = "brightway_flows"
+
 
 def _clean(value: object) -> str:
     """A parquet cell as a trimmed string, or ``""`` when it is nullish."""
@@ -70,7 +74,23 @@ class AgribalyseBiosphereMappingsSource(Source):
             and provenance not in _DROP_PROVENANCE
         )
 
+    def _covered(self) -> frozenset[tuple[str, tuple[str, ...]]]:
+        """Source keys ``(name, context)`` the pair's first package already holds.
+
+        Read from the optional ``brightway_flows`` input (the emitted
+        ``biosphere-1-brightway-flows.json``). This package is the fallback of that one,
+        and the validator of sentier-mappings refuses one key in two packages of a pair.
+        """
+        package = self.inputs.get(_FIRST_PACKAGE)
+        if package is None:
+            return frozenset()
+        return frozenset(
+            (entry["source"]["name"], tuple(entry["source"].get("context") or ()))
+            for entry in json.loads(package.content).get("replace", [])
+        )
+
     def transform(self, records: Records) -> Rows:
+        covered = self._covered()
         rows: Rows = []
         for rec in records:
             if not self._shippable(rec):
@@ -87,6 +107,8 @@ class AgribalyseBiosphereMappingsSource(Source):
                 source["context"] = context
             if cas := _clean(rec.get("source_cas")):
                 source["cas_number"] = cas
+            if (source_name, tuple(source.get("context") or ())) in covered:
+                continue
 
             target: Record = {"name": target_name}
             if t_unit := _clean(rec.get("target_unit")):

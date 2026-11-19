@@ -41,6 +41,8 @@ sources:
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/registry/mappings_biosphere.parquet"
       format: parquet
+    inputs:                                      # run after agribalyse-ef-brightway-flows
+      brightway_flows: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/agribalyse-3.2__ef-3.1/biosphere-1-brightway-flows.json"
     output_format: json
     package:
       name: agribalyse-3.2__ef-3.1-biosphere

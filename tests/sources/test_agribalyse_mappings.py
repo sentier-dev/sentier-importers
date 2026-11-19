@@ -219,3 +219,16 @@ def test_nullish_spellings_never_reach_an_entry():
     assert entries[0]["source"] == {"name": "Flow", "context": _row()["source_context"]}
     assert entries[0]["target"] == {"name": "Target"}
     assert "nan" not in json.dumps(entries).lower()
+
+
+def test_a_key_the_first_package_holds_is_left_to_it():
+    rows = [
+        _row(source_name="AOX", source_context=["Emissions to air"]),
+        _row(source_name="AOX", source_context=["Emissions to water"]),
+    ]
+    src = AgribalyseBiosphereMappingsSource(_config())
+    assert len(src.transform(src.parse(_raw(rows)))) == 2
+    first = {"replace": [{"source": {"name": "AOX", "context": ["Emissions to air"]}}]}
+    src.inputs = {"brightway_flows": RawData(json.dumps(first).encode(), "file://first.json")}
+    kept = src.transform(src.parse(_raw(rows)))
+    assert [e["source"]["context"] for e in kept] == [["Emissions to water"]]
