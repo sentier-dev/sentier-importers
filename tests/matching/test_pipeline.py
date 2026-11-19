@@ -22,6 +22,7 @@ from tests.matching.ef_fixtures import (
 LT = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
 SOIL_INDUSTRIAL = "Emissions / Emissions to soil / Emissions to non-agricultural soil"
 WATER_SEA = "Emissions / Emissions to water / Emissions to sea water"
+AIR_UNSPEC_LT = "Emissions / Emissions to air / Emissions to air, unspecified (long-term)"
 CF = [
     cf_row("zn-fresh", "zinc", WATER_FRESH, value=1.0),
     cf_row("zn-unspec", "zinc", WATER_UNSPEC, value=1.0),
@@ -1282,3 +1283,101 @@ def test_label_collision_discloses_candidates_without_cas_separately(nocas_pipel
         detail="label collision: 2 (and 1 without CAS) EF flows named sodium with "
         "different CAS (1120-01-0, 7440-23-5); no source CAS to arbitrate",
     )
+
+
+# --- an immediate source never lands on a long-term EF leaf (2026-11-19) -----------
+# The mirror of round 7: the Brightway Flows 1.1 part of the ef-3.1 release brings
+# factorless flows that exist only on "... unspecified (long-term)" (exact
+# ``ef-context`` notation). A source whose sub-compartment is not long-term must
+# never be placed there, by any placement; the candidate counts as not placeable.
+
+
+def _inclusive_pipeline(tmp_path, vocab, cf=()):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, list(cf), vocab, shards=1), include_uncharacterised=True
+    )
+    return default_pipeline(index, {})
+
+
+@pytest.mark.parametrize("sub", ["river", "lake", "ocean", "groundwater", "unspecified"])
+def test_immediate_water_source_is_not_placed_on_a_sole_long_term_namesake(tmp_path, sub):
+    # the real shape: BAFU "Borate" to river, EF "Borate" only on the long-term leaf
+    pipe = _inclusive_pipeline(tmp_path, [vocab_row("borate-lt", "Borate", ef_context=LT)])
+    got = pipe.match(water("Borate", sub), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has borate only in: emissions to water, unspecified (long-term)",
+    )
+
+
+@pytest.mark.parametrize("sub", ["high. pop.", "low. pop.", "indoor", "unspecified"])
+def test_immediate_air_source_is_not_placed_on_a_sole_long_term_namesake(tmp_path, sub):
+    pipe = _inclusive_pipeline(
+        tmp_path, [vocab_row("widget-air-lt", "Widget", ef_context=AIR_UNSPEC_LT)]
+    )
+    got = pipe.match(air("Widget", sub), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has widget only in: emissions to air, unspecified (long-term)",
+    )
+
+
+def test_immediate_air_source_takes_the_other_leaf_over_a_long_term_one(tmp_path):
+    # two factorless namesakes; the long-term leaf sorts first alphabetically, so the
+    # relaxed placement's own fallback would pick it. It is not eligible: the
+    # non-urban leaf is used, and the caveat still lists every leaf the name has.
+    vocab = [
+        vocab_row("widget-air-lt", "Widget", ef_context=AIR_UNSPEC_LT),
+        vocab_row("widget-air-rural", "Widget", ef_context=AIR_RURAL),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(air("Widget", "high. pop."), None)
+    assert got.code == "widget-air-rural"
+    assert got.placement == Placement.NOMENCLATURE.value
+    assert got.caveats == (
+        "EF has this name only in 'emissions to air, unspecified (long-term)', "
+        "'emissions to non-urban air or from high stacks'; placed on 'emissions to "
+        "non-urban air or from high stacks' for nomenclature alignment (no factor)",
+    )
+
+
+def test_immediate_water_source_takes_the_other_leaf_over_a_long_term_one(tmp_path):
+    vocab = [
+        vocab_row("widget-lt", "Widget", ef_context=LT),
+        vocab_row("widget-sea", "Widget", ef_context=WATER_SEA),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Widget", "river"), None)
+    assert got.code == "widget-sea"
+    assert got.placement == Placement.NOMENCLATURE.value
+
+
+def test_immediate_source_goes_on_to_a_later_tier_past_a_long_term_namesake(tmp_path):
+    # the name tier finds only the long-term namesake; the synonym tier finds a
+    # characterised flow on the source's own leaf, which is the match.
+    vocab = [
+        vocab_row("widget-lt", "Widget", ef_context=LT),
+        vocab_row("widget-ion-fresh", "Widget Ion", alt=["Widget"]),
+    ]
+    cf = [cf_row("widget-ion-fresh", "widget ion", WATER_FRESH)]
+    got = _inclusive_pipeline(tmp_path, vocab, cf).match(water("Widget", "river"), None)
+    assert got.code == "widget-ion-fresh"
+    assert got.tier == "synonym"
+    assert got.placement == Placement.EXACT.value
+
+
+@pytest.mark.parametrize(
+    ("flow", "context", "code"),
+    [
+        (water("Widget", "river, long-term"), LT, "widget-lt"),
+        (water("Widget", "groundwater, long-term"), LT, "widget-lt"),
+        (air("Widget", "low. pop., long-term"), AIR_UNSPEC_LT, "widget-lt"),
+    ],
+)
+def test_long_term_source_still_lands_on_the_long_term_leaf(tmp_path, flow, context, code):
+    vocab = [
+        vocab_row("widget-lt", "Widget", ef_context=context),
+        vocab_row("widget-other", "Widget", ef_context=WATER_SEA),
+        vocab_row("widget-air-other", "Widget", ef_context=AIR_RURAL),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(flow, None)
+    assert got.code == code
+    assert got.placement == Placement.EXACT.value

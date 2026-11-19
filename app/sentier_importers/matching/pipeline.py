@@ -80,6 +80,17 @@ long-term leaf, by any of the above, the flow is ``Unmatched("sub_compartment_ab
 in both packages -- the substance simply has no long-term flow in EF, and the
 ordinary (non-long-term) EF leaves it does have must never be substituted for it.
 
+The mirror rule, 2026-11-19: a BAFU source that is NOT long-term is never placed on a
+long-term EF leaf, by any placement. It was not needed while every long-term EF flow
+had an immediate namesake; the Brightway Flows 1.1 part of the ef-3.1 release brings
+factorless flows that exist only on ``... unspecified (long-term)``, and the relaxed
+NOMENCLATURE placement put immediate sources there (BAFU ``Borate`` to river onto EF
+``Borate`` on the long-term water leaf). Both directions are now one predicate,
+``compartments.long_term_agrees``, which ``_resolve`` asks once per candidate before
+any placement: a candidate that fails it is not placeable. It still counts as found,
+so a flow with nothing else to land on ends ``sub_compartment_absent`` (naming the
+long-term leaf) and later tiers still get their chance.
+
 Round 4, decision 2026-09-13, one more tiebreak inside ``_pick``, tried only after the
 source CAS itself fails to single out exactly one candidate (no source CAS, or the CAS
 matches none or several of them -- a CAS that DOES single one out is positive evidence
@@ -122,7 +133,9 @@ from sentier_importers.matching.compartments import (
     KNOWN_SUBCATEGORIES,
     Placement,
     bucket_of_bafu_category,
+    is_long_term,
     is_uninformative_resource_sub,
+    long_term_agrees,
     place,
     unspecified_leaf,
 )
@@ -335,7 +348,8 @@ class MatchPipeline:
         uncharacterised flows (nomenclature package only, decision (f)(1)), the relaxed
         nomenclature placement (module docstring) -- itself guarded (round 7, decision
         2026-09-14) so a long-term BAFU source only ever lands there on a candidate
-        leaf that is itself a long-term leaf, never on a plain one; failing that, and
+        leaf that is itself a long-term leaf, never on a plain one, and (2026-11-19)
+        any other source never on a long-term one; failing that, and
         only for a ``water`` / ``unspecified`` source, ``Placement.DEFAULT_LEAF``
         (module docstring); otherwise ``sub_compartment_absent``, naming every
         distinct candidate name and leaf so a reviewer can see what EF actually
@@ -343,6 +357,16 @@ class MatchPipeline:
         """
         if not candidates:
             return None
+        # The one long-term gate (module docstring): a long-term source only on a
+        # long-term leaf, any other source never on one. Every placement below
+        # draws from ``placeable``; ``candidates`` itself is kept for what was
+        # found (the all-uncharacterised test, the DEFAULT_LEAF gate, the caveats
+        # and the sub_compartment_absent detail).
+        placeable = [
+            c
+            for c in candidates
+            if long_term_agrees(c.subcategory_override or flow.subcategory, c.flow.leaf)
+        ]
         # a list of (candidate, placement) pairs, not a dict keyed by candidate:
         # Candidate is a frozen dataclass, so distinct-but-equal candidates could
         # otherwise collapse and silently drop a duplicate.
@@ -355,7 +379,7 @@ class MatchPipeline:
                     c.flow.context_path,
                 ),
             )
-            for c in candidates
+            for c in placeable
         ]
         exact = [c for c, p in placed if p is Placement.EXACT]
         if exact:
@@ -371,6 +395,7 @@ class MatchPipeline:
             self._resource_fallback
             and bucket == "resource"
             and len(leafs) == 1
+            and placeable
             and is_uninformative_resource_sub(flow.category, flow.subcategory, flow.name)
         ):
             caveat = (
@@ -378,7 +403,7 @@ class MatchPipeline:
                 f"EF has {', '.join(names)} only as {leafs[0]}"
             )
             return self._pick(
-                candidates, flow, cas, matcher.tier, Placement.RESOURCE_BRANCH, (caveat,)
+                placeable, flow, cas, matcher.tier, Placement.RESOURCE_BRANCH, (caveat,)
             )
         if self._index.includes_uncharacterised and all(
             not c.flow.characterised for c in candidates
@@ -390,23 +415,18 @@ class MatchPipeline:
             # today: EF's long-term leaves are the only place a long-term source's
             # own fate is modelled at all, and this placement must not misrepresent
             # it as an ordinary emission (the same mistake retired
-            # Placement.LONG_TERM_COLLAPSED made outright, by a side door). A
-            # non-long-term source is unrestricted, as before: prefer the plain
-            # bucket-level unspecified leaf, then the alphabetically first leaf.
+            # Placement.LONG_TERM_COLLAPSED made outright, by a side door). The
+            # mirror holds for a non-long-term source (2026-11-19): it is never
+            # placed on a long-term leaf here. Both come from ``placeable`` above;
+            # among the leafs left, prefer the bucket-level unspecified leaf of the
+            # source's own kind, then the alphabetically first.
             # Same expression as the ``placed`` list above, so a candidate whose own
             # ``subcategory_override`` disagrees with ``flow.subcategory`` (e.g. the
             # land-use family's "land" override) is judged by the same effective
             # subcategory it was actually placed against, not the source's raw one.
             effective_subcategory = candidates[0].subcategory_override or flow.subcategory
-            is_long_term_source = "long-term" in effective_subcategory
-            if is_long_term_source:
-                eligible_leafs = [
-                    candidate_leaf for candidate_leaf in leafs if "long-term" in candidate_leaf
-                ]
-                preferred = [unspecified_leaf(bucket, long_term=True)]
-            else:
-                eligible_leafs = leafs
-                preferred = [unspecified_leaf(bucket, long_term=False)]
+            eligible_leafs = sorted({c.flow.leaf for c in placeable})
+            preferred = [unspecified_leaf(bucket, long_term=is_long_term(effective_subcategory))]
             leaf = next(
                 (p for p in preferred if p in eligible_leafs),
                 eligible_leafs[0] if eligible_leafs else None,
@@ -423,7 +443,7 @@ class MatchPipeline:
                         f"EF has this name only in {listed}; placed on {leaf!r} "
                         "for nomenclature alignment (no factor)"
                     )
-                leaf_candidates = [c for c in candidates if c.flow.leaf == leaf]
+                leaf_candidates = [c for c in placeable if c.flow.leaf == leaf]
                 return self._pick(
                     leaf_candidates,
                     flow,
@@ -432,8 +452,8 @@ class MatchPipeline:
                     Placement.NOMENCLATURE,
                     (nomenclature_caveat,),
                 )
-            # a long-term source whose candidates never include a long-term leaf:
-            # decline this placement and fall through to sub_compartment_absent below.
+            # no candidate leaf agrees with the source on long-term-ness: decline
+            # this placement and fall through to sub_compartment_absent below.
         # Ordered after NOMENCLATURE, not before: test_relaxed_placement_falls_back_
         # to_the_alphabetically_first_leaf pins NOMENCLATURE's own alphabetical-leaf
         # fallback among uncharacterised candidates, and DEFAULT_LEAF
@@ -456,7 +476,7 @@ class MatchPipeline:
                 if leaf is not None
             }
             if not any(c.flow.leaf in blocking_leafs for c in candidates):
-                default_candidates = [c for c in candidates if c.flow.leaf == DEFAULT_LEAF[bucket]]
+                default_candidates = [c for c in placeable if c.flow.leaf == DEFAULT_LEAF[bucket]]
                 if default_candidates:
                     return self._pick(
                         default_candidates,

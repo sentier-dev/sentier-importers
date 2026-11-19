@@ -387,6 +387,60 @@ def test_name_only_alignment_prefers_the_namesake_on_its_own_unspecified_leaf(tm
     )
 
 
+def _name_only_rows(tmp_path, vocab, flow):
+    root = _stage(tmp_path, vocab=VOCAB + vocab)
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    inputs = source.parse(source.fetch(ctx))[0]["inputs"]
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    rows = source.transform([{"inputs": augmented}])
+    return [r for r in rows if r["source"]["name"] == flow.name]
+
+
+_WATER_LT = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
+_AIR_LT = "Emissions / Emissions to air / Emissions to air, unspecified (long-term)"
+
+
+@pytest.mark.parametrize("long_term_context", [_WATER_LT, _AIR_LT])
+def test_name_only_alignment_refuses_a_sole_long_term_namesake_for_an_immediate_source(
+    tmp_path, long_term_context
+):
+    # the only namesake sits on a long-term leaf of another bucket: a soil emission
+    # that is not long-term is not aligned onto it, not even by name alone.
+    vocab = [vocab_row("gneiss-lt", "Gneiss", ef_context=long_term_context)]
+    flow = BafuFlow("Gneiss", "emissions to soil", "industrial", "kg")
+    assert not _name_only_rows(tmp_path, vocab, flow)
+
+
+def test_name_only_alignment_takes_the_other_namesake_over_a_long_term_one(tmp_path):
+    # "a-..." sorts first by code, so it would be the code-sorted pick; it is on a
+    # long-term leaf and the source is not long-term, so the soil namesake is used.
+    vocab = [
+        vocab_row("a-gneiss-lt", "Gneiss", ef_context=_WATER_LT),
+        vocab_row("b-gneiss-soil", "Gneiss", bw="envi-grou-indu"),
+    ]
+    flow = BafuFlow("Gneiss", "resources", "in ground", "kg")
+    (row,) = _name_only_rows(tmp_path, vocab, flow)
+    assert row["target"]["code"] == "b-gneiss-soil"
+    assert "context" not in row["target"]
+
+
+def test_in_bucket_long_term_namesake_is_not_emitted_for_an_immediate_source(tmp_path):
+    # end to end through the nomenclature source: BAFU "Borate" to river, EF "Borate"
+    # only on the long-term water leaf. No entry is emitted.
+    vocab = [vocab_row("borate-lt", "Borate", ef_context=_WATER_LT)]
+    flow = BafuFlow("Borate", "emissions to water", "river", "kg")
+    assert not _name_only_rows(tmp_path, vocab, flow)
+
+
+def test_in_bucket_long_term_namesake_is_emitted_for_a_long_term_source(tmp_path):
+    vocab = [vocab_row("borate-lt", "Borate", ef_context=_WATER_LT)]
+    flow = BafuFlow("Borate", "emissions to water", "river, long-term", "kg")
+    (row,) = _name_only_rows(tmp_path, vocab, flow)
+    assert row["target"]["code"] == "borate-lt"
+    assert row["target"]["context"][-1] == "Emissions to water, unspecified (long-term)"
+
+
 def test_name_only_alignment_is_withheld_when_any_namesake_is_characterised(tmp_path):
     # "Talc" carries a real factor in the air bucket (a different bucket than this
     # source's own "resource" category, so the ordinary pipeline never finds it

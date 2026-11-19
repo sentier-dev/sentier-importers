@@ -56,7 +56,7 @@ from sentier_importers.core.context import RunContext
 from sentier_importers.core.randonneur import codes_of
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
-from sentier_importers.matching.compartments import Placement, unspecified_leaf
+from sentier_importers.matching.compartments import Placement, is_long_term, unspecified_leaf
 from sentier_importers.matching.ef_index import (
     UNCERTAIN_RESOURCE_NAME,
     EfFlow,
@@ -292,13 +292,27 @@ def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
     all, so a long-term source aligned this way asserts no immediate-emission
     context either -- and no factor can attach regardless, since any characterised
     namesake vetoes the whole name above.
+
+    The mirror direction is guarded (2026-11-19): the target is still one specific
+    EF flow, and a source that is not long-term must not be aligned onto a flow
+    that sits on a long-term leaf, context emitted or not. Such namesakes are not
+    eligible (``compartments.is_long_term``, the same test the pipeline's own
+    ``long_term_agrees`` gate uses); when no other namesake is left the flow stays
+    ``no_ef_flow``. The caveat still names every leaf the name was found on.
     """
     namesakes = index.by_name_any_bucket(flow.name)
     if not namesakes or any(namesake.characterised for namesake in namesakes):
         return None
+    eligible = (
+        namesakes
+        if is_long_term(flow.subcategory)
+        else [namesake for namesake in namesakes if not is_long_term(namesake.leaf)]
+    )
+    if not eligible:
+        return None
     chosen = next(
-        (namesake for namesake in namesakes if _sits_on_own_unspecified_leaf(namesake)),
-        namesakes[0],
+        (namesake for namesake in eligible if _sits_on_own_unspecified_leaf(namesake)),
+        eligible[0],
     )
     leafs = ", ".join(sorted({namesake.leaf for namesake in namesakes}))
     category = _SOURCE_CATEGORY_HUMAN.get(flow.category, flow.category)
