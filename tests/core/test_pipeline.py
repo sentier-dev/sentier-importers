@@ -322,3 +322,70 @@ def test_missing_named_input_error_names_the_input(tmp_path):
 def test_missing_input_keeps_its_error_type_through_the_context_wrapper(tmp_path):
     with pytest.raises(MissingInputError):
         pipeline.validate_source(_rooted_source(tmp_path, "private"), _ctx(tmp_path))
+
+
+# --- a relations-only part: edges on terms other parts of the release emit ----
+
+KG = "http://qudt.org/vocab/unit/KiloGM"
+FLOWS = "https://vocab.sentier.dev/flows/"
+
+
+class _FlowSource(_RowsSource):
+    ROWS = [{"iri": FLOWS + "a", "pref_label": "A", "source": DEMO_SOURCE}]
+
+
+class _UnitEdgeSource(_RowsSource):
+    relations_only = True
+    ROWS = [{"iri": FLOWS + "a", "unit": KG}]
+
+
+class _StrayUnitEdgeSource(_UnitEdgeSource):
+    ROWS = [{"iri": FLOWS + "nobody", "unit": KG}]
+
+
+def _flows():
+    return _vocab_source(_FlowSource, "demo-flows", "elementary-flow")
+
+
+def _unit_edges(cls=_UnitEdgeSource):
+    return _vocab_source(cls, "demo-flow-units", "elementary-flow")
+
+
+def test_a_source_emits_terms_unless_it_says_otherwise():
+    assert Source.relations_only is False
+
+
+def test_a_relations_only_part_adds_edges_and_no_term_to_the_release(tmp_path):
+    files = pipeline.run_release(
+        "demo-1", [_flows(), _unit_edges(), _provenance()], _vocab_ctx(tmp_path)
+    )
+    terms = pq.read_table(files[0]).to_pylist()
+    assert [t["iri"] for t in terms] == [FLOWS + "a", DEMO_SOURCE]
+    edges = pq.read_table(files[1]).to_pylist()
+    assert [(e["subject"], e["predicate"], e["object"], e["source"]) for e in edges] == [
+        (FLOWS + "a", "qudt:hasUnit", KG, DEMO_SOURCE)
+    ]
+
+
+def test_a_relations_only_edge_on_a_term_no_part_emits_fails_the_release(tmp_path):
+    parts = [_flows(), _unit_edges(_StrayUnitEdgeSource), _provenance()]
+    with pytest.raises(ValidationError, match="nobody.*is not a term of this release"):
+        pipeline.run_release("demo-1", parts, _vocab_ctx(tmp_path))
+
+
+def test_a_relations_only_part_is_validated_and_staged_on_its_own(tmp_path):
+    assert pipeline.validate_source(_unit_edges(), _vocab_ctx(tmp_path)) == 1
+    out = pipeline.run_source(_unit_edges(), _vocab_ctx(tmp_path))
+    part = tmp_path / "o" / "sentier_vocab" / "parts" / "demo-flow-units"
+    assert out == part / "relations" / "demo-1.parquet"
+    assert not (part / "terms").exists()
+    assert [e["subject"] for e in pq.read_table(out).to_pylist()] == [FLOWS + "a"]
+
+
+class _NothingSource(_RowsSource):
+    ROWS: list[dict] = []
+
+
+def test_a_vocab_part_without_a_row_is_not_staged(tmp_path):
+    with pytest.raises(ValidationError, match="emits no row for the terms layer"):
+        pipeline.run_source(_vocab_source(_NothingSource, "demo", "product"), _vocab_ctx(tmp_path))

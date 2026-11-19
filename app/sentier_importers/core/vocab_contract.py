@@ -203,14 +203,23 @@ def _accepts(kinds: tuple[str, ...], type_name: str) -> bool:
 
 
 def _check_relation(
-    row: dict, types: dict[str, str], contract: Contract, source: str
+    row: dict,
+    types: dict[str, str],
+    contract: Contract,
+    source: str,
+    subjects_elsewhere: bool = False,
 ) -> list[str]:
     where = f"{row.get('subject')} {row.get('predicate')} {row.get('object')}"
     errors = _check_common(where, row, contract.required_relation_columns, contract, source)
     predicate = contract.predicates.get(row.get("predicate"))
     if predicate is None:
         return [*errors, f"{where}: {row.get('predicate')!r} is not a listed predicate"]
-    subject_type = types.get(row.get("subject"))
+    subject = row.get("subject")
+    subject_type = types.get(subject)
+    if subject_type is None and subjects_elsewhere:
+        # A relations-only part alone: its subjects are terms of other parts, typed
+        # by their namespace. That they exist is checked on the whole release.
+        subject_type = contract.type_for_iri(str(subject or ""))
     if subject_type is None:
         errors.append(f"{where}: subject {row.get('subject')!r} is not a term of this release")
     elif not _accepts(predicate.subject, subject_type):
@@ -246,12 +255,21 @@ def _check_cardinality(relations: Rows, contract: Contract) -> list[str]:
 
 
 def check(
-    terms: Rows, relations: Rows, contract: Contract, *, release: str, complete: bool
+    terms: Rows,
+    relations: Rows,
+    contract: Contract,
+    *,
+    release: str,
+    complete: bool,
+    subjects_elsewhere: bool = False,
 ) -> list[str]:
     """Every problem in the term and relation rows of ``release``, one line each.
 
     ``complete`` says the rows are the whole release and not one source's part of
-    it; only then must the release hold its own source term.
+    it; only then must the release hold its own source term. ``subjects_elsewhere``
+    says the rows are a relations-only part on its own: a subject that is not among
+    ``terms`` is typed by its namespace instead of refused. Never set for a whole
+    release, where every subject must be a term.
     """
     source = contract.sources_namespace + release
     errors: list[str] = []
@@ -264,7 +282,7 @@ def check(
         elif iri is not None:
             types[iri] = row.get("type")
     for row in relations:
-        errors.extend(_check_relation(row, types, contract, source))
+        errors.extend(_check_relation(row, types, contract, source, subjects_elsewhere))
     errors.extend(_check_cardinality(relations, contract))
     if complete and types.get(source) != SOURCE_TYPE:
         errors.append(f"release {release!r} does not hold its source term {source}")
@@ -272,9 +290,22 @@ def check(
 
 
 def validate(
-    terms: Rows, relations: Rows, contract: Contract, *, release: str, complete: bool
+    terms: Rows,
+    relations: Rows,
+    contract: Contract,
+    *,
+    release: str,
+    complete: bool,
+    subjects_elsewhere: bool = False,
 ) -> None:
     """Raise ``ValidationError`` listing every problem ``check`` finds."""
-    errors = check(terms, relations, contract, release=release, complete=complete)
+    errors = check(
+        terms,
+        relations,
+        contract,
+        release=release,
+        complete=complete,
+        subjects_elsewhere=subjects_elsewhere,
+    )
     if errors:
         raise ValidationError(f"vocab release {release!r} is not valid:\n" + "\n".join(errors))

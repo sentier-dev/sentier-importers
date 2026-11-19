@@ -189,3 +189,16 @@ def test_validate_raises_with_every_problem(contract):
         )
     message = str(excinfo.value)
     assert "status 'final'" in message and "duplicate iri" in message
+
+
+def test_a_subject_of_another_part_is_typed_by_its_namespace_when_asked(contract):
+    unit = _edge(FLOWS + "a", "qudt:hasUnit", "http://qudt.org/vocab/unit/KiloGM")
+    assert any("is not a term of this release" in e for e in _check(contract, [], [unit]))
+    check = lambda edges: vocab_contract.check(  # noqa: E731
+        [], edges, contract, release=RELEASE, complete=False, subjects_elsewhere=True
+    )
+    assert check([unit]) == []
+    wrong = _edge("https://vocab.sentier.dev/organisms/x", "qudt:hasUnit", unit["object"])
+    assert any("does not accept subject type 'organism'" in e for e in check([wrong]))
+    nowhere = _edge("https://example.org/x", "qudt:hasUnit", unit["object"])
+    assert any("is not a term of this release" in e for e in check([nowhere]))
