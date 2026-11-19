@@ -1,0 +1,156 @@
+{SimaPro 9.6.0.1}
+{processes}
+{CSV Format version: 9.0.0}
+{CSV separator: Semicolon}
+{Decimal separator: ,}
+
+Process
+
+Category type
+material
+
+Process identifier
+MINI000000000000001
+
+Process name
+Wheat grain, at farm {FR} U
+
+Comment
+"Synthetic dataset; first paragraphsecond paragraph, with an ellipsis… and more"
+
+Products
+Wheat grain, at farm {FR} U;kg;1;100;not defined;Agricultural;
+
+Avoided products
+
+Resources
+Water;in water;m3;0,5;Undefined;0;0;0;
+Coal, hard;in ground;kg;0,1;Undefined;0;0;0;
+Occupation, arable;land;m2a;1,2;Undefined;0;0;0;
+
+Materials/fuels
+Diesel, at farm {FR} U;kg;0,02;Undefined;0;0;0;
+
+Electricity/heat
+Electricity, low voltage {FR} U;kWh;0,3;Undefined;0;0;0;
+
+Emissions to air
+Ammonia;;g;12;Undefined;0;0;0;"(3,3,2,1,2); measured"
+Ammonia;low. pop.;kg;0,001;Undefined;0;0;0;
+Water;;kg;3;Undefined;0;0;0;"Evaporation, see M…ller (2006); p. 12;;kg"
+Radon-222;low. pop., long-term;kBq;3;Undefined;0;0;0;
+Not a substance;;kg;1;Undefined;0;0;0;
+
+Emissions to water
+Nitrate;groundwater;kg;0,2;Undefined;0;0;0;
+
+Emissions to soil
+Cadmium;agricultural;kg;0,000001;Undefined;0;0;0;
+
+Final waste flows
+Slags;;kg;0,4;Undefined;0;0;0;
+
+Non material emissions
+
+Social issues
+
+Economic issues
+
+Waste to treatment
+Wastewater, average {FR} U;m3;0,01;Undefined;0;0;0;
+
+Input parameters
+
+Calculated parameters
+
+End
+
+Process
+
+Category type
+waste treatment
+
+Process identifier
+MINI000000000000002
+
+Process name
+Sludge spreading {FR} U
+
+Waste treatment
+Sludge spreading {FR} U;kg;1;All waste types;Others;
+
+Avoided products
+
+Resources
+
+Materials/fuels
+
+Electricity/heat
+
+Emissions to air
+Ammonia;;kg;0,02;Undefined;0;0;0;
+
+Emissions to water
+
+Emissions to soil
+Cadmium;agricultural;kg;0,000002;Undefined;0;0;0;
+Cadmium;;kg;0,000003;Undefined;0;0;0;
+
+Final waste flows
+
+Non material emissions
+
+Social issues
+
+Economic issues
+
+Waste to treatment
+
+Input parameters
+
+Calculated parameters
+
+End
+
+System description
+
+Name
+MINI
+
+End
+
+Units
+kg;Mass;1;kg
+m3;Volume;1;m3
+
+End
+
+Raw materials
+Coal, hard;kg;;
+Occupation, arable;m2a;;
+Unused resource;kg;;
+Water;m3;007732-18-5;Formula: H2O
+
+End
+
+Airborne emissions
+Ammonia;kg;007664-41-7;Formula: NH3
+Radon-222;kBq;014859-67-7;
+Water;kg;007732-18-5;"Formula: H2O; vapour"
+
+End
+
+Waterborne emissions
+Nitrate;kg;014797-55-8;Formula: NO3-
+
+End
+
+Final waste flows
+Slags;kg;;
+
+End
+
+Emissions to soil
+Cadmium;kg;007440-43-9;Formula: Cd
+
+End
