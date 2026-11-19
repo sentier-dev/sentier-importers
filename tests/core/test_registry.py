@@ -383,3 +383,40 @@ def test_real_registry_declares_the_brightway_flows_bafu_sources():
     assert "brightway_flows" in by_name["bafu-ef-coverage"].inputs
     for name in expected:
         assert registry_mod.load_source(by_name[name]).config.name == name
+
+
+def test_agribalyse_pair_emit_filenames_are_the_two_numbered_packages_plus_the_sidecar():
+    # data/agribalyse-3.2__ef-3.1/ holds biosphere-1-brightway-flows.json, looked up
+    # first, biosphere-2-curated.json, the fallback by name, and the review sidecar
+    by_name = {
+        c.name: c
+        for c in registry_mod.load_registry()
+        if c.target == "sentier_mappings" and c.category == "agribalyse-3.2__ef-3.1"
+    }
+    assert {name: c.emit_filename for name, c in by_name.items()} == {
+        "agribalyse-ef-brightway-flows": "biosphere-1-brightway-flows",
+        "biosphere": "biosphere-2-curated",
+        "agribalyse-ef-brightway-flows-review": "brightway_flows_review",
+    }
+    assert {name: c.package_verb for name, c in by_name.items()} == {
+        "agribalyse-ef-brightway-flows": "replace",
+        "biosphere": "replace",
+        "agribalyse-ef-brightway-flows-review": "review",
+    }
+    assert by_name["biosphere"].package_version == "0.2.0"
+    for name, config in by_name.items():
+        assert config.enabled is False
+        assert registry_mod.load_source(config).config.name == name
+
+
+def test_real_registry_declares_the_brightway_flows_agribalyse_sources():
+    by_name = {c.name: c for c in registry_mod.load_registry(data_root=Path("/root"))}
+    for name in ("agribalyse-ef-brightway-flows", "agribalyse-ef-brightway-flows-review"):
+        config = by_name[name]
+        assert config.access == "public"
+        assert config.fetch_url == by_name["bafu-ef-brightway-flows"].fetch_url
+        assert config.inputs == {
+            "flows": "file:///root/sentier-agribalyse/source/AGB32_ecoinvent_free.CSV.xz",
+            "ef_cfs": by_name["bafu-ef-brightway-flows"].inputs["ef_cfs"],
+            "ef_vocab": by_name["bafu-ef-brightway-flows"].inputs["ef_vocab"],
+        }

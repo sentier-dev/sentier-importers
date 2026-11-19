@@ -1,7 +1,10 @@
 """Agribalyse 3.2 → EF 3.1 biosphere crosswalk as a randonneur mapping package.
 
 Source: the built ``registry/mappings_biosphere.parquet``. Emits a randonneur ``replace``
-package for the ``agribalyse-3.2__ef-3.1`` pair in ``sentier-mappings``.
+package for the ``agribalyse-3.2__ef-3.1`` pair in ``sentier-mappings``: its second
+package (``biosphere-2-curated``), read by name when the Brightway Flows package has
+no entry for a flow. Most entries are keyed by the flow name alone: the registry has
+no context and no unit for them, and none is invented here.
 
 Scope guardrail (2026-07-10 decision — ignore ecoinvent nomenclature):
 - keep only ``target_db in {"ef", "biosphere3"}`` (no ecoinvent-biosphere targets exist);
@@ -22,6 +25,10 @@ _ALLOWED_TARGET_DB = {"ef", "biosphere3"}
 _DROP_PROVENANCE = {"harmonised-flows-simple"}
 #: provenance substring that marks an ecoinvent-derived mapping (excluded).
 _ECOINVENT = "ecoinvent"
+#: pandas writes a missing string as the literal "nan" through parquet; every field is
+#: screened so no entry carries it (as ``bafu.mappings_biosphere``). 1,082 rows of
+#: the registry have the context ``["nan", "nan"]`` and the unit ``"nan"``.
+_NULLISH = {"", "nan", "none", "<na>"}
 
 _COLUMNS = [
     "source_name",
@@ -36,6 +43,14 @@ _COLUMNS = [
     "priority_tier",
     "provenance",
 ]
+
+
+def _clean(value: object) -> str:
+    """A parquet cell as a trimmed string, or ``""`` when it is nullish."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in _NULLISH else text
 
 
 class AgribalyseBiosphereMappingsSource(Source):
@@ -60,23 +75,23 @@ class AgribalyseBiosphereMappingsSource(Source):
         for rec in records:
             if not self._shippable(rec):
                 continue
-            source_name = (rec.get("source_name") or "").strip()
-            target_name = (rec.get("target_name") or "").strip()
+            source_name = _clean(rec.get("source_name"))
+            target_name = _clean(rec.get("target_name"))
             if not source_name or not target_name:
                 continue
 
             source: Record = {"name": source_name}
-            if unit := (rec.get("source_unit") or "").strip():
+            if unit := _clean(rec.get("source_unit")):
                 source["unit"] = unit
-            if context := [c for c in (rec.get("source_context") or []) if c]:
+            if context := [c for c in map(_clean, rec.get("source_context") or []) if c]:
                 source["context"] = context
-            if cas := rec.get("source_cas"):
+            if cas := _clean(rec.get("source_cas")):
                 source["cas_number"] = cas
 
             target: Record = {"name": target_name}
-            if t_unit := (rec.get("target_unit") or "").strip():
+            if t_unit := _clean(rec.get("target_unit")):
                 target["unit"] = t_unit
-            if code := rec.get("target_code"):
+            if code := _clean(rec.get("target_code")):
                 target["code"] = code
 
             entry: Record = {"source": source, "target": target}
