@@ -58,11 +58,11 @@ from sentier_importers.sources.brightway_flows.links import (
     UNCERTAIN_CONTEXT,
     UNCHARACTERISED,
     Decision,
+    link_entry,
     no_score_note,
     order,
     rescaled_note,
     scores,
-    target_record,
     their_unit,
 )
 from sentier_importers.sources.randonneur_data.ecoinvent_ef_biosphere import vocab_flow_codes
@@ -132,26 +132,16 @@ def package_entry(source: Record, state: State) -> tuple[Record | None, str | No
     decision = decide(source, state)
     if decision.reason is not None:
         return None, decision.reason
-    flow, link = decision.target, decision.link
     unit, factor, reason = their_unit(source, decision, state)
     if reason is not None:
         return None, reason
-    scoring = scores(flow.code, state)
+    scoring = scores(decision.target.code, state)
     reviewed = _taken(source, state) if scoring else None
     if scoring and reviewed is None:
         return None, "characterised_held_for_review"
-    comments = [f"{RELEASE}, skos:{link.match}"]
-    if not scoring:
-        comments.append(no_score_note(flow.code, state))
-    entry: Record = {"source": dict(source), "target": target_record(flow, unit)}
-    if "context" not in entry["target"]:
-        comments.append(UNCERTAIN_CONTEXT)
-    if factor is not None:
-        entry["conversion_factor"] = factor
-        comments.append(rescaled_note(factor, link))
+    entry = link_entry(source, decision, unit, factor, state)
     if reviewed is not None:
-        comments.append(f"reviewed {REVIEWED}: {reviewed.reason}")
-    entry["comment"] = "; ".join(comments)
+        entry = {**entry, "comment": f"{entry['comment']}; reviewed {REVIEWED}: {reviewed.reason}"}
     return entry, None
 
 

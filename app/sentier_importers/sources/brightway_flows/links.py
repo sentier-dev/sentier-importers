@@ -23,6 +23,7 @@ from typing import Protocol
 from sentier_importers.core.types import Record
 from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex, LabelDefect
 from sentier_importers.sources.brightway_flows.correspondences import (
+    RELEASE,
     BrightwayFlows,
     ConsensusFlow,
     Link,
@@ -184,6 +185,28 @@ def no_score_note(code: str, state: LinkState) -> str:
 
 def rescaled_note(factor: float, link: Link) -> str:
     return f"amount rescaled by {factor:g} ({link.basis or 'conversion'})"
+
+
+def link_entry(
+    source: Mapping, decision: Decision, unit: str, factor: float | None, state: LinkState
+) -> Record:
+    """The package entry of a usable link: ``source`` onto their EF target in ``unit``.
+
+    The comment names the release and the match, says when the target changes no
+    score and why, when its context is left out, and how the amount is rescaled.
+    """
+    flow, link = decision.target, decision.link
+    comments = [f"{RELEASE}, skos:{link.match}"]
+    if not scores(flow.code, state):
+        comments.append(no_score_note(flow.code, state))
+    entry: Record = {"source": dict(source), "target": target_record(flow, unit)}
+    if "context" not in entry["target"]:
+        comments.append(UNCERTAIN_CONTEXT)
+    if factor is not None:
+        entry["conversion_factor"] = factor
+        comments.append(rescaled_note(factor, link))
+    entry["comment"] = "; ".join(comments)
+    return entry
 
 
 def order(source: Mapping) -> tuple[str, str, str]:
