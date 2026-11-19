@@ -8,8 +8,10 @@ import pytest
 from sentier_importers.matching.bw_context import (
     AMBIGUOUS_CODES,
     BW_CONTEXT_PATH,
+    EF_CONTEXT_PREFIX,
     NEVER_CHARACTERISED_CODES,
     context_for,
+    ef_context_for,
 )
 from sentier_importers.matching.compartments import (
     BAFU_BUCKET,
@@ -186,3 +188,20 @@ def test_pins_majority_leaf_against_real_data():
             assert len(ranked) >= 2, bw_code
             runner_up_context, _ = ranked[1]
             assert runner_up_context == AMBIGUOUS_CODES[bw_code], bw_code
+
+
+def test_ef_context_notation_gives_the_exact_path():
+    path = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
+    assert EF_CONTEXT_PREFIX == "ef-context:"
+    assert ef_context_for(["ec:200-001-8", f"ef-context:{path}"]) == path
+    assert ef_context_for([f"ef-context:  {path} "]) == path
+
+
+def test_ef_context_is_none_without_the_notation():
+    assert ef_context_for([]) is None
+    assert ef_context_for(["bw-context:laus-occu", None]) is None
+    assert ef_context_for(["ef-context:"]) is None  # an empty path places nothing
+
+
+def test_bw_context_crosswalk_does_not_read_the_ef_context_notation():
+    assert context_for(["ef-context:Land use / Land occupation"]) == (None, False)

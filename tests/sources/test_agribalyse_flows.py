@@ -174,12 +174,17 @@ def test_transform_keeps_a_flow_without_a_resolvable_compartment():
     assert "compartment" not in row
 
 
-def test_registry_declares_the_two_ef31_flow_parts_of_the_release():
+def test_registry_declares_the_three_ef31_flow_parts_of_the_release():
     from sentier_importers.core.registry import load_registry
 
     parts = [c for c in load_registry() if c.name.startswith("ef31-elementary-flows")]
-    # the harmonised list, and the JRC flows it lacks (flows_jrc); one release, one type
-    assert [c.name for c in parts] == ["ef31-elementary-flows", "ef31-elementary-flows-jrc"]
+    # the harmonised list, the JRC flows it lacks (flows_jrc), and the flows only
+    # Brightway Flows 1.1 lists (brightway_flows.vocab_flows); one release, one type
+    assert [c.name for c in parts] == [
+        "ef31-elementary-flows",
+        "ef31-elementary-flows-jrc",
+        "ef31-elementary-flows-bw11",
+    ]
     for part in parts:
         assert (part.category, part.term_type) == ("ef-3.1", "elementary-flow")
         assert part.emit_filename is None and not part.enabled

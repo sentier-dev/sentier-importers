@@ -54,6 +54,13 @@ derived; ``tests/matching/test_bw_context.py`` re-derives the majority (and runn
 leaf from the real inputs (when available, resolved via the ``SENTIER_METHODS_CF`` /
 ``SENTIER_VOCAB_FLOWS`` environment variables) and pins it against this table, to
 catch drift.
+
+A row of the Brightway Flows 1.1 part of the release (``sources.brightway_flows.
+vocab_flows``) carries no ``bw-context`` code: the 1.1 codes changed meaning
+(``envi-air-grle-ru10pesq`` is "non-urban air close to ground" there) and must never
+be read through this crosswalk. It carries the exact EF context path instead, in an
+``ef-context:<path>`` notation that ``ef_context_for`` reads and that needs no
+crosswalk at all.
 """
 
 from __future__ import annotations
@@ -144,6 +151,25 @@ AMBIGUOUS_CODES: dict[str, str] = {
 NEVER_CHARACTERISED_CODES: frozenset[str] = frozenset(
     {"envi-grou-indu", "reso-wate", "reso-air", "reso-biot"}
 )
+
+
+#: Prefix of the notation holding a flow's exact EF context path, levels joined by
+#: ``" / "`` (the spelling of ``EfFlow.context_path``). Written by
+#: ``sources.brightway_flows.vocab_flows``, read by ``ef_context_for``.
+EF_CONTEXT_PREFIX = "ef-context:"
+
+
+def ef_context_for(notations: Iterable[str]) -> str | None:
+    """The exact EF context path in a row's first ``ef-context:<path>`` notation,
+    or ``None`` when there is none or it is empty.
+
+    An exact path, not a crosswalk: a caller never marks it uncertain. Non-string
+    entries are ignored, as in ``context_for``.
+    """
+    for notation in notations:
+        if isinstance(notation, str) and notation.startswith(EF_CONTEXT_PREFIX):
+            return notation[len(EF_CONTEXT_PREFIX) :].strip() or None
+    return None
 
 
 def _bw_code(notations: Iterable[str]) -> str | None:

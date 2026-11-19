@@ -16,6 +16,7 @@ from sentier_importers.matching.compartments import (
     bucket_of_ef_context,
     is_uninformative_resource_sub,
     leaf_matches,
+    long_term_agrees,
     place,
     unspecified_leaf,
 )
@@ -209,3 +210,43 @@ def test_place():
 )
 def test_is_uninformative_resource_sub(category, sub, name, expected):
     assert is_uninformative_resource_sub(category, sub, name) is expected
+
+
+AIR_LT = "Emissions / Emissions to air / Emissions to air, unspecified (long-term)"
+WATER_LT = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
+
+
+@pytest.mark.parametrize(
+    ("subcategory", "leaf", "expected"),
+    [
+        ("river", "emissions to fresh water", True),
+        ("river", "emissions to water, unspecified (long-term)", False),
+        ("unspecified", "emissions to air, unspecified (long-term)", False),
+        ("ocean", "emissions to ground water, long-term", False),
+        ("in ground", "non-renewable element resources from ground", True),
+        ("river, long-term", "emissions to water, unspecified (long-term)", True),
+        ("groundwater, long-term", "emissions to ground water, long-term", True),
+        ("groundwater, long-term", "emissions to water, unspecified", False),
+        ("low. pop., long-term", "emissions to air, unspecified (long-term)", True),
+        ("low. pop., long-term", "emissions to air, unspecified", False),
+    ],
+)
+def test_long_term_agrees_only_when_source_and_leaf_are_both_or_neither(
+    subcategory, leaf, expected
+):
+    assert long_term_agrees(subcategory, leaf) is expected
+
+
+@pytest.mark.parametrize(
+    ("category", "subcategory", "context"),
+    [
+        ("emissions to water", "unspecified", WATER_LT),
+        ("emissions to water", "river", WATER_LT),
+        ("emissions to air", "unspecified", AIR_LT),
+        ("emissions to air", "high. pop.", AIR_LT),
+    ],
+)
+def test_an_immediate_sub_compartment_never_places_on_a_long_term_leaf(
+    category, subcategory, context
+):
+    assert place(category, subcategory, context) is Placement.NONE

@@ -62,7 +62,12 @@ include-package-data = true
 where = ["app"]
 
 [tool.setuptools.package-data]
-"sentier_importers" = ["registry.yaml", "sources/**/data/*", "matching/*.yaml"]
+"sentier_importers" = [
+    "registry.yaml",
+    "sources/**/data/*",
+    "matching/*.yaml",
+    "sources/brightway_flows/*.yaml",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "sentier_importers.__version__" }

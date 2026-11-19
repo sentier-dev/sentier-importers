@@ -464,3 +464,39 @@ def test_name_only_alignment_never_reaches_pass_1_as_biosphere_3_matched(tmp_pat
     pass1 = {f.code: outcome for f, outcome in source.outcomes([{"inputs": augmented}])}
     assert pass1[flow.code] == outcome_for(flow, None, inputs.pipeline, inputs.index)
     assert not isinstance(pass1[flow.code], Match)
+
+
+def _with_brightway_flows(root, tmp_path, codes):
+    package = {
+        "name": "p",
+        "version": "0.1.0",
+        "replace": [{"source": {"code": c}} for c in codes],
+    }
+    (tmp_path / "bf.json").write_text(json.dumps(package))
+    source = _source(root)
+    source.config = replace(
+        source.config,
+        inputs={**source.config.inputs, "brightway_flows": f"file://{tmp_path}/bf.json"},
+    )
+    return source
+
+
+def test_a_flow_of_the_brightway_flows_package_is_reported_mapped(tmp_path):
+    root = _stage(tmp_path, curated=[CO2], inferred=[RADON])
+    rows = _run(_with_brightway_flows(root, tmp_path, [URANIUM]), tmp_path)
+    uranium = {r["source"]["code"]: r for r in rows}[URANIUM]
+    assert uranium["status"] == "mapped"
+    assert uranium["package"] == "biosphere-5-brightway-flows"
+    assert "reason" not in uranium
+
+
+def test_an_earlier_package_keeps_the_flow(tmp_path):
+    root = _stage(tmp_path, curated=[CO2], inferred=[RADON])
+    rows = _run(_with_brightway_flows(root, tmp_path, [CO2]), tmp_path)
+    assert {r["source"]["code"]: r for r in rows}[CO2]["package"] == "biosphere-1-curated"
+
+
+def test_without_the_input_nothing_changes(tmp_path):
+    root = _stage(tmp_path, curated=[CO2], inferred=[RADON])
+    rows = _run(_source(root), tmp_path)
+    assert {r["source"]["code"]: r for r in rows}[URANIUM]["status"] == "unmapped"

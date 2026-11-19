@@ -260,6 +260,29 @@ def unspecified_leaf(bucket: str, *, long_term: bool) -> str | None:
     return f"emissions to {bucket}, unspecified"
 
 
+def is_long_term(text: str) -> bool:
+    """Whether a BAFU sub-compartment or an EF leaf names a long-term emission.
+
+    Covers both EF spellings, ``..., unspecified (long-term)`` and ``..., long-term``,
+    and BAFU's ``<sub-compartment>, long-term``.
+    """
+    return "long-term" in text
+
+
+def long_term_agrees(bafu_subcategory: str, leaf: str) -> bool:
+    """The one placement predicate for long-term-ness: source and EF leaf must agree.
+
+    A long-term source may sit only on a long-term EF leaf (round 7, decision
+    2026-09-14: EF's long-term contexts carry factor 0 in every toxicity and
+    eutrophication method, so the immediate leaf's factor must never attach to it).
+    The mirror holds too (2026-11-19): a source that is not long-term may never sit
+    on a long-term EF leaf, with or without a factor, since that would file an
+    immediate emission as a long-term one. ``pipeline.MatchPipeline._resolve`` asks
+    this once per candidate, ahead of every placement it knows.
+    """
+    return is_long_term(bafu_subcategory) == is_long_term(leaf)
+
+
 @lru_cache(maxsize=None)
 def place(bafu_category: str, bafu_subcategory: str, context: str) -> Placement:
     """Resolve where ``(bafu_category, bafu_subcategory)`` places on ``context``.

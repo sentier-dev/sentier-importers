@@ -8,6 +8,7 @@ SKOS row. Flows tagged ``ecoinvent algorithm addition`` are excluded pending rev
 import gzip
 import json
 import re
+from collections.abc import Iterable
 
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
@@ -47,6 +48,20 @@ def compartment_for_context(context_iri: str | None) -> str | None:
 def strip_html(text: str) -> str:
     """Remove HTML tags and collapse whitespace from a label."""
     return re.sub(r"\s+", " ", _TAG_RE.sub("", text)).strip()
+
+
+def alt_labels(raw_labels: Iterable[str], label: str) -> list[str]:
+    """Alternative labels of a term: HTML stripped, de-duplicated without regard to
+    case, and never the preferred ``label`` itself. Order is kept."""
+    out: list[str] = []
+    seen: set[str] = {label.casefold()}
+    for raw_label in raw_labels:
+        cleaned = strip_html(raw_label)
+        key = cleaned.casefold()
+        if cleaned and key not in seen:
+            seen.add(key)
+            out.append(cleaned)
+    return out
 
 
 def cas_number(flow: Record) -> str | None:
@@ -139,15 +154,7 @@ class AgribalyseFlowsSource(Source):
 
             row: Record = {"iri": f"{FLOWS_SCHEME}{identifier}", "pref_label": label}
 
-            alt: list[str] = []
-            seen: set[str] = set()
-            for raw_label in flow.get("altLabel") or []:
-                cleaned = strip_html(raw_label)
-                key = cleaned.casefold()
-                if cleaned and key != label.casefold() and key not in seen:
-                    seen.add(key)
-                    alt.append(cleaned)
-            if alt:
+            if alt := alt_labels(flow.get("altLabel") or [], label):
                 row["alt_labels"] = alt
 
             if (definition := _definition(flow)) is not None:

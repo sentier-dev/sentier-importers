@@ -1,0 +1,105 @@
+# Decisions on Brightway Flows 1.1.0 links for bafu-2026-v1 -> ef-3.1 that change a score.
+# Laurenz 2026-11-19: "pick the best values (correctness)". One entry per BAFU flow code.
+# decision: theirs (take the Brightway Flows target), ours (keep our target), hold (no entry).
+groups:
+  air_unspecified:
+    decision: theirs
+    reason: "the source is an emission to air, unspecified; our target sat on another air compartment, theirs is the same substance on 'Emissions to air, unspecified'"
+  sea_water:
+    decision: theirs
+    reason: "the source is an emission to the ocean; our target was the fresh water flow, theirs is the sea water flow"
+  vanadium:
+    decision: theirs
+    reason: "BAFU names the element; our target was the vanadium (V) species, theirs is the EF flow 'vanadium'"
+  specific_substance:
+    decision: theirs
+    reason: "theirs is the EF flow of the substance itself; ours was a group flow ('herbicides, unspecified')"
+  soil_agricultural:
+    decision: theirs
+    reason: "the source is an emission to agricultural soil; our target sat on non-agricultural soil"
+  water_unspecified:
+    decision: theirs
+    reason: "the source is an emission to water, unspecified; our target sat on fresh water"
+  retired_ef_flow:
+    decision: theirs
+    reason: "our target is an EF flow that Brightway Flows 1.1.0 records as merged into theirs; theirs is the live flow"
+  land_mosaic:
+    decision: theirs
+    reason: "'heterogeneous, agricultural' is the EF land class 'agriculture, mosaic', not 'arable'"
+  same_substance_new:
+    decision: theirs
+    reason: "same substance (CAS 71-55-6) on the matching air compartment; we had withheld it as ambiguous"
+  element_not_ion:
+    decision: ours
+    reason: "BAFU names the element; theirs is the aluminium(3+) ion flow"
+  jrc_uncharacterised:
+    decision: ours
+    reason: "theirs is the EF flow of the same name but JRC gives it no factor, while the ecoinvent and GreenDelta EF implementations and the Brightway Flows consensus apply the factor our target carries; sentier-methods holds JRC factors only"
+  industrial_soil:
+    decision: ours
+    reason: "theirs sits on 'Other emissions to industrial soil', which JRC does not characterise; industrial soil is non-agricultural soil and the other implementations apply the same factors there"
+  wrong_substance:
+    decision: ours
+    reason: "theirs is dinitrogen (N2); BAFU 'Nitrogen' to water is nitrogen as a nutrient"
+  accounting_flow:
+    decision: hold
+    reason: "'Water, embodied in product' is a BAFU 'economic issues' flow, not an exchange with the environment; mapping it onto a water resource would add water-use scores"
+flows:
+  3f7b2453-30a4-58dd-a851-7b9c3add5c4f: {group: air_unspecified, name: "Atrazine", context: ["emissions to air", "unspecified"], unit: kg}
+  870653a9-319a-597d-80fc-1b95b7d8efdc: {group: air_unspecified, name: "Caprolactam", context: ["emissions to air", "unspecified"], unit: kg}
+  0ef2d971-093e-5d4d-94b0-c3eda0824377: {group: air_unspecified, name: "Chlorine dioxide", context: ["emissions to air", "unspecified"], unit: kg}
+  2ccbcec2-4abf-56dd-a02e-1f03ba45f5e5: {group: air_unspecified, name: "Dicamba", context: ["emissions to air", "unspecified"], unit: kg}
+  c15ea805-577b-575a-a3e1-7ae4818c3e1c: {group: air_unspecified, name: "Dimethenamid", context: ["emissions to air", "unspecified"], unit: kg}
+  35a8f93e-fd02-547e-b0c9-3ddfc5a4d161: {group: air_unspecified, name: "Dimethyl formamide", context: ["emissions to air", "unspecified"], unit: kg}
+  ff969de7-6e26-5cb2-9951-ffa1b33d69a3: {group: air_unspecified, name: "Glyphosate", context: ["emissions to air", "unspecified"], unit: kg}
+  fadf50c1-e714-5173-902f-2f13546fa4b8: {group: air_unspecified, name: "Hydrocarbons, unspecified", context: ["emissions to air", "unspecified"], unit: kg}
+  7ad2b67d-fe04-55c9-8b3e-babd6ec50372: {group: air_unspecified, name: "Hydrogen bromide", context: ["emissions to air", "unspecified"], unit: kg}
+  608a2135-f7cc-591f-88f0-997f9865b3ec: {group: air_unspecified, name: "Hydrogen iodide", context: ["emissions to air", "unspecified"], unit: kg}
+  427045b0-d9e4-50e5-b6fe-5dabd3e2fac5: {group: air_unspecified, name: "Isobutane", context: ["emissions to air", "unspecified"], unit: kg}
+  c58cb164-5235-51ea-9601-d12f3dc304bc: {group: air_unspecified, name: "Lead dioxide", context: ["emissions to air", "unspecified"], unit: kg}
+  d70a74f3-da5d-5faa-8ccc-fb7336aacb05: {group: air_unspecified, name: "Methomyl", context: ["emissions to air", "unspecified"], unit: kg}
+  8b6bbe92-0492-549a-b932-59dc4f45a00a: {group: air_unspecified, name: "Methyl mercaptan", context: ["emissions to air", "unspecified"], unit: kg}
+  f38ca209-dcb6-5f34-b8cb-21733a352bd0: {group: air_unspecified, name: "Methyl methacrylate", context: ["emissions to air", "unspecified"], unit: kg}
+  72ba89ca-0fe1-5c7c-919d-9ab972cb0137: {group: air_unspecified, name: "Trichloroethane", context: ["emissions to air", "unspecified"], unit: kg}
+  6d8af521-dcf0-551a-9d51-f753b8b3748c: {group: air_unspecified, name: "Trifluralin", context: ["emissions to air", "unspecified"], unit: kg}
+  989d4eef-f15a-5e08-90bb-0be888316030: {group: air_unspecified, name: "Zinc oxide", context: ["emissions to air", "unspecified"], unit: kg}
+  376f2cac-b9e4-50ee-b9a2-69ff7e5e8159: {group: air_unspecified, name: "m-Cresol", context: ["emissions to air", "unspecified"], unit: kg}
+  4d1f1135-c747-55ed-917f-b7d28e6b9c37: {group: sea_water, name: "Chrysene", context: ["emissions to water", "ocean"], unit: kg}
+  6754081c-2abd-515b-8473-415f4890a7a7: {group: sea_water, name: "Cresol", context: ["emissions to water", "ocean"], unit: kg}
+  a920f39f-2503-5744-bf0e-e41186a163b6: {group: sea_water, name: "Decane", context: ["emissions to water", "ocean"], unit: kg}
+  5f57751f-2b4e-5f1b-b3e8-d26a9c7da0d5: {group: sea_water, name: "Fluoranthene", context: ["emissions to water", "ocean"], unit: kg}
+  e3790c52-f260-585d-af13-76020c4156a1: {group: sea_water, name: "Naphthalene", context: ["emissions to water", "ocean"], unit: kg}
+  624996a6-a0f7-5257-9b40-9f1c92ba3b7c: {group: vanadium, name: "Vanadium", context: ["emissions to air", "high. pop."], unit: kg}
+  a3bd78ff-4752-5894-8755-bb6b8d23ab0b: {group: vanadium, name: "Vanadium", context: ["emissions to air", "low. pop."], unit: kg}
+  66c70411-bd76-53a1-b4bb-fa4c05da6d6b: {group: vanadium, name: "Vanadium", context: ["emissions to air", "unspecified"], unit: kg}
+  0d5ce24b-92a2-581b-97d5-70ed14827bb3: {group: vanadium, name: "Vanadium", context: ["emissions to soil", "agricultural"], unit: kg}
+  a620f26d-1421-5801-bd40-74071fa035e0: {group: specific_substance, name: "Mecoprop", context: ["emissions to soil", "agricultural"], unit: kg}
+  f2a2f017-5f37-5c06-8bc7-dbc0e88a144d: {group: soil_agricultural, name: "Prothioconazol", context: ["emissions to soil", "agricultural"], unit: kg}
+  9863ecd3-319a-5338-8d2c-890be2fa046d: {group: water_unspecified, name: "Vinyl acetate", context: ["emissions to water", "unspecified"], unit: kg}
+  d1456bb6-1a53-532a-a213-645d6dffe754: {group: retired_ef_flow, name: "Kresoxim-methyl", context: ["emissions to soil", "agricultural"], unit: kg}
+  44646b70-b225-537c-8bd5-1838174bface: {group: retired_ef_flow, name: "Methane, dichloro-, HCC-30", context: ["emissions to water", "unspecified"], unit: kg}
+  0db28dcb-d229-5458-960f-4fc2bd143768: {group: retired_ef_flow, name: "Pentane, perfluoro-", context: ["emissions to air", "unspecified"], unit: kg}
+  9aae09e1-5eb4-573e-acd7-c3ba54a4b84f: {group: land_mosaic, name: "Occupation, heterogeneous, agricultural", context: ["resources", "land"], unit: m2a}
+  1d1c7af3-8429-5f05-9f4e-991b3875fce9: {group: land_mosaic, name: "Transformation, from heterogeneous, agricultural", context: ["resources", "land"], unit: m2}
+  90949650-dffa-5945-a106-dbe0a549dd9e: {group: land_mosaic, name: "Transformation, to heterogeneous, agricultural", context: ["resources", "land"], unit: m2}
+  64409968-2b46-51ca-9762-6bd13b323f85: {group: same_substance_new, name: "Ethane, 1,1,1-trichloro-, HCFC-140", context: ["emissions to air", "low. pop."], unit: kg}
+  ed7dcb10-653c-5e97-b5e3-8fb457ea078e: {group: element_not_ion, name: "Aluminium", context: ["emissions to water", "unspecified"], unit: kg}
+  63b11182-ae3f-53c6-bf0d-340f4f807bae: {group: jrc_uncharacterised, name: "Gas, mine, off-gas, process, coal mining/m3", context: ["resources", "in ground"], unit: Nm3}
+  456162ed-6264-5ce7-9604-203da6034b80: {group: jrc_uncharacterised, name: "Gas, mine, off-gas, process, coal mining/m3", context: ["resources", "in ground"], unit: m3}
+  3c9bf73e-ed36-5873-adff-48afeb1d5ec0: {group: jrc_uncharacterised, name: "Particulates, > 2.5 um, and < 10um", context: ["emissions to air", "high. pop."], unit: kg}
+  ee8caba1-011f-582a-93e0-aba14868ddc9: {group: jrc_uncharacterised, name: "Particulates, > 2.5 um, and < 10um", context: ["emissions to air", "low. pop."], unit: kg}
+  0b6278d6-a422-55f1-947f-42d0ab75c414: {group: jrc_uncharacterised, name: "Particulates, > 2.5 um, and < 10um", context: ["emissions to air", "low. pop., long-term"], unit: kg}
+  90800a32-5d06-516e-9527-eac5c598cf49: {group: jrc_uncharacterised, name: "Particulates, > 2.5 um, and < 10um", context: ["emissions to air", "unspecified"], unit: kg}
+  32705b17-f2ed-58d7-95c4-02aa23225fcf: {group: jrc_uncharacterised, name: "Plutonium-alpha", context: ["emissions to air", "low. pop."], unit: Bq}
+  daba80cc-3f55-5050-8806-5ff316a88e4c: {group: jrc_uncharacterised, name: "Plutonium-alpha", context: ["emissions to air", "low. pop."], unit: kBq}
+  a4875618-2816-5529-827d-0dcff4b24132: {group: jrc_uncharacterised, name: "Plutonium-alpha", context: ["emissions to air", "unspecified"], unit: kBq}
+  0f8a7afc-209f-52bf-9cc0-c95fa87edfcf: {group: industrial_soil, name: "Oils, unspecified", context: ["emissions to soil", "industrial"], unit: kg}
+  174b4409-7f2a-5f17-8432-0bed88ccb28a: {group: industrial_soil, name: "Phosphorus", context: ["emissions to soil", "industrial"], unit: kg}
+  21d5e023-f5da-5123-a8aa-091542cc516b: {group: industrial_soil, name: "Silicon", context: ["emissions to soil", "industrial"], unit: kg}
+  4e59b69f-8e73-5afb-8181-98571bb3754a: {group: wrong_substance, name: "Nitrogen", context: ["emissions to water", "ocean"], unit: kg}
+  ba18f40d-124f-5a50-aa45-5825b60a46c4: {group: wrong_substance, name: "Nitrogen", context: ["emissions to water", "unspecified"], unit: kg}
+  02d8b565-8e31-511c-8976-14e2d3f46ae1: {group: accounting_flow, name: "Water, embodied in product, CH", context: ["economic issues", "unspecified"], unit: kg}
+  89bcc104-2c75-5c7f-aaa1-a29cfeef40a6: {group: accounting_flow, name: "Water, embodied in product, ES", context: ["economic issues", "unspecified"], unit: kg}
+  5ff32e83-28a7-5561-a8a0-62852b233fd4: {group: accounting_flow, name: "Water, embodied in product, KE", context: ["economic issues", "unspecified"], unit: kg}
+  ecbc4f98-894d-53fb-be5e-8d03407829bc: {group: accounting_flow, name: "Water, embodied in product, MX", context: ["economic issues", "unspecified"], unit: kg}
+  3a5421ac-7c75-5862-a477-d65bd74cc7ec: {group: accounting_flow, name: "Water, embodied in product, PE", context: ["economic issues", "unspecified"], unit: kg}

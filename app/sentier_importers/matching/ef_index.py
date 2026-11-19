@@ -11,9 +11,21 @@ rows (land use, water use, some regionalised categories) are not part of flow id
 
 An EF vocab row that carries no factor at all (``characterised=False``) can still be
 placed and indexed, opt-in via ``include_uncharacterised``: its context comes not from
-the CF table (it has none) but from its ``additional_notations`` ``bw-context:<code>``
-entry, resolved through the ``matching.bw_context`` crosswalk. A code with no EF leaf
-(``envi-biot``) or a row with no ``bw-context`` notation at all is skipped, not indexed.
+the CF table (it has none) but from its ``additional_notations``: the
+``bw-context:<code>`` entry is resolved through the ``matching.bw_context`` crosswalk.
+A code with no EF leaf (``envi-biot``) or a row without that notation is skipped, not
+indexed.
+
+The Brightway Flows 1.1 part of the ef-3.1 release writes a second notation,
+``ef-context:<path>``, the exact EF context path, on flows that have no
+``bw-context`` at all. It is read only on request (``read_ef_context=True``): first,
+exact, never uncertain, with the crosswalk as the fallback. The default is off
+(decision 2026-11-19), so these flows are not in the index our own name matcher
+searches. No unit is known for them on our side (a kg source was aligned by name onto
+an activity flow), and their arrival moved existing nomenclature entries off their
+exact leaf through the tier order. They are matched through Brightway Flows' own
+vetted links instead, which carry unit and context: ``sources.brightway_flows`` is
+the one caller that turns the flag on.
 
 Round 6, decision 2026-09-14 (first cut): sentier-vocab occasionally ships an EF flow
 whose factors are correct but whose ``pref_label`` names the wrong substance (a real
@@ -64,7 +76,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import yaml
 from sentier_importers.core.errors import ParseError
-from sentier_importers.matching.bw_context import context_for
+from sentier_importers.matching.bw_context import context_for, ef_context_for
 from sentier_importers.matching.compartments import bucket_of_ef_context, leaf_of
 
 EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
@@ -90,7 +102,8 @@ _KBQ_METHOD = "ef-3.1:ionising-radiation-human-health"
 _M3_METHOD = "ef-3.1:water-use"
 _LAND_METHOD = "ef-3.1:land-use"
 
-#: An uncharacterised vocab row's context comes only from the ``bw-context`` crosswalk
+#: An uncharacterised vocab row without an ``ef-context`` notation gets its context
+#: from the ``bw-context`` crosswalk alone
 #: (``matching.bw_context.BW_CONTEXT_PATH``), and that crosswalk has no code at all for
 #: EF's ``Non-renewable energy resources from ground`` leaf or for any renewable-energy
 #: resource branch (its resource codes only ever reach the element/material leaves --
@@ -100,13 +113,31 @@ _LAND_METHOD = "ef-3.1:land-use"
 #: an oil-sand or pit-methane flow) can never land on the right branch through this
 #: crosswalk, no matter which code placed it -- it is always on the wrong (element or
 #: material) leaf. Such a row is marked ``context_uncertain`` unconditionally, not just
-#: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``; also imported by
+#: when its code happens to be one of ``bw_context.AMBIGUOUS_CODES``. A row placed by
+#: an exact ``ef-context`` path is not concerned: its leaf is not inferred. Also imported by
 #: ``mappings_biosphere_matched.BafuEfMatchedSource.entry_for`` (decision (f)(2),
 #: 2026-09-13), which -- rather than withhold a nomenclature-package match onto one of
 #: these -- omits ``target["context"]`` entirely from the emitted entry and discloses
 #: that the EF context is not recoverable from the source context code in the comment
 #: instead.
 UNCERTAIN_RESOURCE_NAME = re.compile(r"^(Energy|Primary Energy|Oil Sand|Pit Methane)\b", re.I)
+
+
+def _placement(
+    notations: Iterable[str], *, read_ef_context: bool
+) -> tuple[str | None, bool, bool]:
+    """``(context path, uncertain, exact)`` for an uncharacterised row's notations.
+
+    With ``read_ef_context`` an ``ef-context`` notation is read first: the exact
+    path, never uncertain. Without the flag, or without that notation, the
+    ``bw-context`` crosswalk decides (``bw_context.context_for``).
+    """
+    notations = list(notations)
+    exact_path = ef_context_for(notations) if read_ef_context else None
+    if exact_path is not None:
+        return exact_path, False, True
+    path, uncertain = context_for(notations)
+    return path, uncertain, False
 
 
 def normalise_cas(cas: str | None) -> str | None:
@@ -247,7 +278,7 @@ class EfFlow:
     #: ``True`` when this flow's context was resolved through one of
     #: ``bw_context.AMBIGUOUS_CODES`` -- the majority leaf was used, but a real
     #: minority of flows under that code sit elsewhere. Always ``False`` for a
-    #: characterised flow.
+    #: characterised flow and for a flow placed by an exact ``ef-context`` notation.
     context_uncertain: bool = False
     #: The DISPLAY name: what an emitted entry actually shows a human (``entry_for``
     #: reads this, never ``name``, for its ``target["name"]``). For a characterised
@@ -374,16 +405,25 @@ class EfFlowIndex:
         vocab_rows: Iterable[dict],
         *,
         include_uncharacterised: bool = False,
+        read_ef_context: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
     ) -> "EfFlowIndex":
         """Build an index from CF table rows and vocab flow rows already loaded in memory.
 
         When ``include_uncharacterised`` is ``True``, every EF vocab row whose code
         carries no CF-table context is also indexed (``EfFlow.characterised=False``),
-        placed via ``bw_context.context_for`` on its ``additional_notations``. A row
-        whose ``bw-context`` code has no EF leaf, or that carries no ``bw-context``
-        notation at all, is skipped. Default ``False`` reproduces the exact previous
-        behaviour (characterised flows only).
+        placed from its ``additional_notations`` through the ``bw-context``
+        crosswalk (``bw_context.context_for``). A row whose ``bw-context`` code has
+        no EF leaf, or that carries no such notation, is skipped. Default ``False``
+        reproduces the exact previous behaviour (characterised flows only).
+
+        ``read_ef_context`` (keyword-only, default ``False``, and only meaningful
+        with ``include_uncharacterised``) also reads the ``ef-context`` notation of
+        the Brightway Flows 1.1 part of the release: the exact path first
+        (``bw_context.ef_context_for``, never uncertain), the crosswalk as the
+        fallback. With the default a row that has only an ``ef-context`` notation
+        is skipped like a row with none. See the module docstring for why it is
+        off by default.
 
         A characterised flow's ``name`` (the matching key) is always the CF table's
         own JRC spelling (round 6, decision 2026-09-14, third cut -- see the module
@@ -444,7 +484,7 @@ class EfFlowIndex:
         multi_name_codes = sum(1 for groups in jrc_name_groups.values() if len(groups) > 1)
 
         # pass 1: every flow's identity -- characterised (from the CF table) and, if
-        # requested, uncharacterised (from the bw-context crosswalk) -- gathered
+        # requested, uncharacterised (from ef-context or the bw-context crosswalk) -- gathered
         # before any vocab-label synonym decision, so that decision can see every
         # OTHER flow the final index will hold, keyed by (bucket, lowercased name)
         # exactly as EfFlowIndex.__init__ itself keys by_name/by_synonym.
@@ -469,9 +509,11 @@ class EfFlowIndex:
             for code, row in labels.items():
                 if code in contexts:
                     continue  # already indexed as a characterised flow
-                path, uncertain = context_for(row.get("additional_notations") or [])
+                path, uncertain, exact = _placement(
+                    row.get("additional_notations") or [], read_ef_context=read_ef_context
+                )
                 if path is None:
-                    continue  # no EF leaf for this code, or no bw-context notation at all
+                    continue  # no EF leaf for this code, or no notation that is read
                 name = (row.get("pref_label") or "").strip()
                 cas = normalise_cas(row.get("cas_number"))
                 alt = tuple(str(s) for s in (row.get("alt_labels") or []))
@@ -479,10 +521,11 @@ class EfFlowIndex:
                 relabelled += hit
                 context_tuple = tuple(p.strip() for p in path.split("/") if p.strip())
                 bucket = bucket_of_ef_context(" / ".join(context_tuple))
-                if bucket == "resource" and UNCERTAIN_RESOURCE_NAME.match(name):
+                if not exact and bucket == "resource" and UNCERTAIN_RESOURCE_NAME.match(name):
                     # the crosswalk cannot reach an energy resource leaf at all (see
                     # UNCERTAIN_RESOURCE_NAME) -- this placement is wrong regardless
-                    # of which code produced it.
+                    # of which code produced it. An exact ef-context path is not a
+                    # crosswalk placement and is left alone.
                     uncertain = True
                 core[code] = {
                     "name": name,
@@ -569,6 +612,7 @@ class EfFlowIndex:
         vocab_dir: Path,
         *,
         include_uncharacterised: bool = False,
+        read_ef_context: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
     ) -> "EfFlowIndex":
         """Build an index by reading the CF parquet file and every vocab term file."""
@@ -577,6 +621,7 @@ class EfFlowIndex:
             cf_rows,
             cls._read_vocab_dir(vocab_dir),
             include_uncharacterised=include_uncharacterised,
+            read_ef_context=read_ef_context,
             label_defects=label_defects,
         )
 
@@ -587,6 +632,7 @@ class EfFlowIndex:
         vocab_dir: Path,
         *,
         include_uncharacterised: bool = False,
+        read_ef_context: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
     ) -> "EfFlowIndex":
         """Build an index from the CF parquet file's raw bytes (e.g. already fetched
@@ -598,6 +644,7 @@ class EfFlowIndex:
             cf_rows,
             cls._read_vocab_dir(vocab_dir),
             include_uncharacterised=include_uncharacterised,
+            read_ef_context=read_ef_context,
             label_defects=label_defects,
         )
 

@@ -13,6 +13,8 @@ AIR_RURAL = "Emissions / Emissions to air / Emissions to non-urban air or from h
 AIR_UNSPEC = "Emissions / Emissions to air / Emissions to air, unspecified"
 WATER_FRESH = "Emissions / Emissions to water / Emissions to fresh water"
 WATER_UNSPEC = "Emissions / Emissions to water / Emissions to water, unspecified"
+WATER_UNSPEC_LT = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
+RES_ENERGY = "Resources / Resources from water / Renewable energy resources from water"
 RES_WATER = "Resources / Resources from water / Renewable material resources from water"
 RES_GROUND = "Resources / Resources from ground / Non-renewable element resources from ground"
 LAND_OCC = "Land use / Land occupation"
@@ -46,18 +48,23 @@ def cf_row(code, name, context, method="ef-3.1:human-toxicity-cancer", value=1.0
     }
 
 
-def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE, bw=None):
+def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE, bw=None, ef_context=None):
     # alt=None models the ~4,051 real EF vocab rows whose alt_labels is null,
     # as distinct from alt=() (an explicit empty list).
     # bw models a row's one real "bw-context:<code>" additional_notations entry;
     # a row that has no bw-context notation (the common case) gets an empty list.
+    # ef_context models the "ef-context:<path>" notation of the Brightway Flows 1.1
+    # part of the release: the exact EF context path, levels joined by " / ".
+    notations = [f"bw-context:{bw}"] if bw is not None else []
+    if ef_context is not None:
+        notations.append(f"ef-context:{ef_context}")
     return {
         "iri": IRI + code,
         "pref_label": label,
         "alt_labels": list(alt) if alt is not None else None,
         "cas_number": cas,
         "source": source,
-        "additional_notations": [f"bw-context:{bw}"] if bw is not None else [],
+        "additional_notations": notations,
     }
 
 
