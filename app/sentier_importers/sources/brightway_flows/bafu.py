@@ -5,13 +5,10 @@ the alignment of packages 1 to 4, and the review sidecar. They share one parsed
 :class:`State` and the same decisions, so the sidecar always reports exactly what the
 two emitting sources did.
 
-A link is used only if its target is an EF 3.1 flow that sentier-vocab lists, it is
-not a ``broadMatch``, a long-term source lands on a long-term EF context, and the
-target is not a known label defect for that source name (spec 2026-11-19).
-
-"Changes no score" has one definition here, :func:`scores`: a flow scores when it
-carries at least one non-zero factor. A flow without CF rows and a flow whose CF rows
-are all zero are the same thing to a result, for package 5 and for the alignment.
+Whether a link is usable, what unit and conversion it gives, and what "changes no
+score" means (:func:`links.scores`) are decided in ``links``, which the Agribalyse
+pair shares; this module finds the link of a BAFU flow and holds what only this pair
+does: the alignment of packages 1 to 4 and the reviewed decisions.
 
 A link that does change a score is applied only where the project owner decided so,
 flow by flow (``decisions``, ``bafu_decisions.yaml``): package 5 ships a scoring target
@@ -39,11 +36,11 @@ from sentier_importers.matching.ef_index import (
     load_label_defects,
 )
 from sentier_importers.sources.bafu.packages import CURATED, INFERRED, MATCHED, NOMENCLATURE
+from sentier_importers.sources.brightway_flows import links
 from sentier_importers.sources.brightway_flows.correspondences import (
     PINNED_SHA256,
     RELEASE,
     BrightwayFlows,
-    ConsensusFlow,
     Link,
     load,
 )
@@ -56,8 +53,22 @@ from sentier_importers.sources.brightway_flows.decisions import (
 )
 from sentier_importers.sources.brightway_flows.factors import Vector, compare, factor_vectors
 from sentier_importers.sources.brightway_flows.identifiers import bafu_link
+from sentier_importers.sources.brightway_flows.links import (
+    ALL_ZERO,
+    UNCERTAIN_CONTEXT,
+    UNCHARACTERISED,
+    Decision,
+    no_score_note,
+    order,
+    rescaled_note,
+    scores,
+    target_record,
+    their_unit,
+)
 from sentier_importers.sources.randonneur_data.ecoinvent_ef_biosphere import vocab_flow_codes
 
+#: The unit rule, under the name it had while it lived here.
+_conversion = links.conversion
 LIST = "bafu-2026-v1"
 _VOCAB_DIR = "ef_vocab"
 _COVERAGE, _EF_CFS = "coverage", "ef_cfs"
@@ -70,38 +81,9 @@ PACKAGE_INPUTS = {
 }
 #: Inputs ``parse`` reads from ``self.inputs`` (``ef_vocab`` is a directory, read apart).
 _REQUIRED = (_COVERAGE, *PACKAGE_INPUTS.values(), _EF_CFS)
-#: Brightway Flows unit symbol -> the EF convention spelling our packages use, for
-#: targets that carry no factor (a characterised target takes ``reference_unit``).
-EF_UNIT = {
-    "kg": "kilogram",
-    "kBq": "kBq",
-    "m3": "cubic meter",
-    "MJ": "megajoule",
-    "m2": "m2",
-    "m2.a": "m2*a",
-}
-#: Unit spelling (lowercased) -> (dimension, scale); the subset sentier-mappings'
-#: validator knows, so an entry built here passes its unit check.
-_DIMENSION = {
-    "kg": ("mass", 1.0),
-    "kilogram": ("mass", 1.0),
-    "bq": ("activity", 1.0),
-    "kbq": ("activity", 1e3),
-    "m3": ("volume", 1.0),
-    "cubic meter": ("volume", 1.0),
-    "nm3": ("volume", 1.0),
-    "m2": ("area", 1.0),
-    "m2a": ("area-time", 1.0),
-    "m2*a": ("area-time", 1.0),
-    "mj": ("energy", 1.0),
-    "megajoule": ("energy", 1.0),
-    "kwh": ("energy", 3.6),
-}
 ALIGNED = f"target aligned with {RELEASE} (identical factors)"
 ALIGNED_FACTORLESS = f"target aligned with {RELEASE} (neither flow carries a factor)"
 ALIGNED_UNIT = f"target and unit aligned with {RELEASE} (neither flow carries a factor)"
-UNCHARACTERISED = "uncharacterised in EF 3.1: no factor in any method"
-ALL_ZERO = "all factors are zero in EF 3.1"
 #: What the nomenclature package says of a factorless target's unit
 #: (``mappings_biosphere_matched.entry_for``).
 _CONVENTION_UNIT = (
@@ -111,14 +93,6 @@ _CONVENTION_UNIT = (
 #: Sentences of an entry's comment that describe a target without factors. They turn
 #: false when a reviewed decision moves the entry onto a target that scores.
 _NO_SCORE_SENTENCES = frozenset({UNCHARACTERISED, ALL_ZERO, _CONVENTION_UNIT})
-#: Same wording as the nomenclature package (``mappings_biosphere_matched.entry_for``):
-#: said whenever a target's context is left out because the index could not place it.
-UNCERTAIN_CONTEXT = (
-    "EF context inferred from the Brightway context code, branch/sub-compartment uncertain"
-)
-#: Brightway Flows context codes of the long-term compartments end with this
-#: (``envi-air-lote``, ``envi-wate-lote``).
-_LONG_TERM_CODE_SUFFIX = "lote"
 
 
 @dataclass(frozen=True)
@@ -136,40 +110,10 @@ class State:
     decisions: Mapping[str, FlowDecision]
 
 
-@dataclass(frozen=True)
-class Decision:
-    link: Link | None
-    consensus: ConsensusFlow | None
-    target: EfFlow | None
-    reason: str | None
-
-
 def entries_of(package: Mapping) -> Iterator[Record]:
     if package.get("update"):
         raise ValueError(f"package {package.get('name')!r} has update entries: not supported")
     yield from package.get("replace", [])
-
-
-def _is_long_term(source: Mapping) -> bool:
-    return any("long-term" in part for part in source.get("context") or [])
-
-
-def _target_is_long_term(target: EfFlow, consensus: ConsensusFlow) -> bool:
-    """Whether the EF target sits on a long-term context.
-
-    The index leaf says so, unless the index itself marks that context uncertain
-    (an uncharacterised flow placed through an ambiguous ``bw-context`` code, which
-    folds long-term water into ``water, unspecified``): then the context code
-    Brightway Flows gives the flow decides.
-    """
-    if target.context_uncertain:
-        return consensus.context_code.endswith(_LONG_TERM_CODE_SUFFIX)
-    return "long-term" in target.leaf
-
-
-def scores(code: str | None, state: State) -> bool:
-    """Whether the EF flow ``code`` carries at least one non-zero factor."""
-    return any(state.vectors.get(code, {}).values())
 
 
 def _taken(source: Mapping, state: State) -> FlowDecision | None:
@@ -180,80 +124,7 @@ def _taken(source: Mapping, state: State) -> FlowDecision | None:
 
 def decide(source: Mapping, state: State) -> Decision:
     """Whether Brightway Flows gives ``source`` a usable EF target, and if not, why."""
-    link = bafu_link(source, state.by_id)
-    if link is None:
-        return Decision(None, None, None, "no_link")
-    target_id = state.bw.resolve(link.target_id)
-    consensus = state.bw.flows.get(target_id)
-    if consensus is None or not consensus.is_ef:
-        return Decision(link, consensus, None, "no_ef_target")
-    if target_id not in state.vocab_codes:
-        return Decision(link, consensus, None, "target_not_in_vocab")
-    target = state.index.get(target_id)
-    if target is None:
-        return Decision(link, consensus, None, "target_not_indexed")
-    if link.match == "broadMatch":
-        return Decision(link, consensus, target, "broad_match")
-    if _is_long_term(source) and not _target_is_long_term(target, consensus):
-        return Decision(link, consensus, target, "long_term_onto_immediate")
-    defect = state.defects.get(target.cas) if target.cas else None
-    if defect and source["name"].strip().lower() == defect.wrong_label.strip().lower():
-        return Decision(link, consensus, target, "label_defect")
-    return Decision(link, consensus, target, None)
-
-
-def _conversion(
-    source_unit: str, target_unit: str, multiplier: float | None
-) -> tuple[float | None, str | None]:
-    """``(conversion_factor, withhold reason)`` for one unit pair and their multiplier."""
-    source = _DIMENSION.get(source_unit.lower())
-    target = _DIMENSION.get(target_unit.lower())
-    if source is None or target is None:
-        return None, "unit_unknown"
-    if multiplier is not None and not (math.isfinite(multiplier) and multiplier > 0):
-        return None, "unit_mismatch"
-    if source[0] != target[0]:
-        return (multiplier, None) if multiplier is not None else (None, "unit_mismatch")
-    ratio = source[1] / target[1]
-    if multiplier is None:
-        return (None, None) if math.isclose(ratio, 1.0) else (None, "unit_mismatch")
-    if not math.isclose(multiplier, ratio, rel_tol=1e-9):
-        return None, "unit_mismatch"
-    return (None, None) if math.isclose(multiplier, 1.0) else (multiplier, None)
-
-
-def _target_record(flow: EfFlow, unit: str | None) -> Record:
-    record: Record = {"name": flow.label or flow.name, "code": flow.code}
-    if unit:
-        record["unit"] = unit
-    if flow.context and not flow.context_uncertain:
-        record["context"] = list(flow.context)
-    return record
-
-
-def _their_unit(
-    source: Mapping, decision: Decision, state: State
-) -> tuple[str | None, float | None, str | None]:
-    """``(target unit, conversion_factor, withhold reason)`` of a usable link.
-
-    The unit is the EF convention one of their target: the index knows it for a
-    characterised flow, the Brightway Flows flow gives it otherwise.
-    """
-    code = decision.target.code
-    unit = state.index.reference_unit(code) or EF_UNIT.get(decision.consensus.unit)
-    if unit is None:
-        return None, None, "unit_unknown"
-    factor, reason = _conversion(source.get("unit") or "", unit, decision.link.multiplier)
-    return unit, factor, reason
-
-
-def _no_score_note(code: str, state: State) -> str:
-    """Why the flow ``code``, which does not score, changes no result."""
-    return ALL_ZERO if state.vectors.get(code) else UNCHARACTERISED
-
-
-def _rescaled_note(factor: float, link: Link) -> str:
-    return f"amount rescaled by {factor:g} ({link.basis or 'conversion'})"
+    return links.decide(source, bafu_link(source, state.by_id), state)
 
 
 def package_entry(source: Record, state: State) -> tuple[Record | None, str | None]:
@@ -262,7 +133,7 @@ def package_entry(source: Record, state: State) -> tuple[Record | None, str | No
     if decision.reason is not None:
         return None, decision.reason
     flow, link = decision.target, decision.link
-    unit, factor, reason = _their_unit(source, decision, state)
+    unit, factor, reason = their_unit(source, decision, state)
     if reason is not None:
         return None, reason
     scoring = scores(flow.code, state)
@@ -271,13 +142,13 @@ def package_entry(source: Record, state: State) -> tuple[Record | None, str | No
         return None, "characterised_held_for_review"
     comments = [f"{RELEASE}, skos:{link.match}"]
     if not scoring:
-        comments.append(_no_score_note(flow.code, state))
-    entry: Record = {"source": dict(source), "target": _target_record(flow, unit)}
+        comments.append(no_score_note(flow.code, state))
+    entry: Record = {"source": dict(source), "target": target_record(flow, unit)}
     if "context" not in entry["target"]:
         comments.append(UNCERTAIN_CONTEXT)
     if factor is not None:
         entry["conversion_factor"] = factor
-        comments.append(_rescaled_note(factor, link))
+        comments.append(rescaled_note(factor, link))
     if reviewed is not None:
         comments.append(f"reviewed {REVIEWED}: {reviewed.reason}")
     entry["comment"] = "; ".join(comments)
@@ -305,13 +176,13 @@ def _unit_aligned(entry: Record, decision: Decision, state: State) -> Record | N
     since ours states a unit convention and a rescaling that no longer hold.
     """
     flow = decision.target
-    unit, factor, reason = _their_unit(entry["source"], decision, state)
+    unit, factor, reason = their_unit(entry["source"], decision, state)
     if reason is not None:
         return None
     target = {**_their_target(entry, flow), "unit": unit}
-    comments = [_no_score_note(flow.code, state), ALIGNED_UNIT]
+    comments = [no_score_note(flow.code, state), ALIGNED_UNIT]
     if factor is not None:
-        comments.append(_rescaled_note(factor, decision.link))
+        comments.append(rescaled_note(factor, decision.link))
     if "context" not in target:
         comments.append(UNCERTAIN_CONTEXT)
     kept = {k: v for k, v in entry.items() if k not in ("conversion_factor", "comment")}
@@ -385,14 +256,6 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
     return {**entry, "target": target, "comment": comment}, "retargeted"
 
 
-def _order(source: Mapping) -> tuple[str, str, str]:
-    return (
-        source["name"].lower(),
-        "/".join(source.get("context") or []),
-        source.get("unit") or "",
-    )
-
-
 def needs_decision(source: Mapping, state: State) -> bool:
     """Whether taking their link for ``source`` would change a score.
 
@@ -404,7 +267,7 @@ def needs_decision(source: Mapping, state: State) -> bool:
         return False
     mapped = state.mapped.get(source["code"])
     if mapped is None:
-        _, _, reason = _their_unit(source, decision, state)
+        _, _, reason = their_unit(source, decision, state)
         return reason is None and scores(decision.target.code, state)
     ours = mapped[1]["target"].get("code")
     if ours is None or ours == decision.target.code:
@@ -435,7 +298,7 @@ def decision_gaps(state: State) -> tuple[list[Record], list[Record]]:
     """
     unneeded: list[Record] = []
     undecided: list[Record] = []
-    for source in sorted(state.universe, key=_order):
+    for source in sorted(state.universe, key=order):
         decided = source["code"] in state.decisions
         if needs_decision(source, state):
             if not decided:

@@ -29,7 +29,6 @@ from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.types import Record, Records, Rows
 from sentier_importers.sources.brightway_flows.bafu import (
     BafuBrightwayFlowsBase,
-    Decision,
     State,
     decide,
     decision_gaps,
@@ -38,6 +37,7 @@ from sentier_importers.sources.brightway_flows.bafu import (
     retarget,
 )
 from sentier_importers.sources.brightway_flows.factors import compare
+from sentier_importers.sources.brightway_flows.links import order, their_record
 
 #: ``retarget`` kinds that mean the two EF flows score differently; the other kinds
 #: (``unit_differs``, ``ours_without_code``) hold a retarget back although no factor
@@ -54,25 +54,7 @@ def _named(sources: list[Record]) -> str:
 
 
 def _sort_key(row: Record) -> tuple[str, str, str]:
-    source = row["source"]
-    return (
-        source["name"].lower(),
-        "/".join(source.get("context") or []),
-        source.get("unit") or "",
-    )
-
-
-def _theirs(decision: Decision) -> Record | None:
-    if decision.link is None:
-        return None
-    record: Record = {"code": decision.link.target_id, "match": decision.link.match}
-    if decision.consensus is not None:
-        # the live flow, which a redirected link target is not
-        record["code"] = decision.consensus.identifier
-        record["name"] = decision.consensus.label
-        record["context"] = decision.consensus.context_code
-        record["in_ef"] = decision.consensus.is_ef
-    return record
+    return order(row["source"])
 
 
 class BafuBrightwayFlowsPackageSource(BafuBrightwayFlowsBase):
@@ -159,5 +141,5 @@ class BafuBrightwayFlowsReviewSource(BafuBrightwayFlowsBase):
         reviewed = state.decisions.get(source["code"])
         if reviewed is not None:
             row.update(decision=reviewed.decision, decision_reason=reviewed.reason)
-        row["brightway_flows"] = _theirs(decision)
+        row["brightway_flows"] = their_record(decision)
         return row
