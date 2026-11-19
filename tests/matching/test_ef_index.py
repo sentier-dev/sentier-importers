@@ -16,9 +16,11 @@ from tests.matching.ef_fixtures import (
     AIR_UNSPEC,
     AIR_URBAN,
     LAND_OCC,
+    RES_ENERGY,
     RES_WATER,
     WATER_FRESH,
     WATER_UNSPEC,
+    WATER_UNSPEC_LT,
     cf_row,
     vocab_row,
     write_ef_inputs,
@@ -932,3 +934,58 @@ def test_real_index_counters_pin_the_current_ef_table(real_index):
     # number must be looked at, not absorbed silently
     assert real_index.multi_name_codes == 0
     assert real_index.suppressed_vocab_synonyms == 346
+
+
+# --- ef-context: the exact EF context path of a factorless flow ----------------
+
+
+def _uncharacterised(tmp_path, vocab):
+    return EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
+    )
+
+
+def test_a_factorless_flow_is_placed_from_its_ef_context_notation(tmp_path):
+    vocab = [vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT)]
+    flow = _uncharacterised(tmp_path, vocab).get("lt-water")
+    assert flow is not None and not flow.characterised
+    assert flow.context_path == WATER_UNSPEC_LT
+    assert flow.bucket == "water"
+    assert flow.context_uncertain is False
+
+
+def test_ef_context_wins_over_bw_context_and_is_never_uncertain(tmp_path):
+    # envi-wate-unkn alone would give "water, unspecified", marked uncertain
+    vocab = [
+        vocab_row("both", "Widget", bw="envi-wate-unkn", ef_context=WATER_UNSPEC_LT),
+        vocab_row("bw-only", "Gadget", bw="envi-wate-unkn"),
+    ]
+    index = _uncharacterised(tmp_path, vocab)
+    both, bw_only = index.get("both"), index.get("bw-only")
+    assert (both.context_path, both.context_uncertain) == (WATER_UNSPEC_LT, False)
+    assert (bw_only.context_path, bw_only.context_uncertain) == (WATER_UNSPEC, True)
+
+
+def test_ef_context_places_a_flow_whose_bw_context_has_no_ef_leaf(tmp_path):
+    vocab = [vocab_row("x", "Widget", bw="envi-biot", ef_context=AIR_UNSPEC)]
+    assert _uncharacterised(tmp_path, vocab).get("x").context_path == AIR_UNSPEC
+
+
+def test_a_row_with_neither_notation_is_still_skipped(tmp_path):
+    vocab = [vocab_row("bare", "Widget"), vocab_row("placed", "Gadget", ef_context=LAND_OCC)]
+    index = _uncharacterised(tmp_path, vocab)
+    assert index.get("bare") is None and index.get("placed") is not None
+
+
+def test_an_energy_resource_with_an_exact_ef_context_is_not_uncertain(tmp_path):
+    # the crosswalk cannot reach an energy leaf, an exact path can
+    vocab = [vocab_row("energy", "Energy, tidal, converted", ef_context=RES_ENERGY)]
+    flow = _uncharacterised(tmp_path, vocab).get("energy")
+    assert flow.bucket == "resource" and flow.context_path == RES_ENERGY
+    assert flow.context_uncertain is False
+
+
+def test_ef_context_is_not_read_without_include_uncharacterised(tmp_path):
+    vocab = [vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT)]
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, [], vocab))
+    assert index.get("lt-water") is None
