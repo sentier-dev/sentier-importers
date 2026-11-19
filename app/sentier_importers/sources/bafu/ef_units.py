@@ -26,13 +26,29 @@ by mass, but BAFU also reports standing wood by volume, with no density conventi
 anywhere in this codebase), decision 2026-09-14 withholds the wrong-dimension source
 instead of inventing one -- ``NOMENCLATURE_TARGET_DIMENSION``/
 ``nomenclature_unit_mismatch``, consulted by ``mappings_biosphere_matched._decide``.
+
+Stated units, 2026-11-19 (spec units-on-ef31-flows, step 5): an EF flow that states
+its unit (``EfFlow.stated_unit``, from the ``qudt:hasUnit`` relation of the ef-3.1
+release) is no longer given a convention guess. ``unit_agrees`` is the matcher's unit
+gate: a candidate whose stated unit the source has no conversion onto is not a match
+(BAFU ``Uranium`` in kg had matched the activity flow ``Uranium Alpha``). The
+conversions are the ones this module already had, gathered in ``conversion_onto``:
+the same dimension (with the Bq/kBq and kWh/MJ scales), an energy-content or
+stoichiometric factor of the exact BAFU (name, unit) pair, and water's density.
+``stated_target_unit`` gives the unit and factor of an entry onto a factorless target
+that states its unit. A flow that states none is handled exactly as before.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
 from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
-from sentier_importers.matching.pipeline import Match
 from sentier_importers.sources.eaternity.bridge import BafuFlow
+
+if TYPE_CHECKING:  # ``matching.pipeline`` imports ``unit_agrees`` from this module
+    from sentier_importers.matching.pipeline import Match
 
 #: EF 3.1's water-use method id, used by ``conversion_for``'s water-density special
 #: case below; also imported by ``mappings_biosphere_matched._decide`` for the
@@ -61,6 +77,14 @@ _DIMENSION: dict[str, str] = {
     #: EF states no convention for this dimension at all, so ``nomenclature_target_unit``
     #: keeps BAFU's own spelling rather than inventing an EF one (decision 2026-09-14).
     "m3y": "volume-time",
+    #: Units only an EF flow states (``EfFlow.stated_unit``), never a BAFU source:
+    #: EF's volume-time spelling; the mass-time unit of the six delayed-emission
+    #: correction flows; and the ISO standard cubic metre of one flow, a dimension of
+    #: its own here because no fixed factor leads to it from a cubic metre, normal
+    #: or not.
+    "m3*a": "volume-time",
+    "kg*a": "mass-time",
+    "Sm3": "standard-volume",
 }
 
 #: The few same-dimension unit pairs whose physical scale actually differs: an SI
@@ -296,6 +320,68 @@ def nomenclature_target_unit(flow: BafuFlow, ef_flow: EfFlow) -> tuple[str, floa
     return target_unit, _SCALED.get((flow.unit, target_unit))
 
 
+def _water_target(ef_flow: EfFlow, index: EfFlowIndex) -> bool:
+    """Whether water's density converts a mass source onto ``ef_flow``: a
+    characterised flow that only EF's water-use method characterises (the test
+    ``conversion_for`` applies), or a factorless water flow (``_is_water_flow``)."""
+    if ef_flow.characterised:
+        return set(index.vector(ef_flow.code)) == {WATER_USE_METHOD}
+    return _is_water_flow(ef_flow)
+
+
+def unit_agrees(flow: BafuFlow, ef_flow: EfFlow, index: EfFlowIndex) -> bool:
+    """The matcher's unit gate: whether ``flow`` can be expressed in the unit
+    ``ef_flow`` states.
+
+    ``True`` when ``ef_flow`` states no unit (the gate does not apply: an index
+    built without unit relations behaves as before), and otherwise when
+    ``conversion_onto`` has a factor from ``flow.unit`` onto the stated unit: the
+    same physical dimension, or one of the fixed cross-dimension rules (energy
+    content, water density). ``False`` means the candidate is not a match:
+    ``pipeline.MatchPipeline._resolve`` and ``mappings_biosphere_matched.
+    _name_only_match`` both drop it and go on.
+    """
+    if ef_flow.stated_unit is None:
+        return True
+    water_target = _water_target(ef_flow, index)
+    return conversion_onto(flow, ef_flow.stated_unit, water_target=water_target) is not None
+
+
+def unit_mismatch_detail(flow: BafuFlow, ef_flows: Iterable[EfFlow]) -> str:
+    """The ``unit_mismatch`` detail for a source whose candidates ``ef_flows`` were
+    all refused by ``unit_agrees``: the same sentence ``_decide`` writes for a
+    characterised match without a conversion."""
+    ef_flows = list(ef_flows)
+    units = ", ".join(sorted({f.stated_unit for f in ef_flows if f.stated_unit}))
+    names = ", ".join(sorted({f.name for f in ef_flows}))
+    return f"BAFU unit {flow.unit} vs EF reference unit {units} for {names}; no fixed conversion"
+
+
+def stated_target_unit(flow: BafuFlow, ef_flow: EfFlow) -> tuple[str, float | None, str | None]:
+    """``(target unit, conversion factor, caveat)`` of an entry onto a factorless
+    ``ef_flow`` that states its unit: what ``nomenclature_target_unit`` guesses for a
+    flow that states none.
+
+    The target unit is always the stated one. The factor is ``None`` when the source
+    is already at that scale (never a fabricated 1.0), and the caveat is the one the
+    factor itself carries (an energy content), if any. Raises ``ValueError`` for a
+    pair ``unit_agrees`` refuses: the matcher never lets one reach an entry.
+    """
+    unit = ef_flow.stated_unit
+    conversion = (
+        conversion_onto(flow, unit, water_target=_is_water_flow(ef_flow))
+        if unit is not None
+        else None
+    )
+    if conversion is None:
+        raise ValueError(
+            f"no fixed conversion from {flow.unit} to {unit} for {ef_flow.code}; "
+            "the unit gate withholds this pair"
+        )
+    factor, caveat = conversion
+    return unit, (None if factor == 1.0 else factor), caveat
+
+
 def unit_conversion(bafu_unit: str, ef_unit: str | None) -> float | None:
     """Fixed multiplier from ``bafu_unit`` onto EF's ``ef_unit``, or ``None`` when unsafe.
 
@@ -331,7 +417,23 @@ def conversion_for(
 ) -> tuple[float, str | None] | None:
     """The multiplier from ``flow.unit`` onto ``match``'s EF reference unit, paired with
     any caveat that factor itself carries, or ``None`` when no fixed conversion exists
-    and the flow must be withheld.
+    and the flow must be withheld: ``conversion_onto`` for the inferred reference
+    unit of a characterised target.
+    """
+    return conversion_onto(
+        flow,
+        index.reference_unit(match.code),
+        water_target=set(index.vector(match.code)) == {WATER_USE_METHOD},
+    )
+
+
+def conversion_onto(
+    flow: BafuFlow, ef_unit: str | None, *, water_target: bool
+) -> tuple[float, str | None] | None:
+    """The multiplier from ``flow.unit`` onto the EF unit ``ef_unit``, paired with any
+    caveat that factor itself carries, or ``None`` when no fixed conversion exists.
+    ``water_target`` says whether the target is a water flow water's density applies
+    to (``_water_target``).
 
     Checked in this order: an energy-content factor (``ENERGY_CONTENT``) whenever the
     target's reference unit is megajoule and ``(flow.name, flow.unit)`` is a key BAFU
@@ -351,7 +453,7 @@ def conversion_for(
     the caveat on top of either wording, disclosing an assumption the factor alone
     would not.
     """
-    if index.reference_unit(match.code) == "megajoule":
+    if ef_unit == "megajoule":
         energy = ENERGY_CONTENT.get((flow.name, flow.unit))
         if energy is not None:
             if (flow.name, flow.unit) in _REGRESSION_INFERRED_ENERGY_CONTENT:
@@ -369,16 +471,16 @@ def conversion_for(
             if note:
                 caveat = f"{caveat}; {note}"
             return energy, caveat
-    if index.reference_unit(match.code) == "kilogram":
+    if ef_unit == "kilogram":
         stoichiometric = STOICHIOMETRIC.get((flow.name, flow.unit))
         if stoichiometric is not None:
             return stoichiometric, STOICHIOMETRIC_NOTES[(flow.name, flow.unit)]
-    if flow.unit == "kg" and set(index.vector(match.code)) == {WATER_USE_METHOD}:
+    if flow.unit == "kg" and water_target and ef_unit == "cubic meter":
         # water is the only substance with a fixed mass -> volume factor (density);
-        # this depends on the target's characterisation method, so it cannot live in
-        # the generic, method-blind ``unit_conversion`` table above. Shared with
+        # this depends on the target (its characterisation method, or its name when
+        # it has none), so it cannot live in the generic ``unit_conversion`` table. Shared with
         # nomenclature_target_unit's own uncharacterised water special case (round 5,
         # decision 2026-09-14) via _WATER_DENSITY_FACTOR, so the two never disagree.
         return _WATER_DENSITY_FACTOR, None
-    factor = unit_conversion(flow.unit, index.reference_unit(match.code))
+    factor = unit_conversion(flow.unit, ef_unit)
     return None if factor is None else (factor, None)

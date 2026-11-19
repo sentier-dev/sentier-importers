@@ -10,13 +10,16 @@ from tests.matching.ef_fixtures import (
     AIR_UNSPEC,
     AIR_URBAN,
     LAND_OCC,
+    QUDT,
     RES_GROUND,
     RES_WATER,
     WATER_FRESH,
     WATER_UNSPEC,
     cf_row,
+    unit_row,
     vocab_row,
     write_ef_inputs,
+    write_unit_relations,
 )
 
 LT = "Emissions / Emissions to water / Emissions to water, unspecified (long-term)"
@@ -1428,3 +1431,121 @@ def test_relaxed_placement_decline_leaves_the_default_leaf_its_turn(tmp_path):
     got = default_pipeline(index, {}).match(water("Widget", "unspecified"), None)
     assert got.code == "widget-fresh"
     assert got.placement == Placement.DEFAULT_LEAF.value
+
+
+# --- the unit gate (2026-11-19, spec units-on-ef31-flows, step 5) -----------------
+# A candidate that states a unit the source cannot be converted to is not a match:
+# BAFU "Uranium" in kg had matched the activity flow "Uranium Alpha". The gate is
+# one filter at the top of ``_resolve``; later candidates and tiers still run.
+
+_KG, _KBQ, _MJ = QUDT + "KiloGM", QUDT + "KiloBQ", QUDT + "MegaJ"
+
+
+def _unit_pipeline(tmp_path, vocab, units, cf=()):
+    cf_path, terms_dir = write_ef_inputs(tmp_path, list(cf), vocab, shards=1)
+    write_unit_relations(tmp_path, [unit_row(code, unit) for code, unit in units.items()])
+    index = EfFlowIndex.from_files(
+        cf_path, terms_dir, include_uncharacterised=True, read_ef_context=True
+    )
+    return default_pipeline(index, {})
+
+
+def _air(name, unit, sub="unspecified"):
+    return BafuFlow(name, "emissions to air", sub, unit)
+
+
+def test_a_mass_source_does_not_match_an_activity_flow(tmp_path):
+    vocab = [vocab_row("u-alpha", "Uranium Alpha", alt=["Uranium"], ef_context=AIR_UNSPEC)]
+    pipe = _unit_pipeline(tmp_path, vocab, {"u-alpha": _KBQ})
+    assert pipe.match(_air("Uranium", "kg"), None) == Unmatched(
+        reason="unit_mismatch",
+        detail="BAFU unit kg vs EF reference unit kBq for Uranium Alpha; no fixed conversion",
+    )
+    # the same flow is the match of an activity source
+    got = pipe.match(_air("Uranium", "Bq"), None)
+    assert isinstance(got, Match) and got.code == "u-alpha"
+
+
+def test_a_candidate_without_a_stated_unit_is_not_gated(tmp_path):
+    vocab = [vocab_row("u-alpha", "Uranium Alpha", alt=["Uranium"], ef_context=AIR_UNSPEC)]
+    got = _unit_pipeline(tmp_path, vocab, {}).match(_air("Uranium", "kg"), None)
+    assert isinstance(got, Match) and got.code == "u-alpha"
+
+
+def test_unit_twins_on_one_leaf_are_told_apart_by_the_source_unit(tmp_path):
+    # the real shape: two factorless "Thorium" per air context, one kg, one kBq
+    vocab = [
+        vocab_row("th-activity", "Thorium", ef_context=AIR_UNSPEC),
+        vocab_row("th-mass", "Thorium", ef_context=AIR_UNSPEC),
+    ]
+    pipe = _unit_pipeline(tmp_path, vocab, {"th-activity": _KBQ, "th-mass": _KG})
+    mass = pipe.match(_air("Thorium", "kg"), None)
+    activity = pipe.match(_air("Thorium", "Bq"), None)
+    assert (mass.code, mass.candidates) == ("th-mass", 1)
+    assert (activity.code, activity.candidates) == ("th-activity", 1)
+    assert mass.caveats == activity.caveats == ()
+
+
+def test_a_later_tier_still_runs_past_a_candidate_of_another_unit(tmp_path):
+    # the name tier finds only the activity flow; the synonym tier finds the mass one
+    vocab = [
+        vocab_row("widget-activity", "Widget", ef_context=AIR_UNSPEC),
+        vocab_row("widget-mass", "Widget, total", alt=["Widget"], ef_context=AIR_UNSPEC),
+    ]
+    pipe = _unit_pipeline(tmp_path, vocab, {"widget-activity": _KBQ, "widget-mass": _KG})
+    got = pipe.match(_air("Widget", "kg"), None)
+    assert (got.code, got.tier) == ("widget-mass", "synonym")
+    assert got.caveats == ()
+
+
+def test_a_cas_match_past_a_candidate_of_another_unit_says_so(tmp_path):
+    vocab = [
+        vocab_row("widget-activity", "Widget", ef_context=AIR_UNSPEC),
+        vocab_row("gadget-mass", "Gadget", cas="1-2-3", ef_context=AIR_UNSPEC),
+    ]
+    pipe = _unit_pipeline(tmp_path, vocab, {"widget-activity": _KBQ, "gadget-mass": _KG})
+    got = pipe.match(_air("Widget", "kg"), "1-2-3")
+    assert (got.code, got.tier) == ("gadget-mass", "cas")
+    assert got.caveats == (
+        "an earlier tier's match states a unit the source has no conversion to; "
+        "resolved instead by CAS 1-2-3, whose EF target name may not resemble the "
+        "source name",
+    )
+
+
+def test_a_candidate_of_another_unit_does_not_count_as_found(tmp_path):
+    # the activity twin sits on the source's own leaf, the mass twin only on the
+    # unspecified one: the mass twin is placed by the ordinary fallback, and the
+    # activity twin is no part of the candidate count.
+    vocab = [vocab_row("th-activity", "Thorium"), vocab_row("th-mass", "Thorium")]
+    cf = [cf_row("th-activity", "thorium", AIR_URBAN), cf_row("th-mass", "thorium", AIR_UNSPEC)]
+    cf[0]["method_id"] = "ef-3.1:ionising-radiation-human-health"
+    pipe = _unit_pipeline(tmp_path, vocab, {"th-activity": _KBQ, "th-mass": _KG}, cf)
+    got = pipe.match(_air("Thorium", "kg", "high. pop."), None)
+    assert (got.code, got.placement, got.candidates) == (
+        "th-mass",
+        Placement.UNSPECIFIED.value,
+        1,
+    )
+
+
+def test_the_first_reason_met_is_the_one_reported_when_no_tier_matches(tmp_path):
+    # name tier: another unit; synonym tier: right unit, but only on a leaf the
+    # source cannot be placed on
+    vocab = [
+        vocab_row("widget-activity", "Widget", ef_context=AIR_UNSPEC),
+        vocab_row("widget-mass", "Widget, total", alt=["Widget"], ef_context=AIR_UNSPEC_LT),
+    ]
+    pipe = _unit_pipeline(tmp_path, vocab, {"widget-activity": _KBQ, "widget-mass": _KG})
+    got = pipe.match(_air("Widget", "kg"), None)
+    assert got.reason == "unit_mismatch"
+
+
+def test_an_energy_content_source_still_matches_its_megajoule_flow(tmp_path):
+    vocab = [vocab_row("coal", "Hard coal", alt=["Coal, hard"])]
+    cf = [cf_row("coal", "hard coal", RES_GROUND, method="ef-3.1:resource-use-fossils")]
+    pipe = _unit_pipeline(tmp_path, vocab, {"coal": _MJ}, cf)
+    got = pipe.match(BafuFlow("Coal, hard", "resources", "in ground", "kg"), None)
+    assert isinstance(got, Match) and got.code == "coal"
+    refused = pipe.match(BafuFlow("Hard coal", "resources", "in ground", "kg"), None)
+    assert refused.reason == "unit_mismatch"

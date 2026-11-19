@@ -71,12 +71,27 @@ from sentier_importers.sources.bafu.ef_units import (
     conversion_for,
     nomenclature_target_unit,
     nomenclature_unit_mismatch,
+    stated_target_unit,
+    unit_agrees,
+    unit_mismatch_detail,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 _VOCAB_DIR = "ef_vocab"
 _REQUIRED = ("curated", "inferred", "ef_cfs")
 _BIOSPHERE_GROUP = 4
+
+#: How the comment of an entry onto a factorless target opens: no factor, then where
+#: the target unit comes from. A flow that states its unit (``EfFlow.stated_unit``,
+#: 2026-11-19) is given that unit; a flow that states none (an index built without
+#: unit relations) keeps the EF convention for the source's dimension. The
+#: ``sources.brightway_flows.bafu`` align pass knows both sentences.
+_NO_FACTOR = "uncharacterised in EF 3.1: no factor in any method"
+_STATED_UNIT = "target unit is the unit EF states for this flow"
+_CONVENTION_UNIT = (
+    "target unit is the EF convention for this dimension "
+    "(EF states no reference unit for this flow)"
+)
 
 #: Ion / oxidation-state markers BAFU bakes into a name: a trailing ``, ion`` /
 #: `` ion``, a trailing roman numeral (``II``-``VI``), or a trailing ``+``. Used only
@@ -255,7 +270,7 @@ def _sits_on_own_unspecified_leaf(flow: EfFlow) -> bool:
     return flow.leaf == unspecified_leaf(bucket, long_term=False)
 
 
-def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
+def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | Unmatched | None:
     """Round 5, decision 2026-09-14: "for the ones with names: we map, else: nothing".
 
     Called by ``_decide`` only after the pipeline itself has given up entirely
@@ -299,6 +314,12 @@ def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
     eligible (``compartments.is_long_term``, the same test the pipeline's own
     ``long_term_agrees`` gate uses); when no other namesake is left the flow stays
     ``no_ef_flow``. The caveat still names every leaf the name was found on.
+
+    The unit gate holds here too (2026-11-19, ``ef_units.unit_agrees``, the test the
+    pipeline's own ``_resolve`` applies): a namesake that states a unit the source
+    has no conversion onto is not eligible. When that is what leaves no namesake,
+    the outcome is ``Unmatched("unit_mismatch")`` rather than ``None``, so the flow
+    is reported with the reason that applies.
     """
     namesakes = index.by_name_any_bucket(flow.name)
     if not namesakes or any(namesake.characterised for namesake in namesakes):
@@ -310,6 +331,10 @@ def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
     )
     if not eligible:
         return None
+    refused = [namesake for namesake in eligible if not unit_agrees(flow, namesake, index)]
+    eligible = [namesake for namesake in eligible if namesake not in refused]
+    if not eligible:
+        return Unmatched("unit_mismatch", unit_mismatch_detail(flow, refused))
     chosen = next(
         (namesake for namesake in eligible if _sits_on_own_unspecified_leaf(namesake)),
         eligible[0],
@@ -550,7 +575,11 @@ class BafuEfMatchedSource(Source):
 
         For an uncharacterised target (the nomenclature package only -- ``_decide``
         never lets one reach here for the default, characterised-only source), there is
-        no EF reference unit at all: the target unit is ``nomenclature_target_unit``'s
+        no inferred EF reference unit. When the flow states its unit
+        (``EfFlow.stated_unit``, 2026-11-19) the target unit is that unit, with the
+        factor and caveat of ``ef_units.stated_target_unit``, and the comment says
+        so (``_STATED_UNIT``). When it states none, the target unit is
+        ``nomenclature_target_unit``'s
         EF-convention spelling for the source unit's physical dimension (round 5,
         decision 2026-09-14), and ``conversion_factor`` is set whenever that function
         returns a factor (a source unit already at the EF-convention scale gets
@@ -639,16 +668,17 @@ class BafuEfMatchedSource(Source):
         )
 
         if not ef_flow.characterised:
-            target_unit, rescale_factor = nomenclature_target_unit(flow, ef_flow)
+            if ef_flow.stated_unit is not None:
+                target_unit, rescale_factor, unit_caveat = stated_target_unit(flow, ef_flow)
+                unit_sentence = _STATED_UNIT
+            else:
+                target_unit, rescale_factor = nomenclature_target_unit(flow, ef_flow)
+                unit_caveat, unit_sentence = None, _CONVENTION_UNIT
             target["unit"] = target_unit
             entry: Record = {"source": source, "target": target}
             if rescale_factor is not None:
                 entry["conversion_factor"] = rescale_factor
-            comments = [
-                "uncharacterised in EF 3.1: no factor in any method; target unit is "
-                "the EF convention for this dimension (EF states no reference unit "
-                "for this flow)"
-            ]
+            comments = [f"{_NO_FACTOR}; {unit_sentence}"]
             if uncertain_energy and not name_only:
                 comments.append("EF context not recoverable from the source context code")
             elif ef_flow.context_uncertain and not name_only:
@@ -680,6 +710,8 @@ class BafuEfMatchedSource(Source):
                 comments.extend(match.caveats)
             if resource_correction_caveat:
                 comments.append(resource_correction_caveat)
+            if unit_caveat:
+                comments.append(unit_caveat)
             if rescale_factor is not None:
                 comments.append(f"amount rescaled by {rescale_factor:g}")
             entry["comment"] = "; ".join(comments)

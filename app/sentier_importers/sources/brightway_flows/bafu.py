@@ -90,9 +90,11 @@ _CONVENTION_UNIT = (
     "target unit is the EF convention for this dimension "
     "(EF states no reference unit for this flow)"
 )
+#: The same, of a factorless target that states its unit (2026-11-19).
+_STATED_UNIT = "target unit is the unit EF states for this flow"
 #: Sentences of an entry's comment that describe a target without factors. They turn
 #: false when a reviewed decision moves the entry onto a target that scores.
-_NO_SCORE_SENTENCES = frozenset({UNCHARACTERISED, ALL_ZERO, _CONVENTION_UNIT})
+_NO_SCORE_SENTENCES = frozenset({UNCHARACTERISED, ALL_ZERO, _CONVENTION_UNIT, _STATED_UNIT})
 
 
 @dataclass(frozen=True)

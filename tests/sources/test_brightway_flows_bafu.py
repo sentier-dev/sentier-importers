@@ -721,6 +721,12 @@ def test_a_reviewed_target_that_scores_drops_what_the_old_comment_said_of_no_fac
     assert kind == "retargeted" and new["comment"] == f"kept note; {REVIEWED}"
     zero = {**entry(TOXIC, "ef-zero", "zero"), "comment": "all factors are zero in EF 3.1"}
     assert bafu.retarget(zero, state)[0]["comment"] == REVIEWED
+    stated = (
+        "uncharacterised in EF 3.1: no factor in any method; target unit is the unit EF "
+        "states for this flow; kept note"
+    )
+    new, _ = bafu.retarget({**entry(TOXIC, "ef-borax", "Borax"), "comment": stated}, state)
+    assert new["comment"] == f"kept note; {REVIEWED}"
     # their target carries no factor: nothing the old comment says of ours is touched
     kept, _ = bafu.retarget({**entry(BORAX, "ef-toxic", "toxic"), "comment": old}, state)
     assert kept["comment"] == f"{old}; {REVIEWED}"

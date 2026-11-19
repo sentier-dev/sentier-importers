@@ -10,7 +10,15 @@ from sentier_importers.sources.bafu.mappings_biosphere_matched import ParsedInpu
 from sentier_importers.sources.bafu.mappings_biosphere_nomenclature import BafuEfNomenclatureSource
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
-from tests.matching.ef_fixtures import AIR_UNSPEC, cf_row, vocab_row
+from tests.matching.ef_fixtures import (
+    AIR_UNSPEC,
+    QUDT,
+    SENTIER_UNIT,
+    cf_row,
+    unit_row,
+    vocab_row,
+    write_unit_relations,
+)
 from tests.sources.test_bafu_mappings_matched import (
     CF,
     CO2,
@@ -552,3 +560,98 @@ def test_resource_correction_flow_carries_its_own_caveat_onto_an_uncharacterised
         "source is a resource-correction flow, mapped to the extraction of the same "
         "element" in entry["comment"]
     )
+
+
+# --- stated units (2026-11-19, spec units-on-ef31-flows, step 5) --------------------
+
+
+def _stated_unit_rows(tmp_path, vocab, units, flow):
+    """``transform`` rows of ``flow`` over an index that reads ``ef-context`` and the
+    unit relations ``units`` (flow code -> unit IRI)."""
+    root = _stage(tmp_path, vocab=VOCAB + vocab)
+    write_unit_relations(root, [unit_row(code, unit) for code, unit in units.items()])
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    inputs = source.parse(source.fetch(ctx))[0]["inputs"]
+    index = EfFlowIndex.from_files(
+        root / "characterization-factors.parquet",
+        root / "terms",
+        include_uncharacterised=True,
+        read_ef_context=True,
+    )
+    inputs = replace(inputs, index=index, pipeline=default_pipeline(index, load_aliases()))
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    outcomes = {f.name: o for f, o in source.outcomes([{"inputs": augmented}])}
+    rows = source.transform([{"inputs": augmented}])
+    return [r for r in rows if r["source"]["name"] == flow.name], outcomes[flow.name]
+
+
+_STATED_COMMENT = (
+    "uncharacterised in EF 3.1: no factor in any method; target unit is the unit EF "
+    "states for this flow"
+)
+
+
+def test_a_factorless_target_takes_the_unit_it_states(tmp_path):
+    # the convention guess kept BAFU's own "m3y"; the flow states m3*a
+    vocab = [vocab_row("reservoir", "Volume Occupied, Reservoir", bw="envi-air-unkn")]
+    flow = BafuFlow("Volume occupied, reservoir", "emissions to air", "unspecified", "m3y")
+    (row,), _ = _stated_unit_rows(tmp_path, vocab, {"reservoir": SENTIER_UNIT + "M3-YR"}, flow)
+    assert row["target"]["unit"] == "m3*a"
+    assert "conversion_factor" not in row
+    assert row["comment"] == _STATED_COMMENT
+
+
+def test_a_becquerel_source_is_rescaled_onto_the_stated_kbq(tmp_path):
+    vocab = [vocab_row("kr", "Krypton-99", bw="envi-air-unkn")]
+    flow = BafuFlow("Krypton-99", "emissions to air", "unspecified", "Bq")
+    (row,), _ = _stated_unit_rows(tmp_path, vocab, {"kr": QUDT + "KiloBQ"}, flow)
+    assert row["target"]["unit"] == "kBq"
+    assert row["conversion_factor"] == 0.001
+    assert row["comment"] == f"{_STATED_COMMENT}; amount rescaled by 0.001"
+
+
+def test_a_mass_source_is_not_emitted_onto_a_flow_that_states_an_activity(tmp_path):
+    vocab = [vocab_row("u-alpha", "Uranium Alpha", alt=["Uranium, total"], bw="envi-air-unkn")]
+    flow = BafuFlow("Uranium, total", "emissions to air", "unspecified", "kg")
+    rows, outcome = _stated_unit_rows(tmp_path, vocab, {"u-alpha": QUDT + "KiloBQ"}, flow)
+    assert not rows
+    assert (outcome.reason, outcome.detail) == (
+        "unit_mismatch",
+        "BAFU unit kg vs EF reference unit kBq for Uranium Alpha; no fixed conversion",
+    )
+
+
+def test_name_only_alignment_respects_the_stated_unit(tmp_path):
+    # the only namesake sits in another bucket and states an activity
+    vocab = [vocab_row("gneiss-activity", "Gneiss", bw="envi-air-unkn")]
+    flow = BafuFlow("Gneiss", "resources", "in ground", "kg")
+    rows, outcome = _stated_unit_rows(tmp_path, vocab, {"gneiss-activity": QUDT + "KiloBQ"}, flow)
+    assert not rows
+    assert (outcome.reason, outcome.detail) == (
+        "unit_mismatch",
+        "BAFU unit kg vs EF reference unit kBq for Gneiss; no fixed conversion",
+    )
+
+
+def test_name_only_alignment_takes_the_namesake_of_the_source_unit(tmp_path):
+    # "a-..." sorts first by code and would be the pick; it states an activity
+    vocab = [
+        vocab_row("a-gneiss-activity", "Gneiss", bw="envi-air-unkn"),
+        vocab_row("b-gneiss-mass", "Gneiss", bw="envi-grou-indu"),
+    ]
+    units = {"a-gneiss-activity": QUDT + "KiloBQ", "b-gneiss-mass": QUDT + "KiloGM"}
+    flow = BafuFlow("Gneiss", "resources", "in ground", "kg")
+    (row,), _ = _stated_unit_rows(tmp_path, vocab, units, flow)
+    assert row["target"]["code"] == "b-gneiss-mass"
+    assert row["target"]["unit"] == "kilogram"
+
+
+def test_wood_by_mass_is_not_emitted_onto_the_wood_flow_that_states_megajoule(tmp_path):
+    # the real shape: EF "Wood" (renewable material resources from biosphere) states
+    # MJ; the convention guess had emitted BAFU "Wood, ... standing/kg" on it in kilogram
+    vocab = [vocab_row("wood", "Wood", alt=["Wood, unspecified, standing/kg"], bw="reso-biot")]
+    flow = BafuFlow("Wood, unspecified, standing/kg", "resources", "biotic", "kg")
+    rows, outcome = _stated_unit_rows(tmp_path, vocab, {"wood": QUDT + "MegaJ"}, flow)
+    assert not rows
+    assert outcome.reason == "unit_mismatch"

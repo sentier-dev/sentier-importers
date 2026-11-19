@@ -97,6 +97,19 @@ any placement: a candidate that fails it is not placeable. It still counts as fo
 so a flow with nothing else to land on ends ``sub_compartment_absent`` (naming the
 long-term leaf) and later tiers still get their chance.
 
+The unit gate, 2026-11-19 (spec units-on-ef31-flows, step 5): a candidate that states
+a unit (``EfFlow.stated_unit``) the source has no conversion onto is not a match
+(``sources.bafu.ef_units.unit_agrees``: another physical dimension, unless an
+energy-content or water-density rule covers the pair). BAFU ``Uranium`` in kg had
+matched the activity flow ``Uranium Alpha`` this way, the matcher knowing no unit for
+a factorless EF flow. ``_resolve`` drops such candidates first, before anything else
+looks at them: unlike a long-term candidate, a flow of another unit is another flow
+(EF 3.1 has unit twins, two ``Thorium`` per air context, one in kg and one in kBq)
+and does not count as found. When that leaves a tier nothing, its outcome is
+``Unmatched("unit_mismatch")``, which, like ``sub_compartment_absent``, is not final:
+later tiers still run, and the first of the two kinds met is returned when none
+matches. A candidate that states no unit is not gated.
+
 Round 4, decision 2026-09-13, one more tiebreak inside ``_pick``, tried only after the
 source CAS itself fails to single out exactly one candidate (no source CAS, or the CAS
 matches none or several of them -- a CAS that DOES single one out is positive evidence
@@ -161,7 +174,21 @@ from sentier_importers.matching.matchers import (
     RegionStripMatcher,
     SynonymMatcher,
 )
+from sentier_importers.sources.bafu.ef_units import unit_agrees, unit_mismatch_detail
 from sentier_importers.sources.eaternity.bridge import BafuFlow
+
+#: ``Unmatched`` reasons that do not stop the pipeline: this tier's candidates exist
+#: but cannot be used (wrong sub-compartment, wrong unit), which says nothing of a
+#: later tier's candidates. The first one met is returned when no tier matches.
+_NOT_FINAL = frozenset({"sub_compartment_absent", "unit_mismatch"})
+#: The caveat of a CAS match reached past an earlier tier's non-final outcome, by the
+#: reason of that outcome: CAS is name-blind, so the reader is told why it decided.
+_CAS_AFTER = {
+    "sub_compartment_absent": (
+        "an earlier tier's match could not be placed in this sub-compartment"
+    ),
+    "unit_mismatch": "an earlier tier's match states a unit the source has no conversion to",
+}
 
 #: BAFU sub-compartment -> how EF would have named it, for the fallback caveat.
 #: Absent here: ``unspecified`` (already exact on its own bucket-level leaf) and
@@ -296,34 +323,39 @@ class MatchPipeline:
         ``sub_compartment_absent`` and its own tier is ``cas``, an extra caveat names
         the CAS: CAS is name-blind, so the EF flow it lands on may carry a name that
         does not resemble the source at all (module docstring).
+
+        2026-11-19: ``unit_mismatch`` (every candidate of a tier states a unit the
+        source has no conversion onto) is treated the same way (``_NOT_FINAL``): not
+        final, the first of either kind is what is returned when no tier matches,
+        and a CAS match reached past one says so (``_CAS_AFTER``).
         """
         bucket = bucket_of_bafu_category(flow.category)
         if bucket is None:
             return Unmatched("non_ef_compartment", flow.category)
         if flow.subcategory not in KNOWN_SUBCATEGORIES:
             return Unmatched("unknown_sub_compartment", flow.subcategory)
-        first_absent: Unmatched | None = None
+        first_withheld: Unmatched | None = None
         for matcher in self._matchers:
             candidates = matcher.candidates(flow, cas, self._index)
             outcome = self._resolve(candidates, flow, cas, matcher)
             if outcome is None:
                 continue
             if isinstance(outcome, Match):
-                if first_absent is not None and outcome.tier == "cas":
+                if first_withheld is not None and outcome.tier == "cas":
                     normalised_cas = normalise_cas(cas)
                     caveat = (
-                        f"an earlier tier's match could not be placed in this "
-                        f"sub-compartment; resolved instead by CAS {normalised_cas}, "
-                        "whose EF target name may not resemble the source name"
+                        f"{_CAS_AFTER[first_withheld.reason]}; resolved instead by CAS "
+                        f"{normalised_cas}, whose EF target name may not resemble the "
+                        "source name"
                     )
                     outcome = replace(outcome, caveats=outcome.caveats + (caveat,))
                 return outcome
-            if outcome.reason != "sub_compartment_absent":
+            if outcome.reason not in _NOT_FINAL:
                 return outcome
-            if first_absent is None:
-                first_absent = outcome
-        if first_absent is not None:
-            return first_absent
+            if first_withheld is None:
+                first_withheld = outcome
+        if first_withheld is not None:
+            return first_withheld
         template = (
             _NO_MATCH_INCLUSIVE
             if self._index.includes_uncharacterised
@@ -341,6 +373,10 @@ class MatchPipeline:
         """Place and disambiguate one matcher's ``candidates``, or ``None`` to try the
         next matcher (an empty ``candidates`` list -- this matcher found nothing in
         the flow's compartment at all).
+
+        First of all the unit gate (2026-11-19, module docstring): candidates that
+        state a unit the source has no conversion onto are dropped; when none is
+        left the outcome is ``unit_mismatch``, naming their units and names.
 
         In order: EXACT placement wins outright; failing that, UNSPECIFIED placement
         (the bucket-level fallback, ``unspecified_fallback`` permitting); failing
@@ -363,6 +399,13 @@ class MatchPipeline:
         """
         if not candidates:
             return None
+        # The one unit gate (module docstring): a candidate that states a unit the
+        # source has no conversion onto is another flow. It is dropped here, before
+        # anything below sees it, so it is neither placed nor counted as found.
+        found = candidates
+        candidates = [c for c in found if unit_agrees(flow, c.flow, self._index)]
+        if not candidates:
+            return Unmatched("unit_mismatch", unit_mismatch_detail(flow, [c.flow for c in found]))
         # The one long-term gate (module docstring): a long-term source only on a
         # long-term leaf, any other source never on one. Every placement below
         # draws from ``placeable``; ``candidates`` itself is kept for what was
