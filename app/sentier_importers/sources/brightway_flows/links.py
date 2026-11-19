@@ -39,6 +39,7 @@ EF_UNIT = {
     "MJ": "megajoule",
     "m2": "m2",
     "m2.a": "m2*a",
+    "m3.a": "m3*a",
 }
 #: Unit spelling (lowercased) -> (dimension, scale); the subset sentier-mappings'
 #: validator knows, so an entry built here passes its unit check.
@@ -53,6 +54,8 @@ _DIMENSION = {
     "m2": ("area", 1.0),
     "m2a": ("area-time", 1.0),
     "m2*a": ("area-time", 1.0),
+    "m3y": ("volume-time", 1.0),
+    "m3*a": ("volume-time", 1.0),
     "mj": ("energy", 1.0),
     "megajoule": ("energy", 1.0),
     "kwh": ("energy", 3.6),
