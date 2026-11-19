@@ -14,9 +14,16 @@
   ``retarget_withheld`` (the two flows score the same, but the two sides convert
   the amount differently, or our entry names no target code to compare; two flows
   that do not score are aligned whatever the conversion, so they are not listed).
+
+  A row whose flow has a reviewed decision (``bafu_decisions.yaml``) carries it as
+  ``decision`` and ``decision_reason``: ``ours`` and ``hold`` are why the row is
+  there to stay; ``theirs`` is on a row only when it could not be applied. A
+  score-changing case without a decision is listed as before, and logged.
 """
 
 from __future__ import annotations
+
+import logging
 
 from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.types import Record, Records, Rows
@@ -25,6 +32,7 @@ from sentier_importers.sources.brightway_flows.bafu import (
     Decision,
     State,
     decide,
+    decision_gaps,
     entries_of,
     package_entry,
     retarget,
@@ -35,6 +43,14 @@ from sentier_importers.sources.brightway_flows.factors import compare
 #: (``unit_differs``, ``ours_without_code``) hold a retarget back although no factor
 #: is known to differ.
 _FACTOR_KINDS = frozenset({"differ", "theirs_zero", "ours_zero"})
+
+logger = logging.getLogger(__name__)
+
+
+def _named(sources: list[Record]) -> str:
+    return "; ".join(
+        f"{s['name']} ({'/'.join(s.get('context') or [])}, {s.get('unit')})" for s in sources
+    )
 
 
 def _sort_key(row: Record) -> tuple[str, str, str]:
@@ -88,6 +104,17 @@ class BafuBrightwayFlowsAlignSource(BafuBrightwayFlowsBase):
 class BafuBrightwayFlowsReviewSource(BafuBrightwayFlowsBase):
     def transform(self, records: Records) -> Rows:
         state: State = records[0]["state"]
+        unneeded, undecided = decision_gaps(state)
+        if unneeded:
+            logger.warning(
+                f"{self.config.name}: {len(unneeded)} decision(s) not needed, the link "
+                f"changes no score or is not usable: {_named(unneeded)}"
+            )
+        if undecided:
+            logger.warning(
+                f"{self.config.name}: {len(undecided)} score-changing case(s) without a "
+                f"decision: {_named(undecided)}"
+            )
         rows: Rows = []
         for source in state.universe:
             row = self._row(source, state)
@@ -129,5 +156,8 @@ class BafuBrightwayFlowsReviewSource(BafuBrightwayFlowsBase):
                 else:
                     row.update(kind="retarget_withheld", reason=kind)
                 row["methods"] = list(methods)
+        reviewed = state.decisions.get(source["code"])
+        if reviewed is not None:
+            row.update(decision=reviewed.decision, decision_reason=reviewed.reason)
         row["brightway_flows"] = _theirs(decision)
         return row

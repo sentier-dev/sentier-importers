@@ -12,6 +12,11 @@ target is not a known label defect for that source name (spec 2026-11-19).
 "Changes no score" has one definition here, :func:`scores`: a flow scores when it
 carries at least one non-zero factor. A flow without CF rows and a flow whose CF rows
 are all zero are the same thing to a result, for package 5 and for the alignment.
+
+A link that does change a score is applied only where the project owner decided so,
+flow by flow (``decisions``, ``bafu_decisions.yaml``): package 5 ships a scoring target
+and the alignment takes a differently scoring one when the decision is ``theirs``.
+Without a decision, or with ``ours`` or ``hold``, such a link is left for the review.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 import orjson
 from sentier_importers.core import fetch as fetch_mod
@@ -41,6 +47,13 @@ from sentier_importers.sources.brightway_flows.correspondences import (
     Link,
     load,
 )
+from sentier_importers.sources.brightway_flows.decisions import (
+    DECISIONS_PATH,
+    REVIEWED,
+    THEIRS,
+    FlowDecision,
+    load_decisions,
+)
 from sentier_importers.sources.brightway_flows.factors import Vector, compare, factor_vectors
 from sentier_importers.sources.brightway_flows.identifiers import bafu_link
 from sentier_importers.sources.randonneur_data.ecoinvent_ef_biosphere import vocab_flow_codes
@@ -57,9 +70,6 @@ PACKAGE_INPUTS = {
 }
 #: Inputs ``parse`` reads from ``self.inputs`` (``ef_vocab`` is a directory, read apart).
 _REQUIRED = (_COVERAGE, *PACKAGE_INPUTS.values(), _EF_CFS)
-#: BAFU flow codes whose characterised link Laurenz accepted after the grouped review.
-#: Empty until then: a characterised link changes a score and is held back.
-ACCEPTED_CHARACTERISED: frozenset[str] = frozenset()
 #: Brightway Flows unit symbol -> the EF convention spelling our packages use, for
 #: targets that carry no factor (a characterised target takes ``reference_unit``).
 EF_UNIT = {
@@ -92,6 +102,15 @@ ALIGNED_FACTORLESS = f"target aligned with {RELEASE} (neither flow carries a fac
 ALIGNED_UNIT = f"target and unit aligned with {RELEASE} (neither flow carries a factor)"
 UNCHARACTERISED = "uncharacterised in EF 3.1: no factor in any method"
 ALL_ZERO = "all factors are zero in EF 3.1"
+#: What the nomenclature package says of a factorless target's unit
+#: (``mappings_biosphere_matched.entry_for``).
+_CONVENTION_UNIT = (
+    "target unit is the EF convention for this dimension "
+    "(EF states no reference unit for this flow)"
+)
+#: Sentences of an entry's comment that describe a target without factors. They turn
+#: false when a reviewed decision moves the entry onto a target that scores.
+_NO_SCORE_SENTENCES = frozenset({UNCHARACTERISED, ALL_ZERO, _CONVENTION_UNIT})
 #: Same wording as the nomenclature package (``mappings_biosphere_matched.entry_for``):
 #: said whenever a target's context is left out because the index could not place it.
 UNCERTAIN_CONTEXT = (
@@ -113,6 +132,8 @@ class State:
     vocab_codes: frozenset[str]
     defects: Mapping[str, LabelDefect]
     mapped: Mapping[str, tuple[str, Record]]
+    #: Reviewed decisions on score-changing links, by BAFU flow code.
+    decisions: Mapping[str, FlowDecision]
 
 
 @dataclass(frozen=True)
@@ -149,6 +170,12 @@ def _target_is_long_term(target: EfFlow, consensus: ConsensusFlow) -> bool:
 def scores(code: str | None, state: State) -> bool:
     """Whether the EF flow ``code`` carries at least one non-zero factor."""
     return any(state.vectors.get(code, {}).values())
+
+
+def _taken(source: Mapping, state: State) -> FlowDecision | None:
+    """The reviewed decision on ``source`` when it is to take their target."""
+    reviewed = state.decisions.get(source.get("code"))
+    return reviewed if reviewed is not None and reviewed.decision == THEIRS else None
 
 
 def decide(source: Mapping, state: State) -> Decision:
@@ -239,7 +266,8 @@ def package_entry(source: Record, state: State) -> tuple[Record | None, str | No
     if reason is not None:
         return None, reason
     scoring = scores(flow.code, state)
-    if scoring and source["code"] not in ACCEPTED_CHARACTERISED:
+    reviewed = _taken(source, state) if scoring else None
+    if scoring and reviewed is None:
         return None, "characterised_held_for_review"
     comments = [f"{RELEASE}, skos:{link.match}"]
     if not scoring:
@@ -250,6 +278,8 @@ def package_entry(source: Record, state: State) -> tuple[Record | None, str | No
     if factor is not None:
         entry["conversion_factor"] = factor
         comments.append(_rescaled_note(factor, link))
+    if reviewed is not None:
+        comments.append(f"reviewed {REVIEWED}: {reviewed.reason}")
     entry["comment"] = "; ".join(comments)
     return entry, None
 
@@ -312,6 +342,11 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
     (``unit_differs``) if a flow scores: another conversion changes the amount that
     gets characterised. If neither scores it takes their unit and conversion too
     (:func:`_unit_aligned`), provided their conversion is usable.
+
+    Two flows that score differently are aligned only when the flow's reviewed
+    decision is ``theirs``; the comment then gives the reason, and loses what it said
+    of a factorless target if theirs scores. A decision never overrides a unit
+    problem: with another conversion the entry stays ``unit_differs``.
     """
     ours = entry["target"].get("code")
     decision = decide(entry["source"], state)
@@ -323,8 +358,11 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
     if ours == flow.code:
         return entry, None
     kind, _ = compare(state.vectors.get(ours, {}), state.vectors.get(flow.code, {}))
+    reviewed = None
     if kind != "identical":
-        return entry, kind
+        reviewed = _taken(entry["source"], state)
+        if reviewed is None:
+            return entry, kind
     multiplier = decision.link.multiplier
     theirs = 1.0 if multiplier is None else multiplier
     if not math.isclose(entry.get("conversion_factor", 1.0), theirs, rel_tol=1e-9):
@@ -333,11 +371,94 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
         aligned = _unit_aligned(entry, decision, state)
         return (entry, "unit_differs") if aligned is None else (aligned, "retargeted")
     target = _their_target(entry, flow)
-    parts = [entry.get("comment"), ALIGNED if scores(ours, state) else ALIGNED_FACTORLESS]
+    if reviewed is not None:
+        note = f"target aligned with {RELEASE} (reviewed {REVIEWED}: {reviewed.reason})"
+    else:
+        note = ALIGNED if scores(ours, state) else ALIGNED_FACTORLESS
+    kept = entry.get("comment")
+    if reviewed is not None and kept and scores(flow.code, state):
+        kept = "; ".join(p for p in kept.split("; ") if p not in _NO_SCORE_SENTENCES)
+    parts = [kept, note]
     if "context" not in target and UNCERTAIN_CONTEXT not in (entry.get("comment") or ""):
         parts.append(UNCERTAIN_CONTEXT)
     comment = "; ".join(part for part in parts if part)
     return {**entry, "target": target, "comment": comment}, "retargeted"
+
+
+def _order(source: Mapping) -> tuple[str, str, str]:
+    return (
+        source["name"].lower(),
+        "/".join(source.get("context") or []),
+        source.get("unit") or "",
+    )
+
+
+def needs_decision(source: Mapping, state: State) -> bool:
+    """Whether taking their link for ``source`` would change a score.
+
+    An unmapped flow: their usable link lands on a scoring target. A mapped one: their
+    usable target is another flow than ours and scores differently.
+    """
+    decision = decide(source, state)
+    if decision.reason is not None:
+        return False
+    mapped = state.mapped.get(source["code"])
+    if mapped is None:
+        _, _, reason = _their_unit(source, decision, state)
+        return reason is None and scores(decision.target.code, state)
+    ours = mapped[1]["target"].get("code")
+    if ours is None or ours == decision.target.code:
+        return False
+    theirs = state.vectors.get(decision.target.code, {})
+    return compare(state.vectors.get(ours, {}), theirs)[0] != "identical"
+
+
+def _already_taken(source: Mapping, state: State) -> bool:
+    """A ``theirs`` decision whose target our package entry already names."""
+    mapped = state.mapped.get(source["code"])
+    decision = decide(source, state)
+    return (
+        _taken(source, state) is not None
+        and mapped is not None
+        and decision.reason is None
+        and mapped[1]["target"].get("code") == decision.target.code
+    )
+
+
+def decision_gaps(state: State) -> tuple[list[Record], list[Record]]:
+    """``(unneeded, undecided)`` source records, each sorted by name, context, unit.
+
+    ``unneeded``: flows with a decision that needs none (they agree with us, change no
+    score, or have no usable link); a ``theirs`` decision the packages already carry
+    is not one of them. ``undecided``: flows whose link would change a score and that
+    no decision covers, so a new upstream case is seen.
+    """
+    unneeded: list[Record] = []
+    undecided: list[Record] = []
+    for source in sorted(state.universe, key=_order):
+        decided = source["code"] in state.decisions
+        if needs_decision(source, state):
+            if not decided:
+                undecided.append(source)
+        elif decided and not _already_taken(source, state):
+            unneeded.append(source)
+    return unneeded, undecided
+
+
+def _check_decisions(decisions: Mapping[str, FlowDecision], universe: tuple[Record, ...]) -> None:
+    """Refuse a decision whose flow is gone from coverage or is no longer the flow it
+    was made for: a stale decision must fail, not apply to something else."""
+    by_code = {source["code"]: source for source in universe}
+    for code, reviewed in decisions.items():
+        source = by_code.get(code)
+        if source is None:
+            raise ValidationError(f"decision on {code} ({reviewed.name!r}): not in coverage")
+        theirs = (reviewed.name, list(reviewed.context), reviewed.unit)
+        ours = (source.get("name"), list(source.get("context") or []), source.get("unit"))
+        if theirs != ours:
+            raise ValidationError(
+                f"decision on {code} differs from its coverage record: {theirs!r} != {ours!r}"
+            )
 
 
 def _mapped(
@@ -378,6 +499,8 @@ class BafuBrightwayFlowsBase(Source):
 
     #: ``None`` in tests, which feed a synthetic file.
     expected_sha256: str | None = PINNED_SHA256
+    #: The reviewed decisions; ``None`` in tests that want none.
+    decisions_path: Path | None = DECISIONS_PATH
 
     def fetch(self, ctx: RunContext) -> RawData:
         """Fetch every named input except ``ef_vocab`` (a directory, read in ``parse``)."""
@@ -404,6 +527,8 @@ class BafuBrightwayFlowsBase(Source):
         }
         coverage = orjson.loads(self.inputs[_COVERAGE].content)["coverage"]
         universe = tuple(row["source"] for row in coverage)
+        decisions = load_decisions(self.decisions_path) if self.decisions_path else {}
+        _check_decisions(decisions, universe)
         state = State(
             bw=bw,
             by_id={item.source_id: item for item in bw.links[LIST]},
@@ -419,5 +544,6 @@ class BafuBrightwayFlowsBase(Source):
             vocab_codes=vocab_flow_codes(vocab_dir),
             defects=load_label_defects(),
             mapped=_mapped(packages, universe),
+            decisions=decisions,
         )
         return [{"state": state}]

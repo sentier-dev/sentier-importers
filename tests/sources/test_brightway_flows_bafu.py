@@ -9,6 +9,7 @@ from sentier_importers.core.source import SourceConfig
 from sentier_importers.matching.ef_index import LabelDefect
 from sentier_importers.sources.bafu.ecospold import flow_id
 from sentier_importers.sources.brightway_flows import bafu
+from sentier_importers.sources.brightway_flows.decisions import FlowDecision
 from sentier_importers.sources.brightway_flows.identifiers import bafu_candidates
 
 from tests.matching.ef_fixtures import AIR_RURAL, AIR_UNSPEC, cf_row, vocab_row, write_ef_inputs
@@ -210,13 +211,52 @@ def config(root, module_class="x", emit="biosphere-5-brightway-flows", verb="rep
 
 class _Probe(bafu.BafuBrightwayFlowsBase):
     expected_sha256 = None
+    decisions_path = None
 
     def transform(self, records):
         return records
 
 
-def state_for(tmp_path, curated=(), **stage_kw):
+def decided(source, decision, reason="because"):
+    """One reviewed decision on ``source``, as ``State.decisions`` holds it."""
+    return FlowDecision(
+        code=source["code"],
+        group=f"g-{decision}",
+        decision=decision,
+        reason=reason,
+        name=source["name"],
+        context=tuple(source["context"]),
+        unit=source["unit"],
+    )
+
+
+def with_decisions(state, *pairs):
+    """``state`` with the decisions ``(source, decision)`` in place of its own."""
+    return replace(state, decisions={s["code"]: decided(s, d) for s, d in pairs})
+
+
+def write_decisions(path, *pairs):
+    """A decisions file for ``(source, decision)`` pairs, one group per decision."""
+    doc = {
+        "groups": {f"g-{d}": {"decision": d, "reason": "because"} for _, d in pairs},
+        "flows": {
+            s["code"]: {
+                "group": f"g-{d}",
+                "name": s["name"],
+                "context": s["context"],
+                "unit": s["unit"],
+            }
+            for s, d in pairs
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc))  # JSON is YAML
+    return path
+
+
+def state_for(tmp_path, curated=(), decisions_path=None, **stage_kw):
     probe = _Probe(config(stage(tmp_path, curated, **stage_kw)))
+    probe.decisions_path = decisions_path
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     return probe.parse(probe.fetch(ctx))[0]["state"]
 
@@ -287,11 +327,25 @@ def test_a_characterised_link_is_held_for_review(tmp_path):
     )
 
 
-def test_an_accepted_characterised_link_becomes_an_entry(tmp_path, monkeypatch):
-    monkeypatch.setattr(bafu, "ACCEPTED_CHARACTERISED", frozenset({TOXIC["code"]}))
-    made, reason = bafu.package_entry(TOXIC, state_for(tmp_path))
+def test_a_scoring_link_decided_theirs_becomes_an_entry(tmp_path):
+    state = with_decisions(state_for(tmp_path), (TOXIC, "theirs"))
+    made, reason = bafu.package_entry(TOXIC, state)
     assert reason is None and made["target"]["code"] == "ef-toxic"
-    assert "no factor in any method" not in made["comment"]
+    assert made["comment"] == (
+        "brightway-flows 1.1.0, skos:closeMatch; reviewed 2026-11-19: because"
+    )
+
+
+@pytest.mark.parametrize("decision", ["ours", "hold"])
+def test_a_scoring_link_decided_otherwise_stays_held(tmp_path, decision):
+    state = with_decisions(state_for(tmp_path), (TOXIC, decision))
+    assert bafu.package_entry(TOXIC, state) == (None, "characterised_held_for_review")
+
+
+def test_a_decision_adds_nothing_to_a_link_that_changes_no_score(tmp_path):
+    state = state_for(tmp_path)
+    plain, _ = bafu.package_entry(BORAX, state)
+    assert bafu.package_entry(BORAX, with_decisions(state, (BORAX, "theirs"))) == (plain, None)
 
 
 def test_identical_factors_take_their_target(tmp_path):
@@ -548,3 +602,125 @@ def test_scoring_flows_with_another_conversion_are_never_unit_aligned(tmp_path):
     # identical non-zero factors: another conversion changes the amount characterised
     ours = {**entry(SCALED, "ef-ammonia", "ammonia"), "conversion_factor": 0.5}
     assert bafu.retarget(ours, state_for(tmp_path)) == (ours, "unit_differs")
+
+
+REVIEWED = "target aligned with brightway-flows 1.1.0 (reviewed 2026-11-19: because)"
+
+
+def test_a_state_without_a_decisions_file_holds_no_decision(tmp_path):
+    assert state_for(tmp_path).decisions == {}
+
+
+def test_parse_loads_the_decisions_file(tmp_path):
+    path = write_decisions(tmp_path / "d" / "decisions.yaml", (BENZENE, "theirs"), (TOXIC, "hold"))
+    state = state_for(tmp_path, decisions_path=path)
+    assert state.decisions[BENZENE["code"]] == decided(BENZENE, "theirs")
+    assert state.decisions[TOXIC["code"]].decision == "hold"
+
+
+def test_a_decision_on_a_flow_outside_coverage_is_refused(tmp_path):
+    path = write_decisions(tmp_path / "d" / "decisions.yaml", (GHOST, "theirs"))
+    with pytest.raises(ValidationError, match="not in coverage"):
+        state_for(tmp_path, decisions_path=path)
+
+
+@pytest.mark.parametrize(
+    "change", [{"name": "Benzol"}, {"context": ["emissions to air", "indoor"]}, {"unit": "g"}]
+)
+def test_a_decision_that_no_longer_describes_its_flow_is_refused(tmp_path, change):
+    stale = {**BENZENE, **change}  # same code, another record than coverage holds
+    path = write_decisions(tmp_path / "d" / "decisions.yaml", (stale, "theirs"))
+    with pytest.raises(ValidationError, match="differs from its coverage record"):
+        state_for(tmp_path, decisions_path=path)
+
+
+def test_a_differing_target_decided_theirs_is_taken(tmp_path):
+    ours = {**entry(BENZENE, "ef-benzene", "benzene"), "comment": "old note"}
+    state = with_decisions(state_for(tmp_path), (BENZENE, "theirs"))
+    new, kind = bafu.retarget(ours, state)
+    assert kind == "retargeted"
+    assert new["source"] == BENZENE and new["target"]["code"] == "ef-benzene-other"
+    assert new["target"]["unit"] == "kilogram"
+    assert new["target"]["context"] == [
+        "Emissions",
+        "Emissions to air",
+        "Emissions to non-urban air or from high stacks",
+    ]
+    assert new["comment"] == f"old note; {REVIEWED}"
+    assert bafu.retarget(new, state) == (new, None)  # and it stays so
+    bare, _ = bafu.retarget(entry(BENZENE, "ef-benzene", "benzene"), state)
+    assert bare["comment"] == REVIEWED
+
+
+@pytest.mark.parametrize("decision", ["ours", "hold"])
+def test_a_differing_target_decided_otherwise_is_left_alone(tmp_path, decision):
+    ours = entry(BENZENE, "ef-benzene", "benzene")
+    state = with_decisions(state_for(tmp_path), (BENZENE, decision))
+    assert bafu.retarget(ours, state) == (ours, "differ")
+
+
+def test_a_decision_theirs_also_takes_a_target_only_one_side_scores_on(tmp_path):
+    state = with_decisions(state_for(tmp_path), (BORAX, "theirs"), (TOXIC, "theirs"))
+    theirs_zero, kind = bafu.retarget(entry(BORAX, "ef-toxic", "toxic"), state)
+    assert kind == "retargeted" and theirs_zero["target"]["code"] == "ef-borax"
+    ours_zero, kind = bafu.retarget(entry(TOXIC, "ef-borax", "Borax"), state)
+    assert kind == "retargeted" and ours_zero["target"]["code"] == "ef-toxic"
+    assert ours_zero["comment"] == REVIEWED
+
+
+def test_a_decision_never_overrides_a_unit_problem(tmp_path):
+    # their link doubles the amount, our entry does not: a reviewed target is not enough
+    ours = entry(SCALED, "ef-benzene", "benzene")
+    state = with_decisions(state_for(tmp_path), (SCALED, "theirs"))
+    assert bafu.retarget(ours, state) == (ours, "unit_differs")
+    without = state_for(tmp_path)
+    assert bafu.retarget(ours, without) == (ours, "differ")
+
+
+def test_decision_gaps_lists_unneeded_decisions_and_undecided_cases(tmp_path):
+    curated = [
+        entry(AMMONIA, "ef-ammonia", "ammonia"),  # identical factors: no decision needed
+        entry(BENZENE, "ef-benzene", "benzene"),  # differ
+        entry(BROAD, "ef-ammonia", "ammonia"),  # no usable link
+    ]
+    state = state_for(tmp_path, curated=curated)
+    unneeded, undecided = bafu.decision_gaps(state)
+    assert unneeded == []
+    assert [s["name"] for s in undecided] == ["Benzene", "Toxic"]  # mapped differ, held link
+    full = with_decisions(state, (BENZENE, "ours"), (TOXIC, "hold"))
+    assert bafu.decision_gaps(full) == ([], [])
+    extra = with_decisions(
+        state,
+        (BENZENE, "theirs"),
+        (AMMONIA, "theirs"),
+        (BROAD, "ours"),
+        (BORAX, "theirs"),  # unmapped, ships without a decision
+        (HEXANE, "hold"),  # unmapped, no EF target
+    )
+    unneeded, undecided = bafu.decision_gaps(extra)
+    assert [s["name"] for s in unneeded] == ["Ammonia", "Borax", "Broad", "Hexane"]
+    assert [s["name"] for s in undecided] == ["Toxic"]
+
+
+def test_a_decision_already_applied_is_not_reported_as_unneeded(tmp_path):
+    aligned = entry(BENZENE, "ef-benzene-other", "benzene")
+    state = with_decisions(state_for(tmp_path, curated=[aligned]), (BENZENE, "theirs"))
+    assert bafu.decision_gaps(state)[0] == []
+    kept = with_decisions(state, (BENZENE, "ours"))  # "ours", yet we are on their target
+    assert [s["name"] for s in bafu.decision_gaps(kept)[0]] == ["Benzene"]
+
+
+def test_a_reviewed_target_that_scores_drops_what_the_old_comment_said_of_no_factor(tmp_path):
+    # ours carried no factor and said so; theirs scores, so those sentences turn false
+    old = (
+        "uncharacterised in EF 3.1: no factor in any method; target unit is the EF "
+        "convention for this dimension (EF states no reference unit for this flow); kept note"
+    )
+    state = with_decisions(state_for(tmp_path), (TOXIC, "theirs"), (BORAX, "theirs"))
+    new, kind = bafu.retarget({**entry(TOXIC, "ef-borax", "Borax"), "comment": old}, state)
+    assert kind == "retargeted" and new["comment"] == f"kept note; {REVIEWED}"
+    zero = {**entry(TOXIC, "ef-zero", "zero"), "comment": "all factors are zero in EF 3.1"}
+    assert bafu.retarget(zero, state)[0]["comment"] == REVIEWED
+    # their target carries no factor: nothing the old comment says of ours is touched
+    kept, _ = bafu.retarget({**entry(BORAX, "ef-toxic", "toxic"), "comment": old}, state)
+    assert kept["comment"] == f"{old}; {REVIEWED}"

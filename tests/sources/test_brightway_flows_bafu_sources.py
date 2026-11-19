@@ -1,3 +1,5 @@
+import logging
+
 import orjson
 import pytest
 from sentier_importers.core.context import RunContext
@@ -25,15 +27,17 @@ from tests.sources.test_brightway_flows_bafu import (
     entry,
     stage,
     vapour_entry,
+    write_decisions,
 )
 
 CURATED = [entry(AMMONIA, "ef-ammonia", "ammonia"), entry(BENZENE, "ef-benzene", "benzene")]
 
 
-def run(cls, tmp_path, curated=CURATED, doc=None, universe=UNIVERSE, **config_kw):
+def run(cls, tmp_path, curated=CURATED, doc=None, universe=UNIVERSE, decisions=(), **config_kw):
     root = stage(tmp_path, curated=curated, doc=doc, universe=universe)
     source = cls(config(root, **config_kw))
     source.expected_sha256 = None
+    source.decisions_path = write_decisions(root / "decisions.yaml", *decisions)
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     return source.transform(source.parse(source.fetch(ctx)))
 
@@ -183,3 +187,60 @@ def test_factorless_flows_in_another_unit_are_aligned_not_reviewed(tmp_path):
     by_name = review(tmp_path / "r", **kw)
     assert "Vapour" not in by_name
     assert not [r for r in by_name.values() if r.get("reason") == "unit_differs"]
+
+
+def test_a_decision_theirs_is_applied_by_align_and_package_and_leaves_the_review(tmp_path):
+    kw = {"decisions": [(BENZENE, "theirs"), (TOXIC, "theirs")]}
+    aligned = run(BafuBrightwayFlowsAlignSource, tmp_path / "a", emit="biosphere-1-curated", **kw)
+    assert aligned[1]["target"]["code"] == "ef-benzene-other"
+    assert "reviewed 2026-11-19: because" in aligned[1]["comment"]
+    package = run(BafuBrightwayFlowsPackageSource, tmp_path / "p", **kw)
+    assert [r["source"]["name"] for r in package] == ["Borax", "Thorium-232", "Toxic"]
+    by_name = review(tmp_path / "r", **kw)
+    assert "Benzene" not in by_name and "Toxic" not in by_name
+
+
+def test_review_rows_carry_a_decision_to_keep_ours_or_to_hold(tmp_path):
+    by_name = review(tmp_path, decisions=[(BENZENE, "ours"), (TOXIC, "hold")])
+    benzene, toxic = by_name["Benzene"], by_name["Toxic"]
+    assert benzene["kind"] == "score_changing_retarget"
+    assert (benzene["decision"], benzene["decision_reason"]) == ("ours", "because")
+    assert toxic["reason"] == "characterised_held_for_review"
+    assert (toxic["decision"], toxic["decision_reason"]) == ("hold", "because")
+    assert not [
+        r for name, r in by_name.items() if name not in ("Benzene", "Toxic") if "decision" in r
+    ]
+
+
+def test_review_rows_without_a_decision_are_as_before(tmp_path):
+    by_name = review(tmp_path)
+    assert by_name["Benzene"]["kind"] == "score_changing_retarget"
+    assert by_name["Toxic"]["reason"] == "characterised_held_for_review"
+    assert not [r for r in by_name.values() if "decision" in r or "decision_reason" in r]
+
+
+def test_a_decision_theirs_that_could_not_be_applied_stays_in_the_review(tmp_path):
+    kw = {
+        "curated": [entry(SCALED, "ef-benzene", "benzene")],
+        "universe": [*UNIVERSE, SCALED],
+        "decisions": [(SCALED, "theirs")],
+    }
+    scaled = review(tmp_path, **kw)["Scaled"]
+    assert scaled["kind"] == "retarget_withheld" and scaled["reason"] == "unit_differs"
+    assert (scaled["decision"], scaled["decision_reason"]) == ("theirs", "because")
+    assert scaled["methods"] == ["ef-3.1:human-toxicity-cancer"]
+
+
+def test_review_warns_about_unneeded_decisions_and_undecided_cases(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        review(tmp_path, decisions=[(AMMONIA, "theirs")])
+    text = caplog.text
+    assert "1 decision(s) not needed" in text and "Ammonia" in text
+    assert "2 score-changing case(s) without a decision" in text
+    assert "Benzene" in text and "Toxic" in text
+
+
+def test_review_is_silent_when_every_case_is_decided(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        review(tmp_path, decisions=[(BENZENE, "ours"), (TOXIC, "hold")])
+    assert "decision" not in caplog.text
