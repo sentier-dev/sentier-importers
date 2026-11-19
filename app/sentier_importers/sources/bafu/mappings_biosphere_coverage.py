@@ -1,7 +1,9 @@
 """Coverage sidecar: one row per bafu-2026-v1 elementary flow, mapped (which package,
 and for the matched/nomenclature packages which tier and placement) or unmapped (why).
 Reports all four packages (biosphere-1-curated, biosphere-2-inferred,
-biosphere-3-matched, biosphere-4-nomenclature), in two passes:
+biosphere-3-matched, biosphere-4-nomenclature), in two passes. A flow none of the four
+maps is reported under `biosphere-5-brightway-flows` when the optional `brightway_flows`
+input (that package's emitted file) lists it:
 
 1. ``BafuEfMatchedSource.outcomes`` (inherited unchanged) over the characterised-only
    index -- exactly what ``bafu-ef-biosphere-matched`` itself runs -- for every flow
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import orjson
 from loguru import logger
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.types import RawData, Record, Records, Rows
@@ -52,9 +55,18 @@ from sentier_importers.sources.bafu.mappings_biosphere_matched import (
     outcome_for,
     source_record,
 )
-from sentier_importers.sources.bafu.packages import CURATED, INFERRED, MATCHED, NOMENCLATURE
+from sentier_importers.sources.bafu.packages import (
+    BRIGHTWAY_FLOWS,
+    CURATED,
+    INFERRED,
+    MATCHED,
+    NOMENCLATURE,
+)
 
 _VOCAB_DIR = "ef_vocab"
+
+#: Optional input: the emitted ``biosphere-5-brightway-flows.json``.
+_BRIGHTWAY_FLOWS = "brightway_flows"
 
 
 class BafuEfCoverageSource(BafuEfMatchedSource):
@@ -87,11 +99,20 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
         augmented = replace(
             inputs, inclusive_index=inclusive_index, inclusive_pipeline=inclusive_pipeline
         )
-        return [{"inputs": augmented}]
+        package = self.inputs.get(_BRIGHTWAY_FLOWS)
+        codes = (
+            frozenset(
+                e["source"]["code"] for e in orjson.loads(package.content).get("replace", [])
+            )
+            if package is not None
+            else frozenset()
+        )
+        return [{"inputs": augmented, "brightway_flows_codes": codes}]
 
     def transform(self, records: Records) -> Rows:
         (record,) = records
         inputs: ParsedInputs = record["inputs"]
+        brightway_flows_codes = record.get("brightway_flows_codes", frozenset())
 
         # pass 1: exactly what bafu-ef-biosphere-matched itself computes.
         pass1 = {flow.code: (flow, outcome) for flow, outcome in self.outcomes(records)}
@@ -146,6 +167,9 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
                         row["location"] = outcome2.location
                     if outcome2.caveats:
                         row["caveats"] = list(outcome2.caveats)
+                elif flow.code in brightway_flows_codes:
+                    row["status"] = "mapped"
+                    row["package"] = BRIGHTWAY_FLOWS
                 else:
                     row["status"] = "unmapped"
                     row["reason"] = outcome2.reason
