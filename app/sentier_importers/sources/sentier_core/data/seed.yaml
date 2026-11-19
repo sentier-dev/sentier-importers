@@ -104,6 +104,13 @@ unit:
 # Units QUDT does not define. The IRIs are the ones Sentier's units scheme already
 # publishes (sentier-vocab, importers/input/extra-data.ttl); a term here makes them
 # valid objects of qudt:hasUnit relations.
+# KiloGM-YR and SCM_1ATM_15DEG_C_ISO are the two units of EF 3.1 flows (Brightway
+# Flows 1.1.0 codes) not established as QUDT units; that scheme does not publish them.
+- iri: https://vocab.sentier.dev/units/unit/KiloGM-YR
+  pref_label: Kilogram year
+  definition: One kilogram over one year
+  notation: kga
+  status: published
 - iri: https://vocab.sentier.dev/units/unit/KiloM-TONNE
   pref_label: Tonne (metric) kilometre
   alt_labels:
@@ -132,6 +139,13 @@ unit:
   definition: Transport of one person over one kilometer. Does not depend on mass of person or
     duration of transport.
   notation: personkm
+  status: published
+- iri: https://vocab.sentier.dev/units/unit/SCM_1ATM_15DEG_C_ISO
+  pref_label: Standard cubic metre (15 °C, 1 atm)
+  alt_labels:
+  - Standard cubic meter (15 °C, 1 atm)
+  definition: Amount of gas that fills one cubic meter at 15 degrees Celsius and 1 atm (101.325 kPa)
+  notation: sm3
   status: published
 unit-group:
 - iri: https://vocab.sentier.dev/units/group/mass
