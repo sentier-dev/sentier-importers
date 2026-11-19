@@ -29,19 +29,24 @@
 sources:
   # sentier-mappings: Agribalyse 3.2 → EF 3.1 biosphere crosswalk (randonneur package).
   # Non-ecoinvent, hand-authored entries only (curated + LLM-reviewed); see
-  # docs/specs/2026-07-10-sentier-mappings-target.md. Emits data/<category>/biosphere.json.
+  # docs/specs/2026-07-10-sentier-mappings-target.md. Second package of the pair, read by
+  # name when biosphere-1-brightway-flows has no entry (agribalyse-ef-brightway-flows,
+  # further down). Emits data/<category>/biosphere-2-curated.json.
   - name: biosphere
     module: sentier_importers.sources.agribalyse.mappings_biosphere
     target: sentier_mappings
     category: agribalyse-3.2__ef-3.1
+    emit_filename: biosphere-2-curated
     access: private
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/registry/mappings_biosphere.parquet"
       format: parquet
+    inputs:                                      # run after agribalyse-ef-brightway-flows
+      brightway_flows: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/agribalyse-3.2__ef-3.1/biosphere-1-brightway-flows.json"
     output_format: json
     package:
       name: agribalyse-3.2__ef-3.1-biosphere
-      version: 0.1.0
+      version: 0.2.0                             # 0.2.0: no "nan" context or unit
       verb: replace
     enabled: false
 
@@ -723,6 +728,45 @@ sources:
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-brightway-flows-review
+      version: 0.1.0
+      verb: review
+    enabled: false
+
+  # sentier-mappings: Brightway Flows 1.1.0 links for the agribalyse-3.2 -> ef-3.1 pair,
+  # keyed by the raw SimaPro fields (name, compartment and sub-compartment, unit) of the
+  # public Agribalyse 3.2 export. Plan: dds wiki 2026-11-19-brightway-flows-agribalyse-pair.
+  # Both regenerate-locally, one fresh --cache-dir. A consumer looks a flow up by name,
+  # context and unit in this package, and only without an entry by name in
+  # biosphere-2-curated (the `biosphere` block at the top).
+  - name: agribalyse-ef-brightway-flows        # emits biosphere-1-brightway-flows.json
+    module: sentier_importers.sources.brightway_flows.agribalyse_package
+    target: sentier_mappings
+    category: agribalyse-3.2__ef-3.1
+    emit_filename: biosphere-1-brightway-flows
+    access: public
+    fetch: *bw_flows_fetch
+    inputs: &bw_flows_agribalyse_inputs
+      flows: "file://${SENTIER_DATA_ROOT}/sentier-agribalyse/source/AGB32_ecoinvent_free.CSV.xz"
+      ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/terms"
+    output_format: json
+    package:
+      name: agribalyse-3.2__ef-3.1-biosphere-brightway-flows
+      version: 0.1.0
+      verb: replace
+    enabled: false
+
+  - name: agribalyse-ef-brightway-flows-review # emits brightway_flows_review.json
+    module: sentier_importers.sources.brightway_flows.agribalyse_review
+    target: sentier_mappings
+    category: agribalyse-3.2__ef-3.1
+    emit_filename: brightway_flows_review
+    access: public
+    fetch: *bw_flows_fetch
+    inputs: *bw_flows_agribalyse_inputs
+    output_format: json
+    package:
+      name: agribalyse-3.2__ef-3.1-brightway-flows-review
       version: 0.1.0
       verb: review
     enabled: false

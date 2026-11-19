@@ -31,8 +31,25 @@ _COLS = [
 ]
 
 
-def _raw() -> RawData:
-    rows = [
+def _row(**fields) -> dict:
+    row = {
+        "source_name": "Flow",
+        "source_unit": "kilogram",
+        "source_context": ["air", "non-urban air or from high stacks"],
+        "source_cas": None,
+        "target_db": "ef",
+        "target_code": "uuid-0",
+        "target_name": "Target",
+        "target_unit": "kilogram",
+        "unit_conversion": 1.0,
+        "priority_tier": 1,
+        "provenance": "curated_overrides",
+    }
+    return {**row, **fields}
+
+
+def _raw(rows=None) -> RawData:
+    rows = rows or [
         # keep: curated EF target
         {
             "source_name": "Nitrogen, total",
@@ -160,3 +177,58 @@ def test_assembled_package_matches_randonneur_schema():
 
     schema = json.loads(_SCHEMA.read_text())
     jsonschema.validate(package, schema)  # raises if invalid
+
+
+def _entries(*rows):
+    src = AgribalyseBiosphereMappingsSource(_config())
+    return src.transform(src.parse(_raw(list(rows))))
+
+
+def test_a_nan_context_and_unit_are_left_out_of_the_source():
+    # pandas wrote the missing cells of the registry as the string "nan"
+    (entry,) = _entries(
+        _row(source_unit="nan", source_context=["nan", "nan"], target_code="", source_cas="nan")
+    )
+    assert entry["source"] == {"name": "Flow"}
+    # a target without a code keeps its name and unit
+    assert entry["target"] == {"name": "Target", "unit": "kilogram"}
+
+
+def test_a_real_context_and_unit_are_kept():
+    (entry,) = _entries(_row())
+    assert entry["source"] == {
+        "name": "Flow",
+        "unit": "kilogram",
+        "context": ["air", "non-urban air or from high stacks"],
+    }
+    assert entry["target"] == {"name": "Target", "unit": "kilogram", "code": "uuid-0"}
+
+
+def test_a_partly_nan_context_keeps_its_real_levels():
+    (entry,) = _entries(_row(source_context=["Emissions to air", "NaN"]))
+    assert entry["source"]["context"] == ["Emissions to air"]
+
+
+def test_nullish_spellings_never_reach_an_entry():
+    entries = _entries(
+        _row(source_unit=" NaN ", target_unit="<NA>", target_code="None"),
+        _row(source_name="nan"),  # no source name: no entry
+        _row(target_name="None"),  # no target name: no entry
+    )
+    assert len(entries) == 1
+    assert entries[0]["source"] == {"name": "Flow", "context": _row()["source_context"]}
+    assert entries[0]["target"] == {"name": "Target"}
+    assert "nan" not in json.dumps(entries).lower()
+
+
+def test_a_key_the_first_package_holds_is_left_to_it():
+    rows = [
+        _row(source_name="AOX", source_context=["Emissions to air"]),
+        _row(source_name="AOX", source_context=["Emissions to water"]),
+    ]
+    src = AgribalyseBiosphereMappingsSource(_config())
+    assert len(src.transform(src.parse(_raw(rows)))) == 2
+    first = {"replace": [{"source": {"name": "AOX", "context": ["Emissions to air"]}}]}
+    src.inputs = {"brightway_flows": RawData(json.dumps(first).encode(), "file://first.json")}
+    kept = src.transform(src.parse(_raw(rows)))
+    assert [e["source"]["context"] for e in kept] == [["Emissions to water"]]
