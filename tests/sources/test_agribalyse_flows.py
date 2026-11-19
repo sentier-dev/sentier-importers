@@ -23,6 +23,7 @@ from sentier_importers.sources.agribalyse.flows import (
 )
 from sentier_importers.sources.brightway_flows.correspondences import PINNED_SHA256
 
+from tests.sources.brightway_flows_fixture import flow as bw_flow
 from tests.sources.ef_context_fixture import bw_bytes, entry, jrc_bytes, raw
 
 _C = "https://vocab.brightway.one/flow-contexts/"
@@ -216,6 +217,21 @@ def test_a_flow_neither_source_places_has_no_sub_compartment_and_is_reported(inf
     assert rows[1]["additional_notations"] == ["bw-context:reso-grou"]
     (line,) = [m for m in info if "without a sub_compartment" in m]
     assert "1 of 2 flows" in line and "'def'" in line
+
+
+def test_a_flow_neither_source_places_takes_the_leaf_of_the_flow_it_is_redirected_to(info):
+    source = _flows_source(jrc_rows=())
+    source.inputs[BRIGHTWAY_FLOWS] = raw(
+        bw_bytes(
+            [entry("abc", _AIR), entry("live", _AIR.replace("unspecified", "indoor"))],
+            flows=[bw_flow("live", "Iron")],
+            redirects=[("def", "live")],
+        )
+    )
+    rows = source.transform(_FLOWS)
+    assert rows[1]["sub_compartment"] == "Emissions to air, indoor"
+    (line,) = [m for m in info if "without a sub_compartment" in m]
+    assert "0 of 2 flows" in line
 
 
 def test_sources_that_disagree_on_a_context_path_are_refused():

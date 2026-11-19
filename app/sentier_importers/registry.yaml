@@ -301,7 +301,8 @@ sources:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz                                # unused: the plugin overrides parse() to gunzip
     # The exact EF context path of a flow (its leaf is the sub_compartment attribute):
-    # Brightway Flows 1.1.0 first, the JRC CF table for a flow it has no entry for.
+    # Brightway Flows 1.1.0 first, the JRC CF table for a flow it has no entry for, else
+    # the path of the flow Brightway Flows redirects the identifier to.
     inputs:
       brightway_flows: "https://zenodo.org/api/records/23554066/files/harmonised-flows-simple.json.gz/content"
       jrc: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"

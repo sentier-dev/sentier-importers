@@ -14,8 +14,11 @@ The path is the exact one, from one of two sources, in this order:
    whose source is the flow, also when it merges the flow into another one);
 2. the JRC CF table (``FLOW_class0..2``), for a characterised flow without an entry.
 
-A flow neither source places has no ``sub_compartment``; it is never inferred from
-the flow's ``bw-context`` code, whose crosswalk to EF contexts is ambiguous. Where
+A flow neither source places (an identifier Brightway Flows records as redirected)
+takes the path of the flow it is redirected to, by the same two sources: the rule
+already used for its unit. Only a flow whose redirect leads to no placed flow has no
+``sub_compartment``. The path is never inferred from the flow's ``bw-context`` code,
+whose crosswalk to EF contexts is ambiguous. Where
 both sources place a flow they must agree: a disagreement is an error listing the
 flows.
 """
@@ -23,7 +26,7 @@ flows.
 from __future__ import annotations
 
 import io
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 import pyarrow as pa
@@ -101,10 +104,15 @@ def jrc_paths(content: bytes) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class EfContexts:
-    """The exact context path of EF flows, by identifier, from both sources."""
+    """The exact context path of EF flows, by identifier, from both sources.
+
+    ``resolve`` gives the identifier a redirected one stands for
+    (``BrightwayFlows.resolve``); without it no redirect is followed.
+    """
 
     correspondence: Mapping[str, str]
     jrc: Mapping[str, str]
+    resolve: Callable[[str], str] | None = None
 
     def __post_init__(self) -> None:
         differing = sorted(
@@ -119,8 +127,16 @@ class EfContexts:
                 f"and another in the JRC CF table: {shown}"
             )
 
-    def path(self, identifier: str) -> str | None:
+    def _stated(self, identifier: str) -> str | None:
         return self.correspondence.get(identifier) or self.jrc.get(identifier)
+
+    def path(self, identifier: str) -> str | None:
+        """The path of the flow itself, else of the flow it is redirected to."""
+        own = self._stated(identifier)
+        if own is not None or self.resolve is None:
+            return own
+        target = self.resolve(identifier)
+        return self._stated(target) if target != identifier else None
 
     def leaf(self, identifier: str) -> str | None:
         path = self.path(identifier)
@@ -142,6 +158,6 @@ def unplaced_message(part: str, unplaced: list[str], total: int) -> str:
     """The log line of a flow part about its flows without a ``sub_compartment``."""
     line = (
         f"{part}: {len(unplaced)} of {total} flows without a {SUB_COMPARTMENT} (no entry in "
-        "the EF correspondence, not in the JRC CF table)"
+        "the EF correspondence, not in the JRC CF table, no redirect to a flow either places)"
     )
     return f"{line}: {unplaced[:_LISTED]}" if unplaced else line

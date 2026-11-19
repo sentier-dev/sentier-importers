@@ -264,11 +264,9 @@ def test_in_the_release_every_flow_term_of_the_three_parts_has_its_edge(tmp_path
         for t in terms
         if t["type"] == "elementary-flow"
     }
-    assert leaves["harmonised-redirected"] is None  # in neither source
     assert leaves["jrc-lost"] == "x"  # the CF table alone
-    assert {v for k, v in leaves.items() if k in EXPECTED and k != "harmonised-redirected"} == {
-        "Emissions to air, unspecified"
-    }
+    # in neither source: the leaf of the flow it is redirected to, as for its unit
+    assert {leaves[code] for code in EXPECTED} == {"Emissions to air, unspecified"}
 
 
 def test_registry_block_is_a_private_opt_in_part_of_the_ef31_release():

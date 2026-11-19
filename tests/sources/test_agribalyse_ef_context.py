@@ -79,3 +79,22 @@ def test_sources_that_disagree_on_a_flow_are_refused_with_every_such_flow():
     message = str(error.value)
     assert "2 EF flow(s)" in message and "'a'" in message and "'c'" in message
     assert "'b'" not in message
+
+
+def test_a_flow_neither_source_places_takes_the_path_of_the_flow_it_is_redirected_to():
+    redirects = {"old": "a", "old-jrc": "j", "lost": "nowhere"}
+    contexts = EfContexts(
+        correspondence={"a": LT_WATER_PATH, "own": "Land use / Land occupation"},
+        jrc={"j": "Land use / Land transformation"},
+        resolve=lambda identifier: redirects.get(identifier, identifier),
+    )
+    assert contexts.leaf("old") == "Emissions to water, unspecified (long-term)"
+    assert contexts.leaf("old-jrc") == "Land transformation"
+    # its own path first, whatever it is redirected to
+    assert contexts.leaf("own") == "Land occupation"
+    # a redirect that leads to no placed flow, and no redirect at all: no path
+    assert contexts.path("lost") is None and contexts.path("nobody") is None
+
+
+def test_without_a_resolver_no_redirect_is_followed():
+    assert EfContexts(correspondence={"a": LT_WATER_PATH}, jrc={}).path("old") is None

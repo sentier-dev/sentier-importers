@@ -6,8 +6,9 @@ SKOS row. Flows tagged ``ecoinvent algorithm addition`` are excluded pending rev
 
 The list gives a flow's context as a ``bw-context`` code only. The ``sub_compartment``
 attribute is the leaf of the flow's exact EF context, read from the two inputs
-``brightway_flows`` and ``jrc`` (see ``ef_context``); a flow neither places has none
-and is counted in a log line.
+``brightway_flows`` and ``jrc`` (see ``ef_context``); a flow neither places takes the
+leaf of the flow Brightway Flows redirects it to, and one still without a leaf is
+counted in a log line.
 """
 
 import gzip
@@ -165,6 +166,7 @@ class AgribalyseFlowsSource(Source):
         return EfContexts(
             correspondence=ef_context.correspondence_paths(bw),
             jrc=ef_context.jrc_paths(self.inputs[JRC].content),
+            resolve=bw.resolve,
         )
 
     def transform(self, records: Records) -> Rows:
