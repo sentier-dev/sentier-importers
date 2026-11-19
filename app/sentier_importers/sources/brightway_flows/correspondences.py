@@ -5,7 +5,9 @@ The file holds a consensus list of elementary flows and, per source list, one li
 from each source flow to a flow of that list. 93,700 consensus flows are the EF 3.1
 flows under their EF UUID; the rest are flows EF does not have. A link whose target
 is an EF flow is a "source flow to EF 3.1 flow" link, which is what sentier-mappings
-pairs hold.
+pairs hold. A list may also name source flows it refuses to link (Agribalyse's
+``Final waste flows``): they are kept apart, so a flow without a link can be told from
+a flow Brightway Flows does not know.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import hashlib
 import json
 import zlib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sentier_importers.core.errors import ParseError
 
@@ -27,6 +29,8 @@ _EF_SOURCE_LABEL = "EF 3.1"
 _MATCHES = ("exactMatch", "closeMatch", "broadMatch")
 #: chemrof property key holding the molecular formula.
 _FORMULA_KEY = "https://w3id.org/chemrof/molecular_formula"
+#: Key of a correspondence listing the source flows it leaves without a link.
+_EXCLUDED_KEY = "brightway:excludedSourceConcept"
 
 
 def _tail(iri: str) -> str:
@@ -65,6 +69,8 @@ class BrightwayFlows:
     links: Mapping[str, tuple[Link, ...]]
     redirects: Mapping[str, str]
     ef_alias: Mapping[str, str]
+    #: Per source list, the identifiers of the source flows it refuses to link.
+    excluded: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     def resolve(self, identifier: str) -> str:
         """The live consensus identifier for an EF UUID or a consensus identifier:
@@ -151,6 +157,10 @@ def load(content: bytes, expected_sha256: str | None = PINNED_SHA256) -> Brightw
             _tail(c["@id"]): tuple(_link(a) for a in c["xkos:madeOf"])
             for c in doc["correspondences"]
         }
+        excluded = {
+            _tail(c["@id"]): frozenset(_tail(e["@id"]) for e in c.get(_EXCLUDED_KEY) or ())
+            for c in doc["correspondences"]
+        }
     except (
         OSError,
         EOFError,
@@ -167,4 +177,6 @@ def load(content: bytes, expected_sha256: str | None = PINNED_SHA256) -> Brightw
         for item in links.get(EF_LIST, ())
         if item.source_id != item.target_id
     }
-    return BrightwayFlows(flows=flows, links=links, redirects=redirects, ef_alias=ef_alias)
+    return BrightwayFlows(
+        flows=flows, links=links, redirects=redirects, ef_alias=ef_alias, excluded=excluded
+    )

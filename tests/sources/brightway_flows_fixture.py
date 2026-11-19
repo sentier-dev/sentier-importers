@@ -67,7 +67,20 @@ def link(
     return assoc
 
 
-def document(flows, links_by_list, redirects=()):
+def excluded_concept(list_slug, source_id, label="x", context="Final waste flows"):
+    return {
+        "@id": f"https://vocab.brightway.one/{list_slug}/flow/{source_id}",
+        "skos:prefLabel": label,
+        "context": context,
+        "qudt:hasUnit": {"@id": UNIT_IRI + "KiloGM"},
+        "brightway:exclusionReason": "not an exchange with the environment",
+    }
+
+
+def document(flows, links_by_list, redirects=(), excluded_by_list=None):
+    """``excluded_by_list``: ``{list: [excluded_concept(...), ...]}``, the source flows
+    a list's correspondence refuses to link."""
+    excluded_by_list = excluded_by_list or {}
     return {
         "schema_version": 7,
         "flows": list(flows),
@@ -75,7 +88,15 @@ def document(flows, links_by_list, redirects=()):
             {"identifier": old, "replaced_by_identifier": new} for old, new in redirects
         ],
         "correspondences": [
-            {"@id": f"https://vocab.brightway.dev/correspondences/{slug}", "xkos:madeOf": assocs}
+            {
+                "@id": f"https://vocab.brightway.dev/correspondences/{slug}",
+                "xkos:madeOf": assocs,
+                **(
+                    {"brightway:excludedSourceConcept": excluded_by_list[slug]}
+                    if slug in excluded_by_list
+                    else {}
+                ),
+            }
             for slug, assocs in links_by_list.items()
         ],
     }

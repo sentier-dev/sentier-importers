@@ -4,7 +4,7 @@ import pytest
 from sentier_importers.core.errors import ParseError
 from sentier_importers.sources.brightway_flows.correspondences import load
 
-from tests.sources.brightway_flows_fixture import document, flow, gz, link
+from tests.sources.brightway_flows_fixture import document, excluded_concept, flow, gz, link
 
 DOC = document(
     flows=[
@@ -111,3 +111,31 @@ def test_term_fields_of_the_wrong_shape_are_a_parse_error():
     record["altLabel"] = 3
     with pytest.raises(ParseError):
         load(gz(document(flows=[record], links_by_list={})), expected_sha256=None)
+
+
+def test_the_source_flows_a_list_refuses_to_link_are_kept_per_list():
+    doc = document(
+        flows=[flow("ef-a", "Ammonia")],
+        links_by_list={
+            "agribalyse-3.2": [link("agribalyse/3.2", "s1", "ef-a")],
+            "bafu-2026-v1": [link("bafu/2026-v1", "s2", "ef-a")],
+        },
+        excluded_by_list={
+            "agribalyse-3.2": [
+                excluded_concept("agribalyse/3.2", "w1", "Slags"),
+                excluded_concept("agribalyse/3.2", "w2", "Carcass meal"),
+            ]
+        },
+    )
+    bw = load(gz(doc), expected_sha256=None)
+    assert bw.excluded == {"agribalyse-3.2": frozenset({"w1", "w2"}), "bafu-2026-v1": frozenset()}
+
+
+def test_an_excluded_concept_without_identifier_is_a_parse_error():
+    doc = document(
+        flows=[],
+        links_by_list={"agribalyse-3.2": []},
+        excluded_by_list={"agribalyse-3.2": [{"skos:prefLabel": "Slags"}]},
+    )
+    with pytest.raises(ParseError):
+        load(gz(doc), expected_sha256=None)
