@@ -321,6 +321,32 @@ sources:
       check_existing: true
     enabled: false
 
+  # The EF 3.1 flows only Brightway Flows 1.1.0 lists (878 at 2026-11-19: mostly soil and
+  # long-term water emissions, nomenclature only, no factor), so that a Brightway Flows
+  # link onto an EF flow always has a term to target. Emits only UUIDs the two blocks
+  # above do not (inputs `harmonised` and `jrc` are their inputs); same release, same
+  # shards. Each row carries the exact EF context path as an `ef-context:` notation and
+  # no `bw-context:` (the 1.1.0 context codes mean something else than the earlier ones).
+  # The file's sha256 is pinned in sources/brightway_flows/correspondences.py.
+  # Spec: dds wiki 2026-11-19-ef31-flows-from-brightway-flows-1.1.
+  - name: ef31-elementary-flows-bw11
+    module: sentier_importers.sources.brightway_flows.vocab_flows
+    target: sentier_vocab
+    category: ef-3.1
+    term_type: elementary-flow
+    access: private                                  # needs the two private inputs below
+    fetch:
+      url: "https://zenodo.org/api/records/23554066/files/harmonised-flows-simple.json.gz/content"
+      format: json                                   # unused: the plugin overrides parse()
+    inputs:
+      harmonised: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      jrc: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+    output_format: parquet
+    dedup:
+      on_existing: skip
+      check_existing: true
+    enabled: false
+
   # Bibliographic provenance for the EF 3.1 flow list — one Source record every flow
   # links to via its `source` slot. Static metadata, no fetch input.
   - name: agribalyse-ef31-source
