@@ -6,7 +6,13 @@ import pytest
 from sentier_importers.core import registry as registry_mod
 from sentier_importers.core.errors import RegistryError
 from sentier_importers.core.source import Source, SourceConfig
-from sentier_importers.sources.bafu.packages import CURATED, INFERRED, MATCHED, NOMENCLATURE
+from sentier_importers.sources.bafu.packages import (
+    BRIGHTWAY_FLOWS,
+    CURATED,
+    INFERRED,
+    MATCHED,
+    NOMENCLATURE,
+)
 
 #: Folder = pair convention (sentier-mappings 2026-09-14 restructure): every
 #: sentier_mappings ``category`` must be ``<source>__<target>``, lower-kebab,
@@ -222,10 +228,11 @@ def test_sentier_mappings_categories_are_pair_folder_names():
         ), f"{cfg.name!r} category {cfg.category!r} is not a pair-folder name"
 
 
-def test_bafu_pair_emit_filenames_are_the_four_numbered_packages_plus_sidecars():
+def test_bafu_pair_emit_filenames_are_the_five_numbered_packages_plus_sidecars():
     # data/bafu-2026-v1__ef-3.1/ holds exactly biosphere-1-curated.json,
     # biosphere-2-inferred.json, biosphere-3-matched.json, biosphere-4-nomenclature.json,
-    # plus the coverage.json and inference_review.json sidecars -- no bare "biosphere"
+    # biosphere-5-brightway-flows.json, plus the coverage.json, inference_review.json
+    # and brightway_flows_review.json sidecars -- no bare "biosphere"
     # or rank-numbered name survives the restructure.
     bafu_pair = [
         c
@@ -237,8 +244,10 @@ def test_bafu_pair_emit_filenames_are_the_four_numbered_packages_plus_sidecars()
         INFERRED,
         MATCHED,
         NOMENCLATURE,
+        BRIGHTWAY_FLOWS,
         "coverage",
         "inference_review",
+        "brightway_flows_review",
     }
 
 
@@ -344,3 +353,33 @@ def test_real_registry_access_matches_input_origin():
             assert cfg.access == "licensed", cfg.name
         else:
             assert cfg.access == "public", cfg.name
+
+
+def test_real_registry_declares_the_brightway_flows_bafu_sources():
+    by_name = {c.name: c for c in registry_mod.load_registry()}
+    expected = {
+        "bafu-ef-brightway-flows": "biosphere-5-brightway-flows",
+        "bafu-ef-align-curated": "biosphere-1-curated",
+        "bafu-ef-align-inferred": "biosphere-2-inferred",
+        "bafu-ef-align-matched": "biosphere-3-matched",
+        "bafu-ef-align-nomenclature": "biosphere-4-nomenclature",
+        "bafu-ef-brightway-flows-review": "brightway_flows_review",
+    }
+    for name, emit in expected.items():
+        config = by_name[name]
+        assert config.emit_filename == emit
+        assert config.category == "bafu-2026-v1__ef-3.1"
+        assert config.enabled is False
+        assert "zenodo.org/api/records/23554066" in config.fetch_url
+        assert set(config.inputs) == {
+            "coverage",
+            "curated",
+            "inferred",
+            "matched",
+            "nomenclature",
+            "ef_cfs",
+            "ef_vocab",
+        }
+    assert "brightway_flows" in by_name["bafu-ef-coverage"].inputs
+    for name in expected:
+        assert registry_mod.load_source(by_name[name]).config.name == name

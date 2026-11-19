@@ -565,6 +565,7 @@ sources:
       inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
       ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
       ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/terms"
+      brightway_flows: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-5-brightway-flows.json"
     output_format: json
     package:
       name: bafu-2026-v1__ef-3.1-coverage
@@ -599,4 +600,103 @@ sources:
       name: bafu-2026-v1__ef-3.1-biosphere-nomenclature
       version: 0.1.0
       verb: replace
+    enabled: false
+
+  # sentier-mappings: Brightway Flows 1.1.0 (Zenodo 23554066, ODbL 1.0, Chris Mutel) links
+  # for the bafu-2026-v1 -> ef-3.1 pair. Spec: dds wiki
+  # 2026-11-19-brightway-flows-into-mapping-pairs. All regenerate-locally, fresh --cache-dir.
+  # Run order: bafu-ef-brightway-flows, then the four bafu-ef-align-* (always AFTER any
+  # regeneration of packages 1 to 4, they re-emit the package file they read), then
+  # bafu-ef-brightway-flows-review, then bafu-ef-coverage.
+  - name: bafu-ef-brightway-flows              # emits biosphere-5-brightway-flows.json
+    module: sentier_importers.sources.brightway_flows.bafu_package
+    target: sentier_mappings
+    category: bafu-2026-v1__ef-3.1
+    emit_filename: biosphere-5-brightway-flows
+    fetch: &bw_flows_fetch
+      url: "https://zenodo.org/api/records/23554066/files/harmonised-flows-simple.json.gz/content"
+      format: json                               # unused: the plugin gunzips in parse()
+    inputs: &bw_flows_bafu_inputs
+      coverage: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/coverage.json"
+      curated: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-1-curated.json"
+      inferred: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-2-inferred.json"
+      matched: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-3-matched.json"
+      nomenclature: "file://${SENTIER_DATA_ROOT}/sentier-mappings/data/bafu-2026-v1__ef-3.1/biosphere-4-nomenclature.json"
+      ef_cfs: "file://${SENTIER_DATA_ROOT}/sentier-methods/data/01-ef-3.1/characterization-factors.parquet"
+      ef_vocab: "file://${SENTIER_DATA_ROOT}/sentier-vocab/terms"
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere-brightway-flows
+      version: 0.1.0
+      verb: replace
+    enabled: false
+
+  - name: bafu-ef-align-curated                # re-emits biosphere-1-curated.json
+    module: sentier_importers.sources.brightway_flows.bafu_align
+    target: sentier_mappings
+    category: bafu-2026-v1__ef-3.1
+    emit_filename: biosphere-1-curated
+    fetch: *bw_flows_fetch
+    inputs: *bw_flows_bafu_inputs
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere
+      version: 0.6.0
+      verb: replace
+    enabled: false
+
+  - name: bafu-ef-align-inferred               # re-emits biosphere-2-inferred.json
+    module: sentier_importers.sources.brightway_flows.bafu_align
+    target: sentier_mappings
+    category: bafu-2026-v1__ef-3.1
+    emit_filename: biosphere-2-inferred
+    fetch: *bw_flows_fetch
+    inputs: *bw_flows_bafu_inputs
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere-inferred
+      version: 0.1.2
+      verb: replace
+    enabled: false
+
+  - name: bafu-ef-align-matched                # re-emits biosphere-3-matched.json
+    module: sentier_importers.sources.brightway_flows.bafu_align
+    target: sentier_mappings
+    category: bafu-2026-v1__ef-3.1
+    emit_filename: biosphere-3-matched
+    fetch: *bw_flows_fetch
+    inputs: *bw_flows_bafu_inputs
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere-matched
+      version: 0.1.1
+      verb: replace
+    enabled: false
+
+  - name: bafu-ef-align-nomenclature           # re-emits biosphere-4-nomenclature.json
+    module: sentier_importers.sources.brightway_flows.bafu_align
+    target: sentier_mappings
+    category: bafu-2026-v1__ef-3.1
+    emit_filename: biosphere-4-nomenclature
+    fetch: *bw_flows_fetch
+    inputs: *bw_flows_bafu_inputs
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-biosphere-nomenclature
+      version: 0.1.1
+      verb: replace
+    enabled: false
+
+  - name: bafu-ef-brightway-flows-review       # emits brightway_flows_review.json
+    module: sentier_importers.sources.brightway_flows.bafu_review
+    target: sentier_mappings
+    category: bafu-2026-v1__ef-3.1
+    emit_filename: brightway_flows_review
+    fetch: *bw_flows_fetch
+    inputs: *bw_flows_bafu_inputs
+    output_format: json
+    package:
+      name: bafu-2026-v1__ef-3.1-brightway-flows-review
+      version: 0.1.0
+      verb: review
     enabled: false

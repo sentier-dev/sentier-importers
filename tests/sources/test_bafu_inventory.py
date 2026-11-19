@@ -158,7 +158,8 @@ def test_registry_declares_full_bafu_family():
     # terms, flow terms) + the curated crosswalk
     # (biosphere-1-curated) + the public-matching crosswalk (biosphere-3-matched)
     # + the coverage sidecar + the nomenclature crosswalk (biosphere-4-nomenclature)
-    assert len(bafu) == 9
+    # + the six Brightway Flows blocks (package 5, four align, review sidecar)
+    assert len(bafu) == 15
     assert all(not c.enabled for c in bafu)  # opt-in: run locally, no auto delivery
 
     mappings = [c for c in bafu if c.target == "sentier_mappings"]
@@ -167,13 +168,22 @@ def test_registry_declares_full_bafu_family():
         "bafu-ef-biosphere-matched",
         "bafu-ef-coverage",
         "bafu-ef-biosphere-nomenclature",
+        "bafu-ef-brightway-flows",
+        "bafu-ef-align-curated",
+        "bafu-ef-align-inferred",
+        "bafu-ef-align-matched",
+        "bafu-ef-align-nomenclature",
+        "bafu-ef-brightway-flows-review",
     ]
     # the pair folder contract names the file, not the source
     assert {m.emit_filename for m in mappings} == {
         "biosphere-1-curated",
+        "biosphere-2-inferred",
         "biosphere-3-matched",
         "coverage",
         "biosphere-4-nomenclature",
+        "biosphere-5-brightway-flows",
+        "brightway_flows_review",
     }
 
     # the inventory folder is the source release: data/bafu-2026-v1/{processes,exchanges}
@@ -205,7 +215,12 @@ def test_coverage_sidecar_describes_the_same_computation_as_the_matched_payload(
     coverage = bafu["bafu-ef-coverage"]
     assert coverage.fetch_url == matched.fetch_url
     assert coverage.fetch_format == matched.fetch_format
-    assert coverage.inputs == matched.inputs
+    # the one extra input is the optional package-5 file (Brightway Flows)
+    assert coverage.inputs == {
+        **matched.inputs,
+        "brightway_flows": coverage.inputs["brightway_flows"],
+    }
+    assert coverage.inputs["brightway_flows"].endswith("/biosphere-5-brightway-flows.json")
     assert "matched" not in coverage.inputs
 
 
