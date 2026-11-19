@@ -500,3 +500,21 @@ def test_without_the_input_nothing_changes(tmp_path):
     root = _stage(tmp_path, curated=[CO2], inferred=[RADON])
     rows = _run(_source(root), tmp_path)
     assert {r["source"]["code"]: r for r in rows}[URANIUM]["status"] == "unmapped"
+
+
+def test_the_inclusive_pass_reads_the_ef_context_of_a_factorless_flow(tmp_path):
+    # 2026-11-19 (spec units-on-ef31-flows, step 6): a flow of the Brightway Flows
+    # 1.1 part of the ef-3.1 release, placed by its ef-context notation alone
+    resource = "Resources / Resources from ground / Non-renewable element resources from ground"
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            ef_context=resource,
+        )
+    ]
+    rows = _run(_source(_stage(tmp_path, vocab=vocab)), tmp_path)
+    mine_gas = next(r for r in rows if r["source"]["code"] == MINE_GAS)
+    assert (mine_gas["status"], mine_gas["package"]) == ("mapped", "biosphere-4-nomenclature")
+    assert (mine_gas["tier"], mine_gas["placement"]) == ("synonym", "exact")

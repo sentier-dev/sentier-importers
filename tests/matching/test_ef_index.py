@@ -44,9 +44,12 @@ def real_index():
     """The real, inclusive EF index -- expensive (tens of seconds: ~90k flows read
     from every sentier-vocab shard plus the full CF table), so every real-data test
     in this module shares this one module-scoped build instead of paying for its
-    own.
+    own. Built as the name matcher's own sources build it since 2026-11-19: with the
+    ``ef-context`` notations read.
     """
-    return EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
+    return EfFlowIndex.from_files(
+        _REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True, read_ef_context=True
+    )
 
 
 LAND_TRANS = "Land use / Land transformation"
@@ -937,7 +940,9 @@ def test_real_index_counters_pin_the_current_ef_table(real_index):
     # upstream drift guard: a new EF table or vocab payload that changes either
     # number must be looked at, not absorbed silently
     assert real_index.multi_name_codes == 0
-    assert real_index.suppressed_vocab_synonyms == 346
+    # 346 until 2026-11-19, without the ef-context flows: 8 more vocab labels now
+    # collide with the name of a factorless flow of the Brightway Flows 1.1 part
+    assert real_index.suppressed_vocab_synonyms == 354
 
 
 # --- ef-context: the exact EF context path of a factorless flow ----------------

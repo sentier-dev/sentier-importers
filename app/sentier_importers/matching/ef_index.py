@@ -19,13 +19,16 @@ indexed.
 The Brightway Flows 1.1 part of the ef-3.1 release writes a second notation,
 ``ef-context:<path>``, the exact EF context path, on flows that have no
 ``bw-context`` at all. It is read only on request (``read_ef_context=True``): first,
-exact, never uncertain, with the crosswalk as the fallback. The default is off
-(decision 2026-11-19), so these flows are not in the index our own name matcher
-searches. No unit is known for them on our side (a kg source was aligned by name onto
-an activity flow), and their arrival moved existing nomenclature entries off their
-exact leaf through the tier order. They are matched through Brightway Flows' own
-vetted links instead, which carry unit and context: ``sources.brightway_flows`` is
-the one caller that turns the flag on.
+exact, never uncertain, with the crosswalk as the fallback. The default is off, and
+every source that builds an index for matching passes it: ``sources.brightway_flows``
+from the start, and since 2026-11-19 the name matcher's own sources
+(``sources.bafu.mappings_biosphere_matched``, its nomenclature subclass and the
+coverage sidecar). It had been kept off for them (decision 2026-11-19) for two
+defects their arrival showed, both fixed since: no unit was known for these flows
+(a kg source was aligned by name onto an activity flow; now ``stated_unit`` and the
+matcher's unit gate), and they moved existing nomenclature entries off their exact
+leaf through the tier order (now a fallback match is provisional,
+``pipeline.MatchPipeline.match``).
 
 Units (2026-11-19, spec units-on-ef31-flows): the ef-3.1 release states the unit of
 every flow term as a ``qudt:hasUnit`` relation. ``from_files``/``from_bytes`` read
@@ -475,8 +478,8 @@ class EfFlowIndex:
         the Brightway Flows 1.1 part of the release: the exact path first
         (``bw_context.ef_context_for``, never uncertain), the crosswalk as the
         fallback. With the default a row that has only an ``ef-context`` notation
-        is skipped like a row with none. See the module docstring for why it is
-        off by default.
+        is skipped like a row with none. See the module docstring for who passes
+        it.
 
         A characterised flow's ``name`` (the matching key) is always the CF table's
         own JRC spelling (round 6, decision 2026-09-14, third cut -- see the module

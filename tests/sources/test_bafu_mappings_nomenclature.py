@@ -397,10 +397,9 @@ def test_name_only_alignment_prefers_the_namesake_on_its_own_unspecified_leaf(tm
 
 
 def _name_only_rows(tmp_path, vocab, flow):
-    # The source itself does not read ef-context notations (EfFlowIndex's
-    # read_ef_context is off for it), and no bw-context code reaches the long-term
-    # water leaf. The index is rebuilt here with the notation read, so the
-    # long-term rule is exercised through transform() for whenever it is turned on.
+    # No bw-context code reaches the long-term water leaf: these namesakes are placed
+    # by their ef-context notation. The index is rebuilt here with the notation read,
+    # as the source itself builds it since 2026-11-19 (this helper is older).
     root = _stage(tmp_path, vocab=VOCAB + vocab)
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
@@ -655,3 +654,24 @@ def test_wood_by_mass_is_not_emitted_onto_the_wood_flow_that_states_megajoule(tm
     rows, outcome = _stated_unit_rows(tmp_path, vocab, {"wood": QUDT + "MegaJ"}, flow)
     assert not rows
     assert outcome.reason == "unit_mismatch"
+
+
+def test_the_source_reads_the_ef_context_of_a_factorless_flow(tmp_path):
+    # step 6 of the same spec: the name matcher's own index now reads the ef-context
+    # notation, so a flow that has no bw-context at all is a target. Straight through
+    # parse(), no index rebuilt by the test.
+    resource = "Resources / Resources from ground / Non-renewable element resources from ground"
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            ef_context=resource,
+        )
+    ]
+    source = BafuEfNomenclatureSource(_config_nomenclature(_stage(tmp_path, vocab=vocab)))
+    (row,) = [r for r in _run(source, tmp_path) if r["source"]["code"] == MINE_GAS]
+    assert row["target"]["code"] == "mine-gas-unchar"
+    assert row["target"]["context"][-1] == "Non-renewable element resources from ground"
+    # an exact path, not a crosswalk guess: nothing uncertain to disclose
+    assert "uncertain" not in row["comment"]

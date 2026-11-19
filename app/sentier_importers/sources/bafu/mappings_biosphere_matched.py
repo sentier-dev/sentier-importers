@@ -549,6 +549,12 @@ class BafuEfMatchedSource(Source):
             self.inputs["ef_cfs"].content,
             vocab_dir,
             include_uncharacterised=self.include_uncharacterised,
+            # 2026-11-19, spec units-on-ef31-flows step 6: the factorless flows of
+            # the Brightway Flows 1.1 part of the ef-3.1 release are targets of the
+            # name matcher too, now that it has a unit gate and a provisional
+            # fallback. Only read with include_uncharacterised (the nomenclature
+            # source); without it the flag changes nothing.
+            read_ef_context=True,
         )
         inputs = ParsedInputs(
             bafu=BafuFlowIndex.from_ecospold(records),
