@@ -70,6 +70,24 @@ def _jrc_identifiers(raw: RawData) -> frozenset[str]:
     return identifiers
 
 
+def covered_identifiers(inputs: Mapping[str, RawData]) -> frozenset[str]:
+    """Identifiers the harmonised and JRC parts of the release emit, from their inputs."""
+    for name in (HARMONISED, JRC):
+        if name not in inputs:
+            raise ValidationError(f"input {name!r} not fetched: the registry must declare it")
+    return _harmonised_identifiers(inputs[HARMONISED].content) | _jrc_identifiers(inputs[JRC])
+
+
+def new_flows(bw: BrightwayFlows, covered: frozenset[str]) -> list[tuple[ConsensusFlow, str]]:
+    """The EF flows of the file this part emits, each with its label: those with a
+    label whose identifier is not among ``covered``."""
+    return [
+        (flow, flow.label.strip())
+        for flow in bw.flows.values()
+        if flow.is_ef and flow.identifier not in covered and flow.label.strip()
+    ]
+
+
 def context_path(context: str) -> str:
     """An EF context path of the file (``a/b/c``) in the ``" / "``-joined spelling."""
     return _SEP.join(level.strip() for level in context.split(_FILE_SEP) if level.strip())
@@ -121,24 +139,10 @@ class BrightwayFlowsVocabSource(Source):
     def parse(self, raw: RawData) -> Records:
         return [{"bw": load(raw.content, self.expected_sha256)}]
 
-    def _excluded(self) -> frozenset[str]:
-        """Identifiers the two existing parts of the release emit."""
-        for name in (HARMONISED, JRC):
-            if name not in self.inputs:
-                raise ValidationError(f"input {name!r} not fetched: the registry must declare it")
-        return _harmonised_identifiers(self.inputs[HARMONISED].content) | _jrc_identifiers(
-            self.inputs[JRC]
-        )
-
     def transform(self, records: Records) -> Rows:
         bw: BrightwayFlows = records[0]["bw"]
-        skip = self._excluded()
         own = _own_links(bw)
-        new = [
-            (flow, flow.label.strip())
-            for flow in bw.flows.values()
-            if flow.is_ef and flow.identifier not in skip and flow.label.strip()
-        ]
+        new = new_flows(bw, covered_identifiers(self.inputs))
         orphans = sorted(flow.identifier for flow, _ in new if flow.identifier not in own)
         if orphans:
             raise ValidationError(

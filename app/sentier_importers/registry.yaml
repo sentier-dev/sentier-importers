@@ -352,6 +352,31 @@ sources:
       check_existing: true
     enabled: false
 
+  # The unit of every EF 3.1 flow term of the release, as qudt:hasUnit relations: no term,
+  # one edge per flow of the three blocks above (same inputs, so the same flows), with the
+  # unit Brightway Flows 1.1.0 states for the flow in its EF correspondence. An identifier
+  # the file records as redirected takes the unit of the flow it is redirected to; a flow
+  # still without a unit gets no edge and is counted in the log. Object: the QUDT unit,
+  # else a sentier-core unit term (sources/brightway_flows/units.py).
+  # Spec: dds wiki 2026-11-19-units-on-ef31-flows.
+  - name: ef31-flow-units
+    module: sentier_importers.sources.brightway_flows.vocab_flow_units
+    target: sentier_vocab
+    category: ef-3.1
+    term_type: elementary-flow                       # the type of the subjects; relations only
+    access: private                                  # needs the two private inputs below
+    fetch:
+      url: "https://zenodo.org/api/records/23554066/files/harmonised-flows-simple.json.gz/content"
+      format: json                                   # unused: the plugin overrides parse()
+    inputs:
+      harmonised: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      jrc: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
+    output_format: parquet
+    dedup:
+      on_existing: skip
+      check_existing: false                          # the subjects are terms of this release
+    enabled: false
+
   # Bibliographic provenance for the EF 3.1 flow list — one Source record every flow
   # links to via its `source` slot. Static metadata, no fetch input.
   - name: agribalyse-ef31-source
