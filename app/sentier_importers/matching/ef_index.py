@@ -27,6 +27,19 @@ exact leaf through the tier order. They are matched through Brightway Flows' own
 vetted links instead, which carry unit and context: ``sources.brightway_flows`` is
 the one caller that turns the flag on.
 
+Units (2026-11-19, spec units-on-ef31-flows): the ef-3.1 release states the unit of
+every flow term as a ``qudt:hasUnit`` relation. ``from_files``/``from_bytes`` read
+those relations from the ``relations`` folder beside the ``terms`` folder they are
+given (no registry input of its own; ``relations_dir`` names another folder), and
+each ``EfFlow`` carries its ``stated_unit`` in the spelling of the mapping packages
+(``sources.brightway_flows.units.UNIT_SPELLING``). A checkout without that folder,
+or without such relations, states no unit and everything works as before.
+``reference_unit`` (inference from method membership) stays as the cross-check: a
+characterised flow whose stated unit differs from the inferred one is an error at
+index build, with the list (none on the real table: 89,070 characterised flows
+agree). ``EfFlowIndex.unit`` is the one accessor for "the unit of this EF flow":
+inferred when characterised, stated otherwise.
+
 Round 6, decision 2026-09-14 (first cut): sentier-vocab occasionally ships an EF flow
 whose factors are correct but whose ``pref_label`` names the wrong substance (a real
 EF flow labelled "sodium" is CAS 1120-01-0, sodium hexadecyl sulphate, a surfactant,
@@ -78,6 +91,7 @@ import yaml
 from sentier_importers.core.errors import ParseError
 from sentier_importers.matching.bw_context import context_for, ef_context_for
 from sentier_importers.matching.compartments import bucket_of_ef_context, leaf_of
+from sentier_importers.sources.brightway_flows.units import unit_spelling
 
 EF_SOURCE = "https://vocab.sentier.dev/sources/ef-3.1"
 _CF_COLUMNS = ["method_id", "flow", "flow_name", "factor_value", "flow_context", "location"]
@@ -92,6 +106,11 @@ _VOCAB_COLUMNS = [
     "attributes",
 ]
 _FLOW_TYPE = "elementary-flow"
+#: The relation that states a flow term's unit, its columns, and the folder of
+#: sentier-vocab's relation layer, a sibling of the ``terms`` folder.
+_UNIT_PREDICATE = "qudt:hasUnit"
+_RELATION_COLUMNS = ["subject", "object"]
+_RELATIONS_DIR = "relations"
 _SIGNIFICANT_DIGITS = 12
 
 #: EF 3.1 / ILCD reference-unit convention, keyed by the one method that fixes a
@@ -259,6 +278,25 @@ def _code(iri: str) -> str:
     return str(iri).rsplit("/", 1)[-1]
 
 
+def _stated_units(unit_rows: Iterable[Mapping], ef_iris: set[str]) -> dict[str, str]:
+    """Flow code -> stated unit spelling, for the ``unit_rows`` whose subject is one
+    of ``ef_iris`` (the relation layer also states the units of other releases).
+
+    Raises ``ParseError`` when one flow has two different units, and lets
+    ``unit_spelling``'s own error through for a unit IRI without a spelling.
+    """
+    units: dict[str, str] = {}
+    for row in unit_rows:
+        subject = str(row["subject"])
+        if subject not in ef_iris:
+            continue
+        code = _code(subject)
+        unit = unit_spelling(str(row["object"]))
+        if units.setdefault(code, unit) != unit:
+            raise ParseError(f"EF flow {code}: two units stated, {units[code]} and {unit}")
+    return units
+
+
 @dataclass(frozen=True)
 class EfFlow:
     code: str
@@ -293,6 +331,13 @@ class EfFlow:
     #: ``EfFlow`` without naming ``label`` explicitly keeps displaying ``name``,
     #: exactly as before this field existed.
     label: str = ""
+    #: The unit the ef-3.1 release states for this flow (its ``qudt:hasUnit``
+    #: relation), in the spelling of the mapping packages (``kilogram``, ``kBq``,
+    #: ``cubic meter``, ``megajoule``, ``m2``, ``m2*a``, ``m3*a``, ...). ``None`` when
+    #: the index was built without unit relations, or the flow has none. For a
+    #: characterised flow it equals ``EfFlowIndex.reference_unit`` (checked at index
+    #: build); for a factorless flow it is the only unit known.
+    stated_unit: str | None = None
 
     def __post_init__(self) -> None:
         if not self.label:
@@ -407,8 +452,16 @@ class EfFlowIndex:
         include_uncharacterised: bool = False,
         read_ef_context: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
+        unit_rows: Iterable[Mapping] | None = None,
     ) -> "EfFlowIndex":
         """Build an index from CF table rows and vocab flow rows already loaded in memory.
+
+        ``unit_rows`` (default ``None``: no flow states a unit) are ``qudt:hasUnit``
+        relation rows, ``subject`` the flow IRI and ``object`` the unit IRI. Only
+        those whose subject is an EF vocab row are read, each into
+        ``EfFlow.stated_unit``; two different units on one flow, or a unit without
+        a spelling (``brightway_flows.units.unit_spelling``), is an error. With any
+        stated unit present, ``_check_stated_units`` then runs.
 
         When ``include_uncharacterised`` is ``True``, every EF vocab row whose code
         carries no CF-table context is also indexed (``EfFlow.characterised=False``),
@@ -454,6 +507,7 @@ class EfFlowIndex:
         if label_defects is None:
             label_defects = load_label_defects()
         labels = {_code(r["iri"]): r for r in vocab_rows if (r.get("source") or "") == EF_SOURCE}
+        stated_units = _stated_units(unit_rows or (), {str(r["iri"]) for r in labels.values()})
         contexts: dict[str, str] = {}
         #: code -> lowercased spelling -> {actual spelling: row count}
         jrc_name_groups: dict[str, dict[str, dict[str, int]]] = {}
@@ -560,6 +614,7 @@ class EfFlowIndex:
                         cas=v["cas"],
                         characterised=False,
                         context_uncertain=v["context_uncertain"],
+                        stated_unit=stated_units.get(code),
                     )
                 )
                 continue
@@ -591,12 +646,13 @@ class EfFlowIndex:
                     synonyms=synonyms,
                     cas=cas,
                     label=label,
+                    stated_unit=stated_units.get(code),
                 )
             )
         # a characterised flow only exists once it has a context; drop any vector
         # accumulated for a context-less CF row so it cannot outlive the flow it
         # would have belonged to
-        return cls(
+        index = cls(
             flows,
             {code: v for code, v in vectors.items() if code in contexts},
             includes_uncharacterised=include_uncharacterised,
@@ -604,6 +660,8 @@ class EfFlowIndex:
             multi_name_codes=multi_name_codes,
             suppressed_vocab_synonyms=suppressed_vocab_synonyms,
         )
+        index._check_stated_units()
+        return index
 
     @classmethod
     def from_files(
@@ -614,8 +672,10 @@ class EfFlowIndex:
         include_uncharacterised: bool = False,
         read_ef_context: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
+        relations_dir: Path | None = None,
     ) -> "EfFlowIndex":
-        """Build an index by reading the CF parquet file and every vocab term file."""
+        """Build an index by reading the CF parquet file, every vocab term file and
+        the unit relations beside them (``_read_unit_relations``)."""
         cf_rows = pq.read_table(cf_parquet, columns=_CF_COLUMNS).to_pylist()
         return cls.from_tables(
             cf_rows,
@@ -623,6 +683,7 @@ class EfFlowIndex:
             include_uncharacterised=include_uncharacterised,
             read_ef_context=read_ef_context,
             label_defects=label_defects,
+            unit_rows=cls._read_unit_relations(vocab_dir, relations_dir),
         )
 
     @classmethod
@@ -634,10 +695,12 @@ class EfFlowIndex:
         include_uncharacterised: bool = False,
         read_ef_context: bool = False,
         label_defects: Mapping[str, LabelDefect] | None = None,
+        relations_dir: Path | None = None,
     ) -> "EfFlowIndex":
         """Build an index from the CF parquet file's raw bytes (e.g. already fetched
-        through the content-addressed cache, so the cache/offline contract holds) and
-        every vocab term file read from ``vocab_dir`` on disk.
+        through the content-addressed cache, so the cache/offline contract holds),
+        every vocab term file read from ``vocab_dir`` on disk and the unit relations
+        beside them (``_read_unit_relations``).
         """
         cf_rows = pq.read_table(io.BytesIO(cf_parquet_bytes), columns=_CF_COLUMNS).to_pylist()
         return cls.from_tables(
@@ -646,7 +709,33 @@ class EfFlowIndex:
             include_uncharacterised=include_uncharacterised,
             read_ef_context=read_ef_context,
             label_defects=label_defects,
+            unit_rows=cls._read_unit_relations(vocab_dir, relations_dir),
         )
+
+    @staticmethod
+    def _read_unit_relations(vocab_dir: Path, relations_dir: Path | None = None) -> list[dict]:
+        """The ``qudt:hasUnit`` relations of every file in sentier-vocab's
+        ``relations/`` folder, as ``subject``/``object`` rows.
+
+        The folder is ``relations_dir`` when given, else the ``relations`` sibling of
+        ``vocab_dir`` (sentier-vocab keeps ``terms/`` and ``relations/`` side by
+        side, so the registry needs no input for it). A folder that does not exist
+        (an older checkout, a test fixture) yields no row: no flow states a unit.
+        """
+        folder = (
+            Path(relations_dir)
+            if relations_dir is not None
+            else Path(vocab_dir).parent / _RELATIONS_DIR
+        )
+        if not folder.is_dir():
+            return []
+        rows: list[dict] = []
+        for path in sorted(folder.glob("*.parquet")):
+            table = pq.read_table(
+                path, columns=_RELATION_COLUMNS, filters=[("predicate", "==", _UNIT_PREDICATE)]
+            )
+            rows.extend(table.to_pylist())
+        return rows
 
     @staticmethod
     def _read_vocab_dir(vocab_dir: Path) -> list[dict]:
@@ -713,6 +802,45 @@ class EfFlowIndex:
         if _LAND_METHOD in methods:
             return "m2*a" if flow is not None and flow.leaf == "land occupation" else "m2"
         return "kilogram"
+
+    def unit(self, code: str) -> str | None:
+        """The unit of the EF flow ``code``: the inferred ``reference_unit`` when it
+        is characterised, else the unit it states (``EfFlow.stated_unit``), else
+        ``None``.
+
+        The two agree on every characterised flow that states one
+        (``_check_stated_units``), so the inferred unit is kept there and an index
+        built without unit relations answers exactly as before.
+        """
+        flow = self.get(code)
+        if flow is not None and not flow.characterised:
+            return flow.stated_unit
+        return self.reference_unit(code)
+
+    def _check_stated_units(self) -> None:
+        """Raise ``ParseError`` listing every characterised flow whose stated unit
+        differs from the inferred ``reference_unit``.
+
+        Run by ``from_tables``. A flow that states no unit is skipped (so is the
+        whole check when none does), and so is a factorless flow: nothing is
+        inferred for it. On the real ef-3.1 release (2026-11-19) the 89,070
+        characterised flows agree, so a disagreement means the vocab relations or
+        the method-membership convention changed and must be looked at.
+        """
+        disagreements = [
+            f"{flow.code} ({flow.name}, {flow.context[-1] if flow.context else 'no context'}): "
+            f"stated {flow.stated_unit}, inferred {self.reference_unit(flow.code)} "
+            f"(methods: {', '.join(sorted(self._vectors.get(flow.code, {}))) or 'none'})"
+            for flow in self._sorted_flows
+            if flow.characterised
+            and flow.stated_unit is not None
+            and flow.stated_unit != self.reference_unit(flow.code)
+        ]
+        if disagreements:
+            raise ParseError(
+                f"{len(disagreements)} characterised EF flows state a unit other than the "
+                "one inferred from their methods:\n" + "\n".join(disagreements)
+            )
 
     def by_name(self, name: str, bucket: str | None) -> list[EfFlow]:
         """Flows in ``bucket`` whose label matches ``name`` (case- and whitespace-insensitive)."""

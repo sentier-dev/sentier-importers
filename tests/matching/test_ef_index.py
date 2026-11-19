@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sentier_importers.core.errors import ParseError
+from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.matching.ef_index import (
     EfFlow,
     EfFlowIndex,
@@ -16,14 +16,18 @@ from tests.matching.ef_fixtures import (
     AIR_UNSPEC,
     AIR_URBAN,
     LAND_OCC,
+    QUDT,
     RES_ENERGY,
     RES_WATER,
+    SENTIER_UNIT,
     WATER_FRESH,
     WATER_UNSPEC,
     WATER_UNSPEC_LT,
     cf_row,
+    unit_row,
     vocab_row,
     write_ef_inputs,
+    write_unit_relations,
 )
 
 #: same real-data fallback-guess pattern as test_matchers.py's own constants.
@@ -1041,4 +1045,160 @@ def test_read_ef_context_is_the_same_flag_through_every_constructor(tmp_path):
             "lt-water"
         )
         is not None
+    )
+
+
+# --- stated units: the qudt:hasUnit relation of an EF flow term ------------------
+
+_UNIT_CF = [
+    cf_row("cu", "copper", AIR_UNSPEC),
+    cf_row("rn", "radon-222", AIR_UNSPEC, method="ef-3.1:ionising-radiation-human-health"),
+    cf_row("occ", "arable", LAND_OCC, method="ef-3.1:land-use"),
+]
+_UNIT_VOCAB = [
+    vocab_row("cu", "Copper"),
+    vocab_row("rn", "Radon-222"),
+    vocab_row("occ", "Arable"),
+    vocab_row("u-alpha", "Uranium Alpha", ef_context=AIR_UNSPEC),
+    vocab_row("heat", "Waste Heat", ef_context=AIR_UNSPEC),
+]
+_UNIT_ROWS = [
+    unit_row("cu", QUDT + "KiloGM"),
+    unit_row("rn", QUDT + "KiloBQ"),
+    unit_row("occ", SENTIER_UNIT + "M2-YR"),
+    unit_row("u-alpha", QUDT + "KiloBQ"),
+    unit_row("heat", QUDT + "MegaJ"),
+]
+
+
+def _with_units(tmp_path, unit_rows, cf=_UNIT_CF, vocab=_UNIT_VOCAB, **kwargs):
+    cf_path, terms_dir = write_ef_inputs(tmp_path, cf, vocab)
+    write_unit_relations(tmp_path, unit_rows)
+    return EfFlowIndex.from_files(
+        cf_path, terms_dir, include_uncharacterised=True, read_ef_context=True, **kwargs
+    )
+
+
+def test_a_flow_states_the_unit_of_its_has_unit_relation(tmp_path):
+    index = _with_units(tmp_path, _UNIT_ROWS)
+    assert index.get("cu").stated_unit == "kilogram"
+    assert index.get("rn").stated_unit == "kBq"
+    assert index.get("occ").stated_unit == "m2*a"
+    assert index.get("u-alpha").stated_unit == "kBq"
+    assert index.get("heat").stated_unit == "megajoule"
+
+
+def test_the_relations_are_read_from_the_folder_beside_the_terms(tmp_path):
+    # no registry input for them: <release root>/relations is derived from
+    # <release root>/terms, in from_files and from_bytes alike
+    cf_path, terms_dir = write_ef_inputs(tmp_path, _UNIT_CF, _UNIT_VOCAB)
+    write_unit_relations(tmp_path, _UNIT_ROWS)
+    index = EfFlowIndex.from_bytes(cf_path.read_bytes(), terms_dir, include_uncharacterised=True)
+    assert index.get("cu").stated_unit == "kilogram"
+
+
+def test_a_relations_folder_can_be_named_explicitly(tmp_path):
+    cf_path, terms_dir = write_ef_inputs(tmp_path, _UNIT_CF, _UNIT_VOCAB)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    relations_dir = write_unit_relations(elsewhere, _UNIT_ROWS)
+    for index in (
+        EfFlowIndex.from_files(cf_path, terms_dir, relations_dir=relations_dir),
+        EfFlowIndex.from_bytes(cf_path.read_bytes(), terms_dir, relations_dir=relations_dir),
+    ):
+        assert index.get("rn").stated_unit == "kBq"
+
+
+def test_without_a_relations_folder_no_flow_states_a_unit(tmp_path):
+    # an older vocab checkout, and every fixture written before units existed
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, _UNIT_CF, _UNIT_VOCAB),
+        include_uncharacterised=True,
+        read_ef_context=True,
+    )
+    assert all(flow.stated_unit is None for flow in index)
+    assert index.reference_unit("rn") == "kBq"
+    assert index.unit("rn") == "kBq"
+    assert index.unit("u-alpha") is None
+
+
+def test_a_flow_without_a_relation_states_no_unit(tmp_path):
+    index = _with_units(tmp_path, [unit_row("cu", QUDT + "KiloGM")])
+    assert index.get("cu").stated_unit == "kilogram"
+    assert index.get("u-alpha").stated_unit is None
+
+
+def test_from_tables_states_no_unit_by_default():
+    index = EfFlowIndex.from_tables(_UNIT_CF, _UNIT_VOCAB)
+    assert index.get("cu").stated_unit is None
+
+
+def test_a_unit_relation_of_a_flow_of_another_release_is_not_read(tmp_path):
+    # the BAFU release states units too, some of them (Bq) no EF flow has
+    bafu = "https://vocab.sentier.dev/sources/bafu-2026"
+    rows = [*_UNIT_ROWS, unit_row("bafu-x", QUDT + "BQ", source=bafu)]
+    vocab = [*_UNIT_VOCAB, vocab_row("bafu-x", "Radon-222", source=bafu)]
+    index = _with_units(tmp_path, rows, vocab=vocab)
+    assert index.get("bafu-x") is None
+    assert index.get("rn").stated_unit == "kBq"
+
+
+def test_an_ef_flow_with_a_unit_that_has_no_spelling_is_an_error(tmp_path):
+    with pytest.raises(ValidationError, match="KiloM"):
+        _with_units(tmp_path, [unit_row("cu", QUDT + "KiloM")])
+
+
+def test_two_different_units_on_one_flow_are_an_error(tmp_path):
+    rows = [unit_row("cu", QUDT + "KiloGM"), unit_row("cu", QUDT + "KiloBQ")]
+    with pytest.raises(ParseError, match="cu: two units"):
+        _with_units(tmp_path, rows)
+
+
+def test_the_unit_of_a_flow_is_inferred_when_characterised_and_stated_otherwise(tmp_path):
+    index = _with_units(tmp_path, _UNIT_ROWS)
+    assert index.unit("rn") == index.reference_unit("rn") == "kBq"
+    assert index.reference_unit("u-alpha") is None
+    assert index.unit("u-alpha") == "kBq"
+    assert index.unit("heat") == "megajoule"
+
+
+def test_stated_and_inferred_units_that_agree_on_every_characterised_flow_pass(tmp_path):
+    assert len(_with_units(tmp_path, _UNIT_ROWS)) == 5
+
+
+def test_a_stated_unit_that_disagrees_with_the_inferred_one_is_an_error_with_the_list(
+    tmp_path,
+):
+    rows = [
+        unit_row("cu", QUDT + "KiloBQ"),
+        unit_row("rn", QUDT + "KiloBQ"),
+        unit_row("occ", QUDT + "M2"),
+    ]
+    with pytest.raises(ParseError) as excinfo:
+        _with_units(tmp_path, rows)
+    message = str(excinfo.value)
+    assert "2 characterised EF flows" in message
+    assert "cu (Copper, Emissions to air, unspecified): stated kBq, inferred kilogram" in message
+    assert "ef-3.1:human-toxicity-cancer" in message
+    assert "occ (Arable, Land occupation): stated m2, inferred m2*a" in message
+    assert "rn (" not in message
+
+
+def test_a_factorless_flow_is_never_part_of_the_stated_versus_inferred_check(tmp_path):
+    # nothing is inferred for it: whatever it states stands
+    index = _with_units(tmp_path, [*_UNIT_ROWS[:3], unit_row("u-alpha", QUDT + "MegaJ")])
+    assert index.get("u-alpha").stated_unit == "megajoule"
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_real_index_states_a_unit_for_every_flow_when_the_checkout_has_them(real_index):
+    # building real_index already ran the stated-versus-inferred check without error
+    stated = [flow for flow in real_index if flow.stated_unit is not None]
+    if not stated:
+        pytest.skip("this sentier-vocab checkout has no qudt:hasUnit relation on EF flows")
+    assert len(stated) == len(real_index)
+    assert all(
+        flow.stated_unit == real_index.reference_unit(flow.code)
+        for flow in real_index
+        if flow.characterised
     )

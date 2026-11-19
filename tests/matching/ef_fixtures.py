@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sentier_importers.core.vocab_layers import TERM_SCHEMA
+from sentier_importers.core.vocab_layers import RELATION_SCHEMA, TERM_SCHEMA
 
 IRI = "https://vocab.sentier.dev/flows/"
 AIR_URBAN = "Emissions / Emissions to air / Emissions to urban air close to ground"
@@ -102,3 +102,40 @@ def write_ef_inputs(root: Path, cf_rows, vocab_rows, shards: int = 1) -> tuple[P
             pa.Table.from_pylist(group, schema=TERM_SCHEMA), terms_dir / f"ef-3.1-{i:02d}.parquet"
         )
     return cf, terms_dir
+
+
+QUDT = "http://qudt.org/vocab/unit/"
+SENTIER_UNIT = "https://vocab.sentier.dev/units/unit/"
+
+
+def unit_row(code: str, unit: str, source: str = EF_SOURCE) -> dict:
+    """The ``qudt:hasUnit`` relation of flow ``code``; ``unit`` is the unit IRI."""
+    return {
+        "subject": IRI + code,
+        "predicate": "qudt:hasUnit",
+        "object": unit,
+        "source": source,
+        "status": "draft",
+    }
+
+
+#: A relation of another predicate in the same release: not a unit.
+_OTHER_RELATION = {
+    "subject": "https://vocab.sentier.dev/impact-categories/ef-3.1/acidification",
+    "predicate": "ont:method",
+    "object": "https://vocab.sentier.dev/methods/ef-3.1",
+    "source": EF_SOURCE,
+    "status": "draft",
+}
+
+
+def write_unit_relations(root: Path, unit_rows) -> Path:
+    """Write ``unit_rows`` as the release's relation file in ``root/relations``, the
+    folder beside ``terms`` that ``write_ef_inputs`` writes; return that folder."""
+    relations_dir = root / "relations"
+    relations_dir.mkdir(exist_ok=True)
+    rows = [_OTHER_RELATION, *unit_rows]
+    pq.write_table(
+        pa.Table.from_pylist(rows, schema=RELATION_SCHEMA), relations_dir / "ef-3.1.parquet"
+    )
+    return relations_dir
