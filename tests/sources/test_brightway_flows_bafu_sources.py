@@ -96,14 +96,12 @@ def test_review_lists_a_mapped_flow_whose_link_is_not_usable(tmp_path):
     assert broad["package"] == "biosphere-1-curated" and broad["ours"]["code"] == "ef-ammonia"
 
 
-def test_review_lists_a_retarget_between_two_factorless_flows(tmp_path):
+def test_a_retarget_between_two_factorless_flows_is_applied_not_reviewed(tmp_path):
     curated = [entry(BORAX, "ef-long", "Longterm")]
     rows = run(BafuBrightwayFlowsReviewSource, tmp_path, curated=curated, verb="review")
-    borax = {r["source"]["name"]: r for r in rows}["Borax"]
-    assert borax["kind"] == "retarget_withheld" and borax["reason"] == "both_zero"
-    assert borax["ours"]["code"] == "ef-long" and borax["brightway_flows"]["code"] == "ef-borax"
-    assert "factors" not in borax and borax["methods"] == []
+    assert "Borax" not in {r["source"]["name"] for r in rows}
     aligned = run(
         BafuBrightwayFlowsAlignSource, tmp_path, curated=curated, emit="biosphere-1-curated"
     )
-    assert aligned == curated
+    assert aligned[0]["target"]["code"] == "ef-borax"
+    assert "neither flow carries a factor" in aligned[0]["comment"]

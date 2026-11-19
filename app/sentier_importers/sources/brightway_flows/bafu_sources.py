@@ -11,7 +11,7 @@
   (an unmapped flow whose link package 5 does not take), ``theirs_not_usable`` (a
   mapped flow whose link fails a rule), ``score_changing_retarget`` (their target
   scores differently from ours) or ``retarget_withheld`` (no factor differs, but
-  nothing shows the two targets are the same flow, or the amounts differ).
+  the two sides convert the amount differently).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from sentier_importers.sources.brightway_flows.bafu import (
 from sentier_importers.sources.brightway_flows.factors import compare
 
 #: ``retarget`` kinds that mean the two EF flows score differently; the other kinds
-#: (``both_zero``, ``unit_differs``) hold a retarget back although no factor differs.
+#: (``unit_differs``) hold a retarget back although no factor differs.
 _FACTOR_KINDS = frozenset({"differ", "theirs_zero", "ours_zero"})
 
 

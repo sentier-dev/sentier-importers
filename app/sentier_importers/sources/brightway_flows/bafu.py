@@ -80,6 +80,7 @@ _DIMENSION = {
     "kwh": ("energy", 3.6),
 }
 ALIGNED = f"target aligned with {RELEASE} (identical factors)"
+ALIGNED_FACTORLESS = f"target aligned with {RELEASE} (neither flow carries a factor)"
 UNCHARACTERISED = "uncharacterised in EF 3.1: no factor in any method"
 
 
@@ -195,9 +196,11 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
 
     Returns ``(entry, kind)``: ``retargeted`` when the target changed; ``None`` when
     they have no usable link or agree with us; otherwise the entry unchanged and why
-    it was left alone (``differ``, ``theirs_zero``, ``ours_zero``, ``both_zero``,
-    ``unit_differs``). ``both_zero``: neither flow carries a factor, so nothing shows
-    that the two are the same flow; equal factors are the evidence a retarget needs.
+    it was left alone (``differ``, ``theirs_zero``, ``ours_zero``, ``unit_differs``).
+
+    Two flows that both carry no factor count as identical (spec 2026-11-19: Brightway
+    Flows is the reference wherever no score can change); the comment then says so
+    instead of claiming identical factors.
     """
     ours = entry["target"].get("code")
     decision = decide(entry["source"], state)
@@ -210,8 +213,6 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
     kind, _ = compare(our_vector, state.vectors.get(flow.code, {}))
     if kind != "identical":
         return entry, kind
-    if not any(our_vector.values()):
-        return entry, "both_zero"
     if not math.isclose(
         entry.get("conversion_factor", 1.0), decision.link.multiplier or 1.0, rel_tol=1e-9
     ):
@@ -223,7 +224,8 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
         target["context"] = list(flow.context)
     else:
         target.pop("context", None)
-    comment = "; ".join(part for part in (entry.get("comment"), ALIGNED) if part)
+    note = ALIGNED if any(our_vector.values()) else ALIGNED_FACTORLESS
+    comment = "; ".join(part for part in (entry.get("comment"), note) if part)
     return {**entry, "target": target, "comment": comment}, "retargeted"
 
 

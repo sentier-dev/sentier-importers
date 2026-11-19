@@ -260,10 +260,13 @@ def test_an_entry_they_agree_with_is_untouched(tmp_path):
     assert bafu.retarget(ours, state_for(tmp_path, curated=[ours])) == (ours, None)
 
 
-def test_two_factorless_flows_are_not_retargeted(tmp_path):
+def test_two_factorless_flows_take_their_target_and_say_so(tmp_path):
     ours = entry(BORAX, "ef-long", "Longterm")
     new, kind = bafu.retarget(ours, state_for(tmp_path, curated=[ours]))
-    assert new == ours and kind == "both_zero"
+    assert kind == "retargeted" and new["target"]["code"] == "ef-borax"
+    assert new["comment"] == (
+        "target aligned with brightway-flows 1.1.0 (neither flow carries a factor)"
+    )
 
 
 def test_identical_factors_with_another_conversion_leave_the_entry_alone(tmp_path):
