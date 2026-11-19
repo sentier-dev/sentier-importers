@@ -15,6 +15,9 @@ target and a vocab term are one IRI (spec 2026-11-10-ef31-flows-missing-from-voc
   harmonised list's own identifier, and ``matching.bw_context`` derives its crosswalk
   from the rows that carry it; a code computed here from that crosswalk would feed it
   its own output.
+- ``sub_compartment``: the leaf of the context path (see ``ef_context``). The
+  ``brightway_flows`` input states the path of most of these flows too, and the two
+  must agree.
 - No CAS, formula or unit: the CF table carries none.
 """
 
@@ -27,14 +30,17 @@ import pyarrow.parquet as pq
 from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
+from sentier_importers.sources.agribalyse import ef_context
+from sentier_importers.sources.agribalyse.ef_context import SUB_COMPARTMENT, EfContexts
+from sentier_importers.sources.agribalyse.ef_context import jrc_path as context_path
 from sentier_importers.sources.agribalyse.flows import FLOWS_SCHEME, is_emitted
 from sentier_importers.sources.agribalyse.provenance import PROVENANCE_IRI
+from sentier_importers.sources.brightway_flows.correspondences import PINNED_SHA256
 
 #: Registry input: the harmonised flow list, whose EF 3.1 flows this part never emits.
 HARMONISED = "harmonised"
 _COLUMNS = ["FLOW_uuid", "FLOW_name", "FLOW_class0", "FLOW_class1", "FLOW_class2"]
-_CLASSES = ("FLOW_class0", "FLOW_class1", "FLOW_class2")
-_SEP = " / "
+_SEP = ef_context.SEP
 #: Second path level -> compartment for emissions; the first level decides the rest.
 _EMISSION_COMPARTMENT = {
     "Emissions to air": "air",
@@ -42,13 +48,6 @@ _EMISSION_COMPARTMENT = {
     "Emissions to soil": "soil",
 }
 _TOP_COMPARTMENT = {"Resources": "natural resource", "Land use": "land use"}
-
-
-def context_path(record: Record) -> str:
-    """The EF context path of a CF row, ``" / "``-joined, empty levels dropped."""
-    return _SEP.join(
-        str(record[c]).strip() for c in _CLASSES if isinstance(record.get(c), str) and record[c]
-    )
 
 
 def compartment_for_path(path: str) -> str | None:
@@ -83,6 +82,9 @@ def _harmonised_identifiers(raw: bytes) -> frozenset[str]:
 class JrcFlowsSource(Source):
     """Emit the characterised EF 3.1 flows the harmonised list does not carry."""
 
+    #: Pin of the ``brightway_flows`` input; ``None`` in tests, which feed a synthetic file.
+    expected_sha256: str | None = PINNED_SHA256
+
     def parse(self, raw: RawData) -> Records:
         try:
             return pq.read_table(io.BytesIO(raw.content), columns=_COLUMNS).to_pylist()
@@ -95,6 +97,7 @@ class JrcFlowsSource(Source):
                 f"input {HARMONISED!r} not fetched: the registry must declare it"
             )
         skip = _harmonised_identifiers(self.inputs[HARMONISED].content)
+        bw = ef_context.brightway_flows(self.inputs, self.expected_sha256)
         names: OrderedDict[str, list[str]] = OrderedDict()
         paths: dict[str, str] = {}
         for record in records:
@@ -111,11 +114,15 @@ class JrcFlowsSource(Source):
             if name not in variants:
                 variants.append(name)
 
+        # The CF table places every flow it lists; where the EF correspondence places
+        # one too, the two paths must be one.
+        contexts = EfContexts(correspondence=ef_context.correspondence_paths(bw), jrc=paths)
         rows: Rows = []
         for uuid, variants in names.items():
             row: Record = {"iri": f"{FLOWS_SCHEME}{uuid}", "pref_label": _label(variants)}
             if (compartment := compartment_for_path(paths[uuid])) is not None:
                 row["compartment"] = compartment
+            row[SUB_COMPARTMENT] = contexts.leaf(uuid)
             row["source"] = PROVENANCE_IRI
             row["status"] = "draft"
             rows.append(row)

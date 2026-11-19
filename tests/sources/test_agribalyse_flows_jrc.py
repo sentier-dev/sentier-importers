@@ -2,6 +2,7 @@
 
 import gzip
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pyarrow as pa
@@ -12,6 +13,7 @@ from sentier_importers.core import vocab_contract, vocab_layers
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.core.source import SourceConfig
+from sentier_importers.sources.agribalyse.ef_context import BRIGHTWAY_FLOWS, JRC
 from sentier_importers.sources.agribalyse.flows import AgribalyseFlowsSource
 from sentier_importers.sources.agribalyse.flows_jrc import (
     HARMONISED,
@@ -20,6 +22,9 @@ from sentier_importers.sources.agribalyse.flows_jrc import (
     context_path,
 )
 from sentier_importers.sources.agribalyse.provenance import PROVENANCE_IRI
+from sentier_importers.sources.brightway_flows.correspondences import PINNED_SHA256
+
+from tests.sources.ef_context_fixture import bw_bytes, entry, raw
 
 FIXTURES = Path(__file__).parents[1] / "core" / "fixtures" / "vocab"
 MODULE = "sentier_importers.sources.agribalyse.flows_jrc"
@@ -54,6 +59,14 @@ def _table(rows):
     )
 
 
+#: The EF correspondence of Brightway Flows places jrc-1 and jrc-4; jrc-2 and jrc-3
+#: have their path from the CF table alone.
+EF_LINKS = (
+    entry("jrc-1", "/".join(LONG_TERM_WATER)),
+    entry("jrc-4", "Land use/Land occupation"),
+)
+
+
 def _write_inputs(tmp_path, rows=ROWS):
     cf = tmp_path / "cf.parquet"
     pq.write_table(_table(rows), cf)
@@ -65,6 +78,20 @@ def _write_inputs(tmp_path, rows=ROWS):
     ]
     harmonised.write_bytes(gzip.compress(json.dumps({"flows": flows}).encode()))
     return cf, harmonised
+
+
+def _bw(tmp_path, ef_links=EF_LINKS):
+    path = tmp_path / "bw.json.gz"
+    path.write_bytes(bw_bytes(ef_links))
+    return path
+
+
+def _jrc_source(tmp_path, cf, harmonised, ef_links=EF_LINKS) -> JrcFlowsSource:
+    config = _config(cf, harmonised)
+    inputs = {**config.inputs, BRIGHTWAY_FLOWS: f"file://{_bw(tmp_path, ef_links)}"}
+    source = JrcFlowsSource(replace(config, inputs=inputs))
+    source.expected_sha256 = None
+    return source
 
 
 def _config(cf, harmonised) -> SourceConfig:
@@ -81,8 +108,8 @@ def _config(cf, harmonised) -> SourceConfig:
     )
 
 
-def _rows(tmp_path, rows=ROWS):
-    src = JrcFlowsSource(_config(*_write_inputs(tmp_path, rows)))
+def _rows(tmp_path, rows=ROWS, ef_links=EF_LINKS):
+    src = _jrc_source(tmp_path, *_write_inputs(tmp_path, rows), ef_links=ef_links)
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     return src.transform(src.parse(src.fetch(ctx)))
 
@@ -103,6 +130,7 @@ def test_one_row_per_flow_with_the_cased_spelling(tmp_path):
         "iri": FLOWS + "jrc-1",
         "pref_label": "Aldehydes, unspecified",
         "compartment": "water",
+        "sub_compartment": "Emissions to water, unspecified (long-term)",
         "source": PROVENANCE_IRI,
         "status": "draft",
     }
@@ -117,6 +145,32 @@ def test_context_gives_the_compartment_and_no_bw_context_notation(tmp_path):
     # the bw-context code belongs to the harmonised list; computing one here would
     # feed matching.bw_context its own crosswalk back
     assert all("additional_notations" not in r for r in rows)
+
+
+def test_every_row_has_the_leaf_of_its_exact_ef_context_as_sub_compartment(tmp_path):
+    by_code = {r["iri"].rsplit("/", 1)[1]: r["sub_compartment"] for r in _rows(tmp_path)}
+    assert by_code == {
+        "jrc-1": "Emissions to water, unspecified (long-term)",  # both sources, agreeing
+        "jrc-2": "Emissions to non-agricultural soil",  # the CF table alone
+        "jrc-3": "Renewable material resources from air",
+        "jrc-4": "Land occupation",  # a two-level path: its second level
+    }
+
+
+def test_the_ef_correspondence_and_the_cf_table_must_agree_on_a_path(tmp_path):
+    with pytest.raises(ValidationError, match="'jrc-2'"):
+        _rows(tmp_path, ef_links=[*EF_LINKS, entry("jrc-2", "/".join(AIR))])
+
+
+def test_a_missing_brightway_flows_input_is_a_validation_error(tmp_path):
+    src = JrcFlowsSource(_config(*_write_inputs(tmp_path)))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    with pytest.raises(ValidationError, match=BRIGHTWAY_FLOWS):
+        src.transform(src.parse(src.fetch(ctx)))
+
+
+def test_the_pinned_brightway_flows_release_is_checked_by_default(tmp_path):
+    assert JrcFlowsSource.expected_sha256 == PINNED_SHA256
 
 
 def test_context_helpers():
@@ -162,7 +216,8 @@ def test_registry_block_is_a_part_of_the_ef31_release():
         "ef-3.1",
         "elementary-flow",
     )
-    assert set(config.inputs) == {HARMONISED}
+    assert set(config.inputs) == {HARMONISED, BRIGHTWAY_FLOWS}
+    assert "zenodo.org/api/records/23554066" in config.inputs[BRIGHTWAY_FLOWS]
     assert config.inputs[HARMONISED].endswith("harmonised-flows-simple.json.gz")
     assert config.fetch_url.endswith("lciamethods_CF.parquet")
 
@@ -182,10 +237,13 @@ def test_the_two_parts_are_disjoint_and_cover_every_jrc_flow(tmp_path):
     ]
     cf = tmp_path / "cf.parquet"
     pq.write_table(_table([(u, u, *AIR) for u in "abcd"]), cf)
-    src = JrcFlowsSource(_config(cf, _harmonised_gz(tmp_path, harmonised)))
+    src = _jrc_source(tmp_path, cf, _harmonised_gz(tmp_path, harmonised), ef_links=())
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     jrc = {r["iri"] for r in src.transform(src.parse(src.fetch(ctx)))}
-    first = {r["iri"] for r in AgribalyseFlowsSource(_config(cf, "unused")).transform(harmonised)}
+    first_part = AgribalyseFlowsSource(_config(cf, "unused"))
+    first_part.expected_sha256 = None
+    first_part.inputs = {BRIGHTWAY_FLOWS: raw(bw_bytes()), JRC: raw(cf.read_bytes())}
+    first = {r["iri"] for r in first_part.transform(harmonised)}
     assert first == {FLOWS + "a"}
     assert jrc == {FLOWS + "b", FLOWS + "c", FLOWS + "d"}
     assert not first & jrc
@@ -194,7 +252,7 @@ def test_the_two_parts_are_disjoint_and_cover_every_jrc_flow(tmp_path):
 @pytest.mark.parametrize("flows", [{}, ["not a record"], []])
 def test_a_harmonised_list_that_excludes_nothing_is_a_parse_error(tmp_path, flows):
     cf, _ = _write_inputs(tmp_path)
-    src = JrcFlowsSource(_config(cf, _harmonised_gz(tmp_path, flows)))
+    src = _jrc_source(tmp_path, cf, _harmonised_gz(tmp_path, flows))
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     with pytest.raises(ParseError, match="harmonised"):
         src.transform(src.parse(src.fetch(ctx)))

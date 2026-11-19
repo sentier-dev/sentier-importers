@@ -14,6 +14,7 @@ from sentier_importers.core import vocab_contract, vocab_layers
 from sentier_importers.core.context import RunContext
 from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.core.source import SourceConfig
+from sentier_importers.sources.agribalyse.ef_context import BRIGHTWAY_FLOWS
 from sentier_importers.sources.agribalyse.flows import AgribalyseFlowsSource
 from sentier_importers.sources.agribalyse.flows_jrc import JrcFlowsSource
 from sentier_importers.sources.brightway_flows.correspondences import PINNED_SHA256
@@ -77,6 +78,9 @@ EXPECTED = {
     "jrc-merged-m3": QUDT + "M3",
     "bw11-m2a": SENTIER + "M2-YR",
 }
+#: Flows of the CF table with an entry in the EF correspondence: the two must agree.
+PLACED = ("harmonised-kg", "jrc-kbq", "jrc-merged-m3")
+JRC_ONLY = ("Emissions", "Emissions to air", "x")
 #: In no EF correspondence entry and redirected to no flow with one: no edge.
 WITHOUT_UNIT = ("jrc-lost", "jrc-unknown")
 
@@ -88,7 +92,10 @@ def _write(tmp_path, ef_links=EF_LINKS, harmonised=HARMONISED_FLOWS, jrc=JRC_FLO
     harmonised_path = tmp_path / "harmonised.json.gz"
     harmonised_path.write_bytes(gzip.compress(json.dumps({"flows": harmonised}).encode()))
     jrc_path = tmp_path / "cf.parquet"
-    rows = [(uuid, f"name of {uuid}", "Emissions", "Emissions to air", "x") for uuid in jrc]
+    rows = [
+        (uuid, f"name of {uuid}", *(AIR.split("/") if uuid in PLACED else JRC_ONLY))
+        for uuid in jrc
+    ]
     pq.write_table(
         pa.table(
             {c: pa.array([r[i] for r in rows], pa.string()) for i, c in enumerate(JRC_COLUMNS)}
@@ -231,9 +238,13 @@ def test_in_the_release_every_flow_term_of_the_three_parts_has_its_edge(tmp_path
         _config(bw, inputs, "bw11", "sentier_importers.sources.brightway_flows.vocab_flows")
     )
     bw11.expected_sha256 = None
+    context = {BRIGHTWAY_FLOWS: f"file://{bw}"}
+    first = AgribalyseFlowsSource(_config(harmonised, {**context, JRC: jrc}, "harmonised", "m"))
+    second = JrcFlowsSource(_config(jrc, {**context, HARMONISED: harmonised}, "jrc", "m"))
+    first.expected_sha256 = second.expected_sha256 = None
     parts = [
-        AgribalyseFlowsSource(_config(harmonised, {}, "harmonised", "m")),
-        JrcFlowsSource(_config(jrc, {HARMONISED: harmonised}, "jrc", "m")),
+        first,
+        second,
         bw11,
         _source(_config(bw, inputs)),
         registry_mod.load_source(registry_mod.get_config("agribalyse-ef31-source")),
@@ -247,6 +258,17 @@ def test_in_the_release_every_flow_term_of_the_three_parts_has_its_edge(tmp_path
     assert {e["predicate"] for e in edges} == {"qudt:hasUnit"}
     assert units == EXPECTED
     assert flows - set(units) == set(WITHOUT_UNIT)
+    # every flow the EF correspondence or the CF table places has its context leaf
+    leaves = {
+        t["iri"].rsplit("/", 1)[1]: json.loads(t["attributes"] or "{}").get("sub_compartment")
+        for t in terms
+        if t["type"] == "elementary-flow"
+    }
+    assert leaves["harmonised-redirected"] is None  # in neither source
+    assert leaves["jrc-lost"] == "x"  # the CF table alone
+    assert {v for k, v in leaves.items() if k in EXPECTED and k != "harmonised-redirected"} == {
+        "Emissions to air, unspecified"
+    }
 
 
 def test_registry_block_is_a_private_opt_in_part_of_the_ef31_release():

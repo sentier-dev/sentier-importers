@@ -286,7 +286,8 @@ sources:
   # Task 0); nomenclature only, NO LCI amounts. Flows tagged "ecoinvent algorithm addition"
   # are excluded in transform(). ~79.3k flows; opt-in so it stays out of `run --all`.
   # Part of the ef-3.1 release with the method, its impact categories and the source
-  # term; the compartment is an attribute of each flow term. The release exceeds the
+  # term; the compartment and the sub_compartment (the leaf of the exact EF context) are
+  # attributes of each flow term. The release exceeds the
   # vocab 3 MB guard, so `run --release ef-3.1` writes it as ef-3.1-01.parquet ….
   # The flow list's Brightway exact matches are not vocab relations: they belong to
   # sentier-mappings (pair ef-3.1__brightway).
@@ -299,6 +300,11 @@ sources:
     fetch:
       url: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
       format: json-gz                                # unused: the plugin overrides parse() to gunzip
+    # The exact EF context path of a flow (its leaf is the sub_compartment attribute):
+    # Brightway Flows 1.1.0 first, the JRC CF table for a flow it has no entry for.
+    inputs:
+      brightway_flows: "https://zenodo.org/api/records/23554066/files/harmonised-flows-simple.json.gz/content"
+      jrc: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/EF-LCIAMethod_CF(EF-v3.1)__lciamethods_CF.parquet"
     output_format: parquet
     dedup:
       on_existing: skip                              # do not clobber curated flows/ENVO_* terms
@@ -320,6 +326,7 @@ sources:
       format: parquet
     inputs:
       harmonised: "file://${SENTIER_DATA_ROOT}/dds-agribalyse/source/harmonised-flows-simple.json.gz"
+      brightway_flows: "https://zenodo.org/api/records/23554066/files/harmonised-flows-simple.json.gz/content"  # must agree with the table on every context path
     output_format: parquet
     dedup:
       on_existing: skip

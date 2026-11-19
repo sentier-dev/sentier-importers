@@ -134,6 +134,7 @@ def test_a_row_maps_label_alt_labels_cas_formula_compartment_and_notations(tmp_p
         "cas_number": "76-15-3",
         "formula": "C2ClF5",
         "compartment": "water",
+        "sub_compartment": "Emissions to water, unspecified (long-term)",
         "additional_notations": [
             "ec:200-938-2",
             "ec:999-999-9",
@@ -152,6 +153,7 @@ def test_the_jrc_name_is_an_alt_label_only_when_it_differs_from_the_label(tmp_pa
         "iri": FLOWS + "new-1",
         "pref_label": "Fenoxycarb",
         "compartment": "soil",
+        "sub_compartment": "Emissions to soil, unspecified",
         "additional_notations": [
             "ef-context:Emissions / Emissions to soil / Emissions to soil, unspecified"
         ],
@@ -173,6 +175,9 @@ def test_every_row_has_one_ef_context_the_index_can_read_and_no_bw_context(tmp_p
         assert not any(n.startswith("bw-context:") for n in notations)
     assert by_code["new-3"]["compartment"] == "natural resource"
     assert by_code["new-4"]["compartment"] == "land use"
+    # the sub_compartment is the leaf of that same exact path
+    assert by_code["new-3"]["sub_compartment"] == RESOURCE.rsplit("/", 1)[1]
+    assert by_code["new-4"]["sub_compartment"] == "Land occupation"
     assert ef_context_for(by_code["new-4"]["additional_notations"]) == "Land use / Land occupation"
 
 
