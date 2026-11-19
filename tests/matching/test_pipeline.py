@@ -1549,3 +1549,158 @@ def test_an_energy_content_source_still_matches_its_megajoule_flow(tmp_path):
     assert isinstance(got, Match) and got.code == "coal"
     refused = pipe.match(BafuFlow("Hard coal", "resources", "in ground", "kg"), None)
     assert refused.reason == "unit_mismatch"
+
+
+# --- a fallback match is provisional (2026-11-19, the second defect) ---------------
+# BAFU "Carbonate" to a lake: with the Brightway Flows 1.1 terms in the index, the
+# name tier found EF "Carbonate" on "water, unspecified" only, and that fallback
+# pre-empted the synonym tier's "Carbonate Ion" on fresh water. A fallback match is
+# now kept aside while the later name-based tiers are asked for an exact placement.
+
+_CARBONATE = [
+    vocab_row("carbonate-unspec", "Carbonate", ef_context=WATER_UNSPEC),
+    vocab_row("carbonate-ion-fresh", "Carbonate Ion", alt=["Carbonate"], ef_context=WATER_FRESH),
+]
+
+
+def test_an_exact_match_of_a_later_tier_replaces_an_earlier_fallback(tmp_path):
+    got = _inclusive_pipeline(tmp_path, _CARBONATE).match(water("Carbonate", "lake"), None)
+    assert (got.code, got.tier, got.placement) == (
+        "carbonate-ion-fresh",
+        "synonym",
+        Placement.EXACT.value,
+    )
+    assert got.caveats == ()
+
+
+def test_a_fallback_stands_when_no_later_tier_places_exactly(tmp_path):
+    vocab = [
+        _CARBONATE[0],
+        vocab_row("carbonate-ion-sea", "Carbonate Ion", alt=["Carbonate"], ef_context=WATER_SEA),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Carbonate", "lake"), None)
+    assert (got.code, got.tier, got.placement) == (
+        "carbonate-unspec",
+        "name",
+        Placement.UNSPECIFIED.value,
+    )
+    assert got.caveats == (
+        "EF has no fresh water flow for this substance; the unspecified context is used",
+    )
+
+
+def test_the_first_fallback_stands_over_a_later_fallback(tmp_path):
+    vocab = [
+        _CARBONATE[0],
+        vocab_row("carbonate-ion-unspec", "Carbonate Ion", alt=["Carbonate"], bw="envi-wate-unkn"),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Carbonate", "lake"), None)
+    assert (got.code, got.tier) == ("carbonate-unspec", "name")
+
+
+def test_an_exact_match_stays_final_whatever_a_later_tier_holds(tmp_path):
+    vocab = [
+        vocab_row("carbonate-fresh", "Carbonate", ef_context=WATER_FRESH),
+        _CARBONATE[1],
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Carbonate", "lake"), None)
+    assert (got.code, got.tier) == ("carbonate-fresh", "name")
+
+
+def test_the_cas_tier_never_replaces_a_fallback(tmp_path):
+    # CAS stays last and name-blind: its exact placement does not override a name
+    vocab = [
+        _CARBONATE[0],
+        vocab_row(
+            "other-fresh", "Carbonic acid, ion(2-)", cas="3812-32-6", ef_context=WATER_FRESH
+        ),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Carbonate", "lake"), "3812-32-6")
+    assert (got.code, got.tier, got.placement) == (
+        "carbonate-unspec",
+        "name",
+        Placement.UNSPECIFIED.value,
+    )
+
+
+def test_a_later_tier_that_cannot_decide_leaves_the_fallback_standing(tmp_path):
+    # the synonym tier finds two flows with different factors on the exact leaf: on
+    # its own that is ambiguous_substances, but the name tier already has a match
+    vocab = [
+        vocab_row("carbonate-unspec", "Carbonate"),
+        vocab_row("carbonate-ion-a", "Carbonate Ion", alt=["Carbonate"]),
+        vocab_row("carbonate-ion-b", "Carbonate Ion", alt=["Carbonate"]),
+    ]
+    cf = [
+        cf_row("carbonate-unspec", "carbonate", WATER_UNSPEC),
+        cf_row("carbonate-ion-a", "carbonate ion", WATER_FRESH, value=1.0),
+        cf_row("carbonate-ion-b", "carbonate ion", WATER_FRESH, value=5.0),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab, cf).match(water("Carbonate", "lake"), None)
+    assert (got.code, got.tier) == ("carbonate-unspec", "name")
+
+
+def test_a_fallback_stands_over_a_tier_whose_candidates_cannot_be_placed(tmp_path):
+    vocab = [
+        _CARBONATE[0],
+        vocab_row("carbonate-ion-lt", "Carbonate Ion", alt=["Carbonate"], ef_context=LT),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Carbonate", "lake"), None)
+    assert (got.code, got.tier) == ("carbonate-unspec", "name")
+
+
+def test_an_alias_placed_exactly_replaces_an_earlier_fallback(tmp_path):
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(
+            tmp_path,
+            [],
+            [_CARBONATE[0], vocab_row("co3-fresh", "Carbonic acid, ion(2-)", bw="envi-wate-suwa")],
+        ),
+        include_uncharacterised=True,
+        read_ef_context=True,
+    )
+    pipe = default_pipeline(index, {"carbonate": "Carbonic acid, ion(2-)"})
+    got = pipe.match(water("Carbonate", "lake"), None)
+    assert (got.code, got.tier, got.placement) == ("co3-fresh", "alias", Placement.EXACT.value)
+
+
+def test_a_region_stripped_exact_match_replaces_a_region_stripped_fallback(tmp_path):
+    # the same rule among the tiers of the region-stripped name
+    pipe = _inclusive_pipeline(tmp_path, _CARBONATE)
+    got = pipe.match(water("Carbonate, DE", "lake"), None)
+    assert (got.code, got.tier, got.placement, got.location) == (
+        "carbonate-ion-fresh",
+        "region/synonym",
+        Placement.EXACT.value,
+        "DE",
+    )
+
+
+def test_a_region_stripped_exact_match_replaces_a_fallback_of_the_full_name(tmp_path):
+    vocab = [
+        vocab_row("carbonate-de-unspec", "Carbonate, DE", ef_context=WATER_UNSPEC),
+        vocab_row("carbonate-fresh", "Carbonate", ef_context=WATER_FRESH),
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Carbonate, DE", "lake"), None)
+    assert (got.code, got.tier, got.placement) == (
+        "carbonate-fresh",
+        "region/name",
+        Placement.EXACT.value,
+    )
+
+
+def test_a_region_stripped_tier_that_cannot_be_placed_leaves_the_later_ones_their_turn(tmp_path):
+    # each tier of the region-stripped name is a tier of the pipeline like the plain
+    # ones, so sub_compartment_absent is not final among them either
+    vocab = [
+        vocab_row("carbonate-lt", "Carbonate", ef_context=LT),
+        _CARBONATE[1],
+    ]
+    got = _inclusive_pipeline(tmp_path, vocab).match(water("Carbonate, DE", "lake"), None)
+    assert (got.code, got.tier) == ("carbonate-ion-fresh", "region/synonym")
+
+
+def test_a_characterised_fallback_is_provisional_too(tmp_path, pipeline):
+    # zinc to the ocean: only the unspecified leaf; no later tier has anything
+    got = pipeline.match(water("Zinc", "ocean"), None)
+    assert (got.code, got.placement) == ("zn-unspec", Placement.UNSPECIFIED.value)

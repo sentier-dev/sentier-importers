@@ -4,10 +4,21 @@ reason a reviewer can act on.
 
 Tier order: exact name, land-use class, ore composite, synonym, qualifier spelling,
 carbon-oxide rewrite, ion-strip, curated alias, the same eight tiers again applied to
-the region-stripped name (``RegionStripMatcher`` applies that same first-hit rule
-among its own inner matchers), then CAS last. The first matcher whose candidates
-resolve to a ``Match``, or to an ``Unmatched`` other than ``sub_compartment_absent``,
-decides the outcome. ``sub_compartment_absent`` alone is not final (round 4, decision
+the region-stripped name (one ``RegionStripMatcher`` per tier since 2026-11-19, so
+the rules below hold among them as among the plain ones), then CAS last. The first
+matcher whose candidates resolve to a ``Match``, or to an ``Unmatched`` other than
+``sub_compartment_absent``, decides the outcome, with one exception (2026-11-19, the
+tier-order defect): a ``Match`` placed by the UNSPECIFIED fallback is provisional. It
+is kept aside while the later name-based tiers run, and the first of them that
+places a candidate EXACTLY replaces it; whatever else they come back with (another
+fallback, a relaxed placement, an ``Unmatched`` of any reason) is ignored, and the
+provisional match is returned when none places exactly. The CAS tier is not asked:
+it stays last and never overrides a name. The case: BAFU ``Carbonate`` to a lake,
+EF ``Carbonate`` on "water, unspecified" (name tier, fallback) and EF ``Carbonate
+Ion`` on fresh water (synonym tier, exact); the fallback used to win by coming
+first. An exact match in a tier is final as before.
+
+``sub_compartment_absent`` alone is not final (round 4, decision
 2026-09-13): it means this matcher's candidates exist in EF but not in the flow's own
 sub-compartment, which a later tier's candidates may still place correctly (e.g. a
 name-tier hit that only exists on an unplaceable leaf, followed by a CAS-tier hit on
@@ -190,6 +201,9 @@ _CAS_AFTER = {
     "unit_mismatch": "an earlier tier's match states a unit the source has no conversion to",
 }
 
+#: The tier that never replaces a provisional fallback match (module docstring).
+_CAS_TIER = CasMatcher.tier
+
 #: BAFU sub-compartment -> how EF would have named it, for the fallback caveat.
 #: Absent here: ``unspecified`` (already exact on its own bucket-level leaf) and
 #: every ``*, long-term`` subcategory, whose family already owns the bucket-level
@@ -328,6 +342,12 @@ class MatchPipeline:
         source has no conversion onto) is treated the same way (``_NOT_FINAL``): not
         final, the first of either kind is what is returned when no tier matches,
         and a CAS match reached past one says so (``_CAS_AFTER``).
+
+        2026-11-19, tier order: a ``Match`` placed by the UNSPECIFIED fallback in a
+        name-based tier is provisional (module docstring). The later name-based
+        tiers still run, only for an EXACT placement, which replaces it; the CAS
+        tier is not asked. It is returned when no later tier places exactly, and it
+        comes before any ``_NOT_FINAL`` outcome an earlier tier left.
         """
         bucket = bucket_of_bafu_category(flow.category)
         if bucket is None:
@@ -335,12 +355,22 @@ class MatchPipeline:
         if flow.subcategory not in KNOWN_SUBCATEGORIES:
             return Unmatched("unknown_sub_compartment", flow.subcategory)
         first_withheld: Unmatched | None = None
+        provisional: Match | None = None
         for matcher in self._matchers:
+            if provisional is not None and matcher.tier == _CAS_TIER:
+                break
             candidates = matcher.candidates(flow, cas, self._index)
             outcome = self._resolve(candidates, flow, cas, matcher)
             if outcome is None:
                 continue
+            if provisional is not None:
+                if isinstance(outcome, Match) and outcome.placement == Placement.EXACT.value:
+                    return outcome
+                continue
             if isinstance(outcome, Match):
+                if outcome.placement == Placement.UNSPECIFIED.value and matcher.tier != _CAS_TIER:
+                    provisional = outcome
+                    continue
                 if first_withheld is not None and outcome.tier == "cas":
                     normalised_cas = normalise_cas(cas)
                     caveat = (
@@ -354,6 +384,8 @@ class MatchPipeline:
                 return outcome
             if first_withheld is None:
                 first_withheld = outcome
+        if provisional is not None:
+            return provisional
         if first_withheld is not None:
             return first_withheld
         template = (
@@ -883,7 +915,13 @@ def default_pipeline(
     unmatched in every air sub-compartment instead of resolving through the qualifier
     spelling, and "Water, KR" resolved to (or, for the real EF water families,
     remained ambiguous by) a bare CAS lookup instead of the more specific
-    region-stripped name match.
+    region-stripped name match. The region-stripped tiers are one
+    ``RegionStripMatcher`` per name-based matcher, in the same order (2026-11-19).
+
+    Where this docstring says the pipeline "commits" to the first tier that yields a
+    candidate, two outcomes are excepted (module docstring): a tier whose candidates
+    cannot be used (``_NOT_FINAL``) and a fallback match, which is provisional until
+    the later name-based tiers have had the chance of an exact placement.
 
     ``CarbonOxideMatcher`` and ``IonStripMatcher`` both run right after
     ``QualifierMatcher``, ahead of ``AliasMatcher``: both rewrite a BAFU name to an EF
@@ -908,8 +946,12 @@ def default_pipeline(
         IonStripMatcher(),
         AliasMatcher(aliases),
     ]
+    # one RegionStripMatcher per name-based tier (2026-11-19), not one over all of
+    # them: each tier of the region-stripped name is then a tier of the pipeline,
+    # so a fallback match among them is provisional and a tier that cannot place
+    # its candidates leaves the next its turn, exactly as among the plain tiers.
     return MatchPipeline(
-        [*named, RegionStripMatcher(named), CasMatcher()],
+        [*named, *(RegionStripMatcher([matcher]) for matcher in named), CasMatcher()],
         index,
         unspecified_fallback=unspecified_fallback,
         resource_fallback=resource_fallback,
