@@ -26,10 +26,12 @@ from tests.matching.ef_fixtures import (
     AIR_RURAL,
     AIR_UNSPEC,
     LAND_OCC,
+    QUDT,
     RES_GROUND,
     RES_WATER,
     WATER_FRESH,
     cf_row,
+    unit_row,
     vocab_row,
     write_ef_inputs,
 )
@@ -861,34 +863,31 @@ def test_decide_applies_name_only_alignment_ahead_of_speciation_refinement():
     assert outcome.placement == "name_only"
 
 
-def test_decide_withholds_a_wood_flow_reported_by_volume_as_unit_mismatch():
-    # round 5, decision 2026-09-14: "Wood, standing" resolves through a curated alias
-    # onto EF's uncharacterised "Wood" (mirroring the real aliases.yaml wood entries)
-    # -- a real pipeline Match, not a name-only one. EF counts Wood by mass; a
-    # cubic-meter source has no density conversion anywhere in this codebase (unlike
-    # water), so it must be withheld rather than guessed.
+@pytest.mark.parametrize("unit", ["m3", "kg"])
+def test_a_wood_flow_is_withheld_by_the_unit_ef_wood_states(unit):
+    # "Wood, standing" resolves through a curated alias onto EF's factorless "Wood",
+    # an energy resource that states megajoule (2026-11-19). The name table that
+    # fixed Wood to mass (decision 2026-09-14) is retired: the unit gate withholds
+    # the volume source it withheld, and the mass source it let through.
+    vocab = [vocab_row("wood-unchar", "Wood", bw="reso-biot")]
+    units = [unit_row("wood-unchar", QUDT + "MegaJ")]
+    index = EfFlowIndex.from_tables([], vocab, include_uncharacterised=True, unit_rows=units)
+    pipeline = default_pipeline(index, {"wood, standing": "Wood"})
+    flow = BafuFlow("Wood, standing", "resources", "biotic", unit)
+    outcome = _decide(flow, pipeline.match(flow, None), index)
+    assert outcome == Unmatched(
+        "unit_mismatch",
+        f"BAFU unit {unit} vs EF reference unit megajoule for Wood; no fixed conversion",
+    )
+
+
+def test_decide_no_longer_knows_wood_when_the_flow_states_no_unit():
+    # an index built without unit relations: no gate, and no name table either
     vocab = [vocab_row("wood-unchar", "Wood", bw="reso-biot")]
     index = EfFlowIndex.from_tables([], vocab, include_uncharacterised=True)
     pipeline = default_pipeline(index, {"wood, standing": "Wood"})
     flow = BafuFlow("Wood, standing", "resources", "biotic", "m3")
-    match = pipeline.match(flow, None)
-    assert isinstance(match, Match)  # sanity: the alias resolves a real Match
-    outcome = _decide(flow, match, index)
-    assert outcome == Unmatched(
-        "unit_mismatch",
-        "EF Wood is counted by mass; no density convention converts m3 (decision 2026-09-14)",
-    )
-
-
-def test_decide_allows_a_wood_flow_reported_by_mass():
-    # the other half of the same alias: a kilogram source agrees with EF's own
-    # dimension for Wood, so it passes through untouched.
-    vocab = [vocab_row("wood-unchar", "Wood", bw="reso-biot")]
-    index = EfFlowIndex.from_tables([], vocab, include_uncharacterised=True)
-    pipeline = default_pipeline(index, {"wood, standing": "Wood"})
-    flow = BafuFlow("Wood, standing", "resources", "biotic", "kg")
-    match = pipeline.match(flow, None)
-    outcome = _decide(flow, match, index)
+    outcome = _decide(flow, pipeline.match(flow, None), index)
     assert isinstance(outcome, Match) and outcome.code == "wood-unchar"
 
 

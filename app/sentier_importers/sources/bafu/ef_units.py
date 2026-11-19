@@ -21,11 +21,11 @@ cubic meter, megajoule, m2, m2*a"), with the source-to-target factor made explic
 its returned ``conversion_factor`` instead of silently assumed 1.
 
 That canonicalisation is only safe when a fixed factor bridges every source unit onto
-one target dimension (water's density does); when it does not (EF's "Wood" is counted
-by mass, but BAFU also reports standing wood by volume, with no density convention
-anywhere in this codebase), decision 2026-09-14 withholds the wrong-dimension source
-instead of inventing one -- ``NOMENCLATURE_TARGET_DIMENSION``/
-``nomenclature_unit_mismatch``, consulted by ``mappings_biosphere_matched._decide``.
+one target dimension (water's density does). For EF's "Wood" none does, and decision
+2026-09-14 withheld its volume sources through a name table that fixed Wood to mass
+(``NOMENCLATURE_TARGET_DIMENSION``). The table is retired (2026-11-19): EF "Wood" is
+an energy resource that states megajoule, so the table contradicted the data, and
+the unit gate below withholds both BAFU spellings of wood, by volume and by mass.
 
 Stated units, 2026-11-19 (spec units-on-ef31-flows, step 5): an EF flow that states
 its unit (``EfFlow.stated_unit``, from the ``qudt:hasUnit`` relation of the ef-3.1
@@ -123,41 +123,6 @@ _NOMENCLATURE_TARGET_UNIT: dict[str, str] = {
     "energy": "megajoule",
     "volume-time": "m3y",
 }
-
-#: EF target-name -> the one physical dimension EF's own convention counts it in,
-#: consulted only for an uncharacterised nomenclature-package match (round 5, decision
-#: 2026-09-14): unlike water (a genuine, fixed mass -> volume density factor,
-#: ``_WATER_DENSITY_FACTOR``), a name here has NO valid cross-dimension conversion at
-#: all -- ``nomenclature_target_unit`` would otherwise happily canonicalise a
-#: cubic-meter source onto ``"cubic meter"`` right next to a kilogram source of the
-#: SAME EF flow canonicalised onto ``"kilogram"``, two different target units for one
-#: EF node with no way to reconcile them. "Wood" is the one such name today: EF counts
-#: it by mass, but BAFU also reports standing wood by volume (``m3``, a wood-density
-#: assumption this codebase does not carry anywhere else) -- decision 2026-09-14:
-#: withhold the wrong-dimension source (``unit_mismatch``) rather than invent one.
-NOMENCLATURE_TARGET_DIMENSION: dict[str, str] = {"Wood": "mass"}
-
-
-def nomenclature_unit_mismatch(flow: BafuFlow, ef_flow: EfFlow) -> str | None:
-    """The withholding detail when ``flow.unit``'s physical dimension disagrees with
-    ``NOMENCLATURE_TARGET_DIMENSION``'s entry for ``ef_flow.name``, or ``None`` when
-    ``ef_flow.name`` has no entry there at all, or the dimension agrees.
-
-    Consulted by ``mappings_biosphere_matched._decide`` for every match onto an
-    uncharacterised target, ahead of ``nomenclature_target_unit``: a name in this table
-    fixes the substance to one physical dimension, and a source outside it must be
-    withheld rather than silently canonicalised onto a target unit that does not
-    correspond to the same physical measurement at all (unlike the water density
-    special case, there is no fixed factor to bridge the two here).
-    """
-    dimension = NOMENCLATURE_TARGET_DIMENSION.get(ef_flow.name)
-    if dimension is None or _DIMENSION.get(flow.unit) == dimension:
-        return None
-    return (
-        f"EF {ef_flow.name} is counted by {dimension}; no density convention "
-        f"converts {flow.unit} (decision 2026-09-14)"
-    )
-
 
 #: Net calorific values, MJ per BAFU unit, keyed by (BAFU name, BAFU unit) so a
 #: conversion is never applied by accident. These are the resource-flow definitions the
@@ -303,11 +268,9 @@ def nomenclature_target_unit(flow: BafuFlow, ef_flow: EfFlow) -> tuple[str, floa
     no factor -- a spelling courtesy, not a claim of physical accuracy, same as the
     ``nomenclature_unit`` respelling this replaces.
 
-    Never called for a (``flow``, ``ef_flow``) pair ``nomenclature_unit_mismatch``
-    would refuse (round 5, decision 2026-09-14, e.g. a cubic-meter "Wood" source):
-    ``_decide`` withholds any such pair as ``unit_mismatch`` before an entry -- and
-    this function -- is ever reached for it, the same contract ``entry_for``'s own
-    ``ValueError`` documents for a characterised mismatch.
+    Only ever asked for a flow that states no unit (an index built without unit
+    relations): one that states its unit gets ``stated_target_unit`` instead, after
+    the unit gate.
     """
     dimension = _DIMENSION.get(flow.unit)
     if dimension is None:

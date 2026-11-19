@@ -54,9 +54,7 @@ def real_index():
     the full CF table) that each test building its own would multiply the whole
     suite's runtime for no benefit.
     """
-    return EfFlowIndex.from_files(
-        _REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True, read_ef_context=True
-    )
+    return EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
 
 
 CF = [

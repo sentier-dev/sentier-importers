@@ -70,7 +70,6 @@ from sentier_importers.sources.bafu.ef_units import (
     WATER_USE_METHOD,
     conversion_for,
     nomenclature_target_unit,
-    nomenclature_unit_mismatch,
     stated_target_unit,
     unit_agrees,
     unit_mismatch_detail,
@@ -381,13 +380,12 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
        b. uncharacterised (round 5, decision 2026-09-14): the nomenclature package
           (``mappings_biosphere_nomenclature``) uses ``nomenclature_target_unit``
           instead, at entry-building time, not here (an EF-convention unit per
-          physical dimension, with its own factor when the source differs). But a
-          name in ``ef_units.NOMENCLATURE_TARGET_DIMENSION`` (EF's "Wood", counted by
-          mass) has no such fixed factor for a wrong-dimension source at all (BAFU
-          also reports standing wood by volume) -- ``ef_units.
-          nomenclature_unit_mismatch`` withholds that pairing here, before
-          ``nomenclature_target_unit`` is ever asked to guess a conversion that does
-          not exist;
+          physical dimension, with its own factor when the source differs), or,
+          when the flow states its unit, ``stated_target_unit``. Nothing is withheld
+          here for it: a target that states a unit the source has no conversion onto
+          never becomes a ``Match`` (the unit gate, ``ef_units.unit_agrees``). The
+          name table that withheld a volume source of EF "Wood" here is retired
+          (2026-11-19, ``ef_units`` module docstring);
     4. name-only alignment (round 5, decision 2026-09-14, ``_name_only_match``): only
        when the pipeline came back with a plain ``no_ef_flow`` AND ``index`` is the
        inclusive one (``EfFlowIndex.includes_uncharacterised`` -- the nomenclature
@@ -442,8 +440,8 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
     (``matching/aliases.yaml``), decision (g) = the mine-gas energy content
     (``ef_units.ENERGY_CONTENT``/``ENERGY_CONTENT_NOTES``). Round 5, decision
     2026-09-14 = name-only alignment (rule 4 above, ``_name_only_match``) and the
-    nomenclature-package dimension-mismatch withholding (rule 3b above,
-    ``ef_units.nomenclature_unit_mismatch``).
+    nomenclature-package dimension-mismatch withholding (rule 3b above, retired
+    2026-11-19 for the unit gate).
     """
     if flow.name.startswith(_NON_FRESHWATER):
         return Unmatched(
@@ -476,16 +474,6 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
                     f"BAFU unit {flow.unit} vs EF reference unit {ef_unit} for "
                     f"{ef_flow.name}; no fixed conversion",
                 )
-        else:
-            # round 5, decision 2026-09-14: a name in
-            # ef_units.NOMENCLATURE_TARGET_DIMENSION fixes one physical dimension for
-            # the substance (EF's "Wood" is counted by mass); a source outside it has
-            # no fixed conversion the way water's density does, so it is withheld
-            # rather than guessed. Reached by either an ordinary pipeline Match (an
-            # alias landing on an uncharacterised target) or a name-only one.
-            mismatch = nomenclature_unit_mismatch(flow, ef_flow)
-            if mismatch is not None:
-                return Unmatched("unit_mismatch", mismatch)
         return outcome
     return _refine_unmatched(flow, outcome)
 
@@ -549,12 +537,6 @@ class BafuEfMatchedSource(Source):
             self.inputs["ef_cfs"].content,
             vocab_dir,
             include_uncharacterised=self.include_uncharacterised,
-            # 2026-11-19, spec units-on-ef31-flows step 6: the factorless flows of
-            # the Brightway Flows 1.1 part of the ef-3.1 release are targets of the
-            # name matcher too, now that it has a unit gate and a provisional
-            # fallback. Only read with include_uncharacterised (the nomenclature
-            # source); without it the flag changes nothing.
-            read_ef_context=True,
         )
         inputs = ParsedInputs(
             bafu=BafuFlowIndex.from_ecospold(records),
@@ -594,8 +576,10 @@ class BafuEfMatchedSource(Source):
         distinct cases, never both disclosed at once:
 
         - the target is a resource-bucket flow whose name is energy-carrier-shaped
-          (``ef_flow.bucket == "resource"`` and ``ef_index.UNCERTAIN_RESOURCE_NAME``
-          matches, decision (f)(2), 2026-09-13) -- the bw-context crosswalk cannot
+          and whose context came from the crosswalk (``ef_flow.context_uncertain``,
+          ``ef_flow.bucket == "resource"`` and ``ef_index.UNCERTAIN_RESOURCE_NAME``
+          matches, decision (f)(2), 2026-09-13; since 2026-11-19 a flow placed by
+          its exact leaf keeps its context) -- the bw-context crosswalk cannot
           reach an EF energy-resource branch at all (see
           ``ef_index.UNCERTAIN_RESOURCE_NAME``'s own docstring, which is specifically
           about the *resource* branch the crosswalk cannot reach; an emission-bucket
@@ -649,6 +633,7 @@ class BafuEfMatchedSource(Source):
 
         uncertain_energy = (
             not ef_flow.characterised
+            and ef_flow.context_uncertain  # placed by the crosswalk, not exactly
             and ef_flow.bucket == "resource"
             and bool(UNCERTAIN_RESOURCE_NAME.match(ef_flow.name))
         )

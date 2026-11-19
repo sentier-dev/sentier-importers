@@ -408,7 +408,6 @@ def _name_only_rows(tmp_path, vocab, flow):
         root / "characterization-factors.parquet",
         root / "terms",
         include_uncharacterised=True,
-        read_ef_context=True,
     )
     inputs = replace(inputs, index=index, pipeline=default_pipeline(index, load_aliases()))
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
@@ -576,7 +575,6 @@ def _stated_unit_rows(tmp_path, vocab, units, flow):
         root / "characterization-factors.parquet",
         root / "terms",
         include_uncharacterised=True,
-        read_ef_context=True,
     )
     inputs = replace(inputs, index=index, pipeline=default_pipeline(index, load_aliases()))
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
@@ -675,3 +673,22 @@ def test_the_source_reads_the_ef_context_of_a_factorless_flow(tmp_path):
     assert row["target"]["context"][-1] == "Non-renewable element resources from ground"
     # an exact path, not a crosswalk guess: nothing uncertain to disclose
     assert "uncertain" not in row["comment"]
+
+
+def test_an_energy_carrier_placed_by_its_exact_leaf_keeps_its_target_context(tmp_path):
+    # 2026-11-19: the context is omitted only when it came from the crosswalk, which
+    # cannot reach an energy leaf. With the vocab's own leaf it is exact and stated.
+    leaf = "Renewable energy resources from ground"
+    vocab = VOCAB + [
+        vocab_row("energy-geo-unchar", "Energy, geothermal, converted", bw="reso-grou", sub=leaf)
+    ]
+    source = BafuEfNomenclatureSource(_config_nomenclature(_stage(tmp_path, vocab=vocab)))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    inputs = source.parse(source.fetch(ctx))[0]["inputs"]
+    flow = BafuFlow("Energy, geothermal, converted", "resources", "in ground", "MJ")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    (row,) = [
+        r for r in source.transform([{"inputs": augmented}]) if r["source"]["name"] == flow.name
+    ]
+    assert row["target"]["context"] == ["Resources", "Resources from ground", leaf]
+    assert "not recoverable" not in row["comment"] and "uncertain" not in row["comment"]

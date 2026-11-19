@@ -6,9 +6,10 @@ packages leave uncovered, run the same ``matching.pipeline.default_pipeline``
 matching/decision chain the matched package uses, but over the EF flow index built
 with ``include_uncharacterised=True`` (``matching.ef_index.EfFlowIndex``): EF 3.1
 vocab rows that exist in sentier-vocab but carry no characterization factor in any EF
-3.1 method, placed by their exact ``ef-context`` notation where they have one
-(2026-11-19: the flows of the Brightway Flows 1.1 part of the release) and else via
-the Brightway context crosswalk (``matching.bw_context``), rather than the CF table.
+3.1 method, placed by the exact EF context their vocab term states (its
+``ef-context`` notation or its ``sub_compartment`` leaf, 2026-11-19) and only for a
+term that states neither via the Brightway context crosswalk
+(``matching.bw_context``), rather than the CF table.
 Every entry this source emits asserts a nomenclature alignment only -- impact is zero
 by construction, since the target carries no factor at all -- and applies after the
 curated, inferred and matched packages.

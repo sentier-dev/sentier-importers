@@ -48,13 +48,15 @@ def cf_row(code, name, context, method="ef-3.1:human-toxicity-cancer", value=1.0
     }
 
 
-def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE, bw=None, ef_context=None):
+def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE, bw=None, ef_context=None, sub=None):
     # alt=None models the ~4,051 real EF vocab rows whose alt_labels is null,
     # as distinct from alt=() (an explicit empty list).
     # bw models a row's one real "bw-context:<code>" additional_notations entry;
     # a row that has no bw-context notation (the common case) gets an empty list.
     # ef_context models the "ef-context:<path>" notation of the Brightway Flows 1.1
     # part of the release: the exact EF context path, levels joined by " / ".
+    # sub models the "sub_compartment" attribute: the leaf of the flow's exact EF
+    # context, as the ef-3.1 release states it on every flow term since 2026-11-19.
     notations = [f"bw-context:{bw}"] if bw is not None else []
     if ef_context is not None:
         notations.append(f"ef-context:{ef_context}")
@@ -65,15 +67,17 @@ def vocab_row(code, label, alt=(), cas=None, source=EF_SOURCE, bw=None, ef_conte
         "cas_number": cas,
         "source": source,
         "additional_notations": notations,
+        "sub_compartment": sub,
     }
 
 
 def term_row(row: dict) -> dict:
     """A flat ``vocab_row`` as a row of sentier-vocab's term layer."""
-    term = {k: v for k, v in row.items() if k != "cas_number"}
+    lifted = ("cas_number", "sub_compartment")
+    term = {k: v for k, v in row.items() if k not in lifted}
     term["type"] = "elementary-flow"
-    cas = row.get("cas_number")
-    term["attributes"] = json.dumps({"cas_number": cas}) if cas is not None else None
+    attributes = {k: row[k] for k in lifted if row.get(k) is not None}
+    term["attributes"] = json.dumps(attributes) if attributes else None
     return term
 
 

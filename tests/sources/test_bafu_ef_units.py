@@ -1,17 +1,16 @@
 import pytest
 from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.pipeline import Match
+from sentier_importers.sources.bafu import ef_units
 from sentier_importers.sources.bafu.ef_units import (
     _REGRESSION_INFERRED_ENERGY_CONTENT,
     ENERGY_CONTENT,
     ENERGY_CONTENT_NOTES,
-    NOMENCLATURE_TARGET_DIMENSION,
     STOICHIOMETRIC,
     STOICHIOMETRIC_NOTES,
     conversion_for,
     conversion_onto,
     nomenclature_target_unit,
-    nomenclature_unit_mismatch,
     stated_target_unit,
     unit_agrees,
     unit_conversion,
@@ -298,32 +297,6 @@ def test_conversion_for_returns_none_when_nothing_applies(tmp_path):
     assert conversion_for(flow, match, index) is None
 
 
-def test_nomenclature_target_dimension_has_exactly_the_one_wood_entry():
-    # hardcoded independently of the dict under test, same rationale as
-    # _ENERGY_CONTENT_CASES/_STOICHIOMETRIC_CASES above.
-    assert dict(NOMENCLATURE_TARGET_DIMENSION) == {"Wood": "mass"}
-
-
-def test_nomenclature_unit_mismatch_withholds_a_wrong_dimension_wood_source():
-    # round 5, decision 2026-09-14: EF counts "Wood" by mass; BAFU also reports
-    # standing wood by volume (m3), and no density convention bridges the two
-    # anywhere in this codebase (unlike water) -- the source must be withheld.
-    flow = BafuFlow("Wood, hard, standing", "resources", "in ground", "m3")
-    assert nomenclature_unit_mismatch(flow, _ef_flow("Wood")) == (
-        "EF Wood is counted by mass; no density convention converts m3 (decision 2026-09-14)"
-    )
-
-
-def test_nomenclature_unit_mismatch_allows_the_matching_dimension():
-    flow = BafuFlow("Wood, unspecified, standing/kg", "resources", "in ground", "kg")
-    assert nomenclature_unit_mismatch(flow, _ef_flow("Wood")) is None
-
-
-def test_nomenclature_unit_mismatch_ignores_a_name_outside_the_table():
-    flow = BafuFlow("Basalt", "resources", "in ground", "m3")
-    assert nomenclature_unit_mismatch(flow, _ef_flow("Basalt")) is None
-
-
 # --- the unit gate: a candidate that states a unit the source cannot be converted to
 
 
@@ -451,3 +424,14 @@ def test_unit_mismatch_detail_names_the_units_and_the_flows():
     assert unit_mismatch_detail(_source("kg", "Uranium"), flows) == (
         "BAFU unit kg vs EF reference unit kBq for Uranium Alpha; no fixed conversion"
     )
+
+
+def test_no_name_table_fixes_the_dimension_of_wood_any_more():
+    # NOMENCLATURE_TARGET_DIMENSION = {"Wood": "mass"} (decision 2026-09-14) is
+    # retired: EF "Wood" is an energy resource that states megajoule, so the table
+    # was contradicted by the data, and the unit gate withholds both BAFU spellings.
+    assert not hasattr(ef_units, "NOMENCLATURE_TARGET_DIMENSION")
+    assert not hasattr(ef_units, "nomenclature_unit_mismatch")
+    wood = _stated("megajoule", "Wood")
+    assert not unit_agrees(_source("m3", "Wood, hard, standing"), wood, _NO_INDEX)
+    assert not unit_agrees(_source("kg", "Wood, unspecified, standing/kg"), wood, _NO_INDEX)

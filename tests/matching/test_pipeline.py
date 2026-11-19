@@ -1299,7 +1299,6 @@ def _inclusive_pipeline(tmp_path, vocab, cf=()):
     index = EfFlowIndex.from_files(
         *write_ef_inputs(tmp_path, list(cf), vocab, shards=1),
         include_uncharacterised=True,
-        read_ef_context=True,
     )
     return default_pipeline(index, {})
 
@@ -1444,9 +1443,7 @@ _KG, _KBQ, _MJ = QUDT + "KiloGM", QUDT + "KiloBQ", QUDT + "MegaJ"
 def _unit_pipeline(tmp_path, vocab, units, cf=()):
     cf_path, terms_dir = write_ef_inputs(tmp_path, list(cf), vocab, shards=1)
     write_unit_relations(tmp_path, [unit_row(code, unit) for code, unit in units.items()])
-    index = EfFlowIndex.from_files(
-        cf_path, terms_dir, include_uncharacterised=True, read_ef_context=True
-    )
+    index = EfFlowIndex.from_files(cf_path, terms_dir, include_uncharacterised=True)
     return default_pipeline(index, {})
 
 
@@ -1657,7 +1654,6 @@ def test_an_alias_placed_exactly_replaces_an_earlier_fallback(tmp_path):
             [_CARBONATE[0], vocab_row("co3-fresh", "Carbonic acid, ion(2-)", bw="envi-wate-suwa")],
         ),
         include_uncharacterised=True,
-        read_ef_context=True,
     )
     pipe = default_pipeline(index, {"carbonate": "Carbonic acid, ion(2-)"})
     got = pipe.match(water("Carbonate", "lake"), None)

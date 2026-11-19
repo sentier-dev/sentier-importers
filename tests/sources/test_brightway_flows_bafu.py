@@ -72,7 +72,7 @@ VOCAB = [
     vocab_row("ef-toxic", "Toxic"),
     vocab_row("ef-thorium-k", "Thorium-232"),
     # only an ef-context notation, like the Brightway Flows 1.1 part of the ef-3.1
-    # release: these sources read it (read_ef_context=True), our own matcher does not
+    # release
     vocab_row("ef-borax", "Borax", cas=BORAX_CAS, ef_context=AIR_UNSPEC),
     vocab_row("ef-thorium", "Thorium-232", bw="envi-air-unkn"),
     vocab_row("ef-long", "Longterm", bw="envi-air-unkn"),

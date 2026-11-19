@@ -82,10 +82,7 @@ class BafuEfCoverageSource(BafuEfMatchedSource):
         inputs: ParsedInputs = record["inputs"]
         vocab_dir = fetch_mod.local_path(self.config.inputs.get(_VOCAB_DIR), _VOCAB_DIR)
         inclusive_index = EfFlowIndex.from_bytes(
-            self.inputs["ef_cfs"].content,
-            vocab_dir,
-            include_uncharacterised=True,
-            read_ef_context=True,  # as the nomenclature source does (2026-11-19)
+            self.inputs["ef_cfs"].content, vocab_dir, include_uncharacterised=True
         )
         # round 6, decision 2026-09-14: this is the one place the fullest (inclusive)
         # index gets built for a full pipeline run, so it is where its own naming
