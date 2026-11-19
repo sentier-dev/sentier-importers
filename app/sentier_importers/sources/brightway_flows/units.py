@@ -17,16 +17,15 @@ UNIT_IRI: dict[str, str] = {
     "M2": QUDT + "M2",
     "M3": QUDT + "M3",
     "MegaJ": QUDT + "MegaJ",
+    # The ISO standard cubic metre (15 degrees Celsius, 1 atm): QUDT has it
+    # (http://qudt.org/vocab/unit/SCM_1ATM_15DEG_C_ISO answered 200 on 2026-11-19).
+    "SCM_1ATM_15DEG_C_ISO": QUDT + "SCM_1ATM_15DEG_C_ISO",
     # QUDT has no area-time or volume-time unit (as in bafu.units):
     "M2-YR": SENTIER + "M2-YR",
     "M3-YR": SENTIER + "M3-YR",
-    # Not established as QUDT units from what the DdS repos hold (2026-11-19):
-    # Sentier's own units scheme defines mass-time itself (KiloGM-SEC, KiloGM-DAY),
-    # and the QUDT standard cubic metre it carries (SCM) is at 0 degrees Celsius,
-    # not at the 15 degrees of this one. Both are sentier-core unit terms until a
-    # QUDT IRI is confirmed.
+    # QUDT has no mass-time unit of this kind
+    # (http://qudt.org/vocab/unit/KiloGM-YR answered 404 on 2026-11-19):
     "KiloGM-YR": SENTIER + "KiloGM-YR",
-    "SCM_1ATM_15DEG_C_ISO": SENTIER + "SCM_1ATM_15DEG_C_ISO",
 }
 
 

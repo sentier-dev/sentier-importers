@@ -116,5 +116,6 @@ def test_seed_defines_every_bafu_and_ef_flow_unit_that_qudt_lacks(tmp_path):
     assert needed == set(unit_terms)
     assert unit_terms[bafu_units.SENTIER + "M2-YR"]["notation"] == "m2a"
     assert unit_terms[bafu_units.SENTIER + "KiloGM-YR"]["notation"] == "kga"
-    assert unit_terms[bafu_units.SENTIER + "SCM_1ATM_15DEG_C_ISO"]["notation"] == "sm3"
+    # QUDT has the ISO standard cubic metre (checked 2026-11-19): not a term of ours
+    assert bafu_units.SENTIER + "SCM_1ATM_15DEG_C_ISO" not in unit_terms
     assert len({t["notation"] for t in unit_terms.values()}) == len(unit_terms)

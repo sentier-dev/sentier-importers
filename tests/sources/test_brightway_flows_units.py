@@ -8,13 +8,13 @@ QUDT = "http://qudt.org/vocab/unit/"
 SENTIER = "https://vocab.sentier.dev/units/unit/"
 
 
-@pytest.mark.parametrize("code", ["KiloGM", "KiloBQ", "M2", "M3", "MegaJ"])
+@pytest.mark.parametrize("code", ["KiloGM", "KiloBQ", "M2", "M3", "MegaJ", "SCM_1ATM_15DEG_C_ISO"])
 def test_a_unit_qudt_has_is_its_qudt_iri(code):
     assert units.unit_iri(code) == QUDT + code
 
 
-@pytest.mark.parametrize("code", ["M2-YR", "M3-YR", "KiloGM-YR", "SCM_1ATM_15DEG_C_ISO"])
-def test_a_unit_qudt_is_not_known_to_have_is_a_sentier_core_unit(code):
+@pytest.mark.parametrize("code", ["M2-YR", "M3-YR", "KiloGM-YR"])
+def test_a_unit_qudt_lacks_is_a_sentier_core_unit(code):
     assert units.unit_iri(code) == SENTIER + code
 
 
