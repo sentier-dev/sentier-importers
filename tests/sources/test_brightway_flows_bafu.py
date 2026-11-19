@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import MissingInputError, ValidationError
+from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.matching.ef_index import LabelDefect
 from sentier_importers.sources.bafu.ecospold import flow_id
@@ -456,5 +456,5 @@ def test_an_undeclared_input_is_a_missing_input(tmp_path):
     del cfg.inputs["nomenclature"]
     probe = _Probe(cfg)
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
-    with pytest.raises(MissingInputError, match="nomenclature"):
+    with pytest.raises(RuntimeError, match="nomenclature"):
         probe.parse(probe.fetch(ctx))

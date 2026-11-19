@@ -23,7 +23,7 @@ from dataclasses import dataclass
 import orjson
 from sentier_importers.core import fetch as fetch_mod
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import MissingInputError, ValidationError
+from sentier_importers.core.errors import ValidationError
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records
 from sentier_importers.matching.ef_index import (
@@ -328,7 +328,7 @@ class BafuBrightwayFlowsBase(Source):
     def parse(self, raw: RawData) -> Records:
         missing = [name for name in _REQUIRED if name not in self.inputs]
         if missing:
-            raise MissingInputError(
+            raise RuntimeError(
                 f"inputs {missing} not fetched: the registry block must declare "
                 f"{list(_REQUIRED)}"
             )
