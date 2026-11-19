@@ -9,9 +9,10 @@
 - ``BafuBrightwayFlowsReviewSource``: ``brightway_flows_review.json``, everything the
   other two did not apply, with the reason. Its ``kind`` is ``new_link_withheld``
   (an unmapped flow whose link package 5 does not take), ``theirs_not_usable`` (a
-  mapped flow whose link fails a rule), ``score_changing_retarget`` (their target
-  scores differently from ours) or ``retarget_withheld`` (no factor differs, but
-  the two sides convert the amount differently).
+  mapped flow whose link fails a rule and whose target is not the one we use),
+  ``score_changing_retarget`` (their target scores differently from ours) or
+  ``retarget_withheld`` (no factor differs, but the two sides convert the amount
+  differently, or our entry names no target code to compare).
 """
 
 from __future__ import annotations
@@ -30,7 +31,8 @@ from sentier_importers.sources.brightway_flows.bafu import (
 from sentier_importers.sources.brightway_flows.factors import compare
 
 #: ``retarget`` kinds that mean the two EF flows score differently; the other kinds
-#: (``unit_differs``) hold a retarget back although no factor differs.
+#: (``unit_differs``, ``ours_without_code``) hold a retarget back although no factor
+#: is known to differ.
 _FACTOR_KINDS = frozenset({"differ", "theirs_zero", "ours_zero"})
 
 
@@ -48,6 +50,8 @@ def _theirs(decision: Decision) -> Record | None:
         return None
     record: Record = {"code": decision.link.target_id, "match": decision.link.match}
     if decision.consensus is not None:
+        # the live flow, which a redirected link target is not
+        record["code"] = decision.consensus.identifier
         record["name"] = decision.consensus.label
         record["context"] = decision.consensus.context_code
         record["in_ef"] = decision.consensus.is_ef
@@ -109,6 +113,9 @@ class BafuBrightwayFlowsReviewSource(BafuBrightwayFlowsBase):
             package, entry = mapped
             row.update(package=package, ours=entry["target"])
             if decision.reason is not None:
+                theirs = decision.consensus.identifier if decision.consensus else None
+                if theirs is not None and theirs == entry["target"].get("code"):
+                    return None  # unusable, but it names our own target: nothing to decide
                 row.update(kind="theirs_not_usable", reason=decision.reason)
             else:
                 _, kind = retarget(entry, state)

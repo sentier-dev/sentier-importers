@@ -1,8 +1,10 @@
 import json
+import math
 from dataclasses import replace
 
 import pytest
 from sentier_importers.core.context import RunContext
+from sentier_importers.core.errors import MissingInputError, ValidationError
 from sentier_importers.core.source import SourceConfig
 from sentier_importers.matching.ef_index import LabelDefect
 from sentier_importers.sources.bafu.ecospold import flow_id
@@ -14,6 +16,8 @@ from tests.sources.brightway_flows_fixture import document, flow, gz, link
 
 AIR = ["emissions to air", "unspecified"]
 AIR_LT = ["emissions to air", "low. pop., long-term"]
+WATER_LT = ["emissions to water", "groundwater, long-term"]
+AIR_LT_PATH = "Emissions / Emissions to air / Emissions to air, unspecified (long-term)"
 TOX = "ef-3.1:human-toxicity-cancer"
 RAD = "ef-3.1:ionising-radiation-human-health"
 
@@ -38,6 +42,12 @@ HEXANE, BROAD, LONG = src("Hexane"), src("Broad"), src("Longterm", AIR_LT)
 THORIUM, TOXIC, ODD = src("Thorium-232", unit="Bq"), src("Toxic"), src("Odd", unit="Bq")
 #: Linked by Brightway Flows but outside the coverage universe: decision-rule cases only.
 GHOST, UNPLACED, SCALED = src("Ghost"), src("Unplaced"), src("Scaled")
+#: Long-term sources: onto a long-term EF leaf, and onto targets whose index context is
+#: uncertain (the Brightway Flows context code then says whether it is long-term).
+LONG_OK, DEEP = src("Longok", AIR_LT), src("Deep", WATER_LT)
+SHALLOW, DRIFT = src("Shallow", WATER_LT), src("Drift", AIR_LT)
+ZERO, NOMULT, REDIR = src("Zero"), src("Nomult"), src("Redir")
+UNIVERSE = [AMMONIA, BENZENE, BORAX, HEXANE, BROAD, LONG, THORIUM, TOXIC, ODD]
 BORAX_CAS = "1303-96-4"
 
 #: code, name, context, method, value; a row with value None is a factorless vocab term
@@ -48,6 +58,8 @@ CF = [
     cf_row("ef-benzene-other", "benzene", AIR_RURAL, TOX, 9.0),
     cf_row("ef-toxic", "toxic", AIR_UNSPEC, TOX, 4.0),
     cf_row("ef-thorium-k", "thorium-232", AIR_UNSPEC, RAD, 1.0),
+    cf_row("ef-zero", "zero", AIR_UNSPEC, TOX, 0.0),
+    cf_row("ef-longok", "longok", AIR_LT_PATH, TOX, 3.0),
 ]
 VOCAB = [
     vocab_row("ef-ammonia", "Ammonia"),
@@ -61,28 +73,51 @@ VOCAB = [
     vocab_row("ef-long", "Longterm", bw="envi-air-unkn"),
     # factorless and without a bw-context notation: listed in the vocab, never indexed
     vocab_row("ef-unplaced", "Unplaced"),
+    vocab_row("ef-zero", "Zero"),
+    vocab_row("ef-longok", "Longok"),
+    # ambiguous bw-context codes: the index marks these contexts uncertain
+    vocab_row("ef-deep", "Deep", bw="envi-wate-unkn"),
+    vocab_row("ef-shallow", "Shallow", bw="envi-wate-unkn"),
+    vocab_row("ef-drift", "Drift", bw="envi-air-grle-ru10pesq"),
 ]
 #: Unit symbol of the consensus flows that are not in kg (a factorless target takes
 #: its unit from the Brightway Flows flow, the index has none for it).
 BW_UNIT = {"ef-thorium": "kBq", "ef-thorium-k": "kBq"}
+#: Context code of the consensus flows that are not on ``envi-air-unkn``.
+BW_CONTEXT = {
+    "ef-deep": "envi-wate-lote",
+    "ef-shallow": "envi-wate-unkn",
+    "ef-drift": "envi-air-grle-ru10pesq",
+}
 
 
-def bw_document():
+def bw_document(merged=()):
+    """``merged``: ``(old, new)`` EF codes; Brightway Flows lists only ``new`` and links
+    ``old`` to it in its ef-3.1 correspondence (an EF flow merged into another one)."""
+
     def to(source, target, **kw):
         return link("bafu/2026-v1", their_id(source), target, **kw)
 
+    gone = {old for old, _ in merged}
     return document(
         flows=[
-            flow(code, r["pref_label"], unit=BW_UNIT.get(code, "kg"))
+            flow(
+                code,
+                r["pref_label"],
+                context_code=BW_CONTEXT.get(code, "envi-air-unkn"),
+                unit=BW_UNIT.get(code, "kg"),
+            )
             for r in VOCAB
             for code in [r["iri"].rsplit("/", 1)[-1]]
+            if code not in gone
         ]
         + [
             flow("add-hexane", "Hexane", source="bafu algorithm addition"),
             flow("ef-not-in-vocab", "Ghost"),
         ],
+        redirects=[("old-borax", "ef-borax")],
         links_by_list={
-            "ef-3.1": [],
+            "ef-3.1": [link("ef-3.1", old, new) for old, new in merged],
             "bafu-2026-v1": [
                 to(AMMONIA, "ef-ammonia-twin"),
                 to(BENZENE, "ef-benzene-other"),
@@ -96,6 +131,13 @@ def bw_document():
                 to(GHOST, "ef-not-in-vocab"),
                 to(UNPLACED, "ef-unplaced"),
                 to(SCALED, "ef-ammonia-twin", multiplier=2.0, basis="unit-table"),
+                to(LONG_OK, "ef-longok"),
+                to(DEEP, "ef-deep"),
+                to(SHALLOW, "ef-shallow"),
+                to(DRIFT, "ef-drift"),
+                to(ZERO, "ef-zero"),
+                to(NOMULT, "ef-ammonia-twin", multiplier=0, basis="unit-table"),
+                to(REDIR, "old-borax", match="broadMatch"),
             ],
         },
     )
@@ -113,14 +155,19 @@ def entry(source, code, name, unit="kilogram"):
     }
 
 
-def stage(tmp_path, curated=(), doc=None):
+def stage(tmp_path, curated=(), doc=None, universe=UNIVERSE, inferred=()):
     """Write the Brightway Flows file, the EF inputs, coverage.json and four packages."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "bw.json.gz").write_bytes(gz(doc or bw_document()))
     write_ef_inputs(tmp_path, CF, VOCAB)
-    universe = [AMMONIA, BENZENE, BORAX, HEXANE, BROAD, LONG, THORIUM, TOXIC, ODD]
     coverage = {"name": "c", "version": "0", "coverage": [{"source": s} for s in universe]}
     (tmp_path / "coverage.json").write_text(json.dumps(coverage))
-    packages = {"curated": list(curated), "inferred": [], "matched": [], "nomenclature": []}
+    packages = {
+        "curated": list(curated),
+        "inferred": list(inferred),
+        "matched": [],
+        "nomenclature": [],
+    }
     for name, entries in packages.items():
         (tmp_path / f"{name}.json").write_text(
             json.dumps({"name": name, "version": "0.1.0", "replace": entries})
@@ -160,8 +207,8 @@ class _Probe(bafu.BafuBrightwayFlowsBase):
         return records
 
 
-def state_for(tmp_path, curated=()):
-    probe = _Probe(config(stage(tmp_path, curated)))
+def state_for(tmp_path, curated=(), **stage_kw):
+    probe = _Probe(config(stage(tmp_path, curated, **stage_kw)))
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     return probe.parse(probe.fetch(ctx))[0]["state"]
 
@@ -183,6 +230,11 @@ def test_state_knows_which_flows_the_four_packages_map(tmp_path):
         (GHOST, "target_not_in_vocab"),
         (UNPLACED, "target_not_indexed"),
         (BORAX, None),
+        (LONG_OK, None),  # a long-term source onto a long-term EF leaf
+        # the index context is uncertain: the Brightway Flows context code decides
+        (DEEP, None),
+        (SHALLOW, "long_term_onto_immediate"),
+        (DRIFT, "long_term_onto_immediate"),
     ],
 )
 def test_decide_gives_the_reason_a_link_is_not_used(tmp_path, source, reason):
@@ -270,14 +322,139 @@ def test_two_factorless_flows_take_their_target_and_say_so(tmp_path):
 
 
 def test_identical_factors_with_another_conversion_leave_the_entry_alone(tmp_path):
+    state = state_for(tmp_path)
     ours = entry(SCALED, "ef-ammonia", "ammonia")
-    new, kind = bafu.retarget(ours, state_for(tmp_path, curated=[ours]))
+    new, kind = bafu.retarget(ours, state)
     assert new == ours and kind == "unit_differs"
     scaled = {**ours, "conversion_factor": 2.0}
-    new, kind = bafu.retarget(scaled, state_for(tmp_path, curated=[scaled]))
+    new, kind = bafu.retarget(scaled, state)
     assert kind == "retargeted" and new["conversion_factor"] == 2.0
 
 
 def test_a_link_we_cannot_use_never_retargets(tmp_path):
     ours = entry(BROAD, "ef-ammonia", "ammonia")
     assert bafu.retarget(ours, state_for(tmp_path, curated=[ours])) == (ours, None)
+
+
+UNCERTAIN = "EF context inferred from the Brightway context code, branch/sub-compartment uncertain"
+
+
+def test_an_uncertain_target_context_is_left_out_and_disclosed(tmp_path):
+    state = state_for(tmp_path)
+    made, reason = bafu.package_entry(DEEP, state)
+    assert reason is None and "context" not in made["target"]
+    assert UNCERTAIN in made["comment"]
+    certain, _ = bafu.package_entry(BORAX, state)
+    assert "context" in certain["target"] and UNCERTAIN not in certain["comment"]
+
+
+def test_a_retarget_onto_an_uncertain_context_drops_ours_and_discloses_it(tmp_path):
+    ours = entry(DEEP, "ef-long", "Longterm")
+    new, kind = bafu.retarget(ours, state_for(tmp_path))
+    assert kind == "retargeted" and new["target"]["code"] == "ef-deep"
+    assert "context" not in new["target"]
+    assert new["comment"].count(UNCERTAIN) == 1
+    again, _ = bafu.retarget({**ours, "comment": UNCERTAIN}, state_for(tmp_path))
+    assert again["comment"].count(UNCERTAIN) == 1  # never said twice
+
+
+def test_a_target_whose_factors_are_all_zero_ships_and_says_so(tmp_path):
+    made, reason = bafu.package_entry(ZERO, state_for(tmp_path))
+    assert reason is None and made["target"]["code"] == "ef-zero"
+    assert made["target"]["unit"] == "kilogram"
+    assert "all factors are zero in EF 3.1" in made["comment"]
+    assert "no factor in any method" not in made["comment"]
+
+
+@pytest.mark.parametrize(
+    "source_unit,target_unit,multiplier,expected",
+    [
+        ("kg", "kilogram", None, (None, None)),
+        ("kg", "kilogram", 1.0, (None, None)),  # a multiplier of one is no conversion
+        ("Bq", "kBq", 0.001, (0.001, None)),
+        ("Bq", "kBq", None, (None, "unit_mismatch")),  # other scale, no multiplier
+        ("Bq", "kBq", 1000.0, (None, "unit_mismatch")),  # contradicts the unit scale
+        ("kWh", "megajoule", 3.6, (3.6, None)),
+        ("kg", "cubic meter", 0.001, (0.001, None)),  # dimension crossing, their multiplier
+        ("kg", "cubic meter", None, (None, "unit_mismatch")),
+        ("kg", "cubic meter", 0, (None, "unit_mismatch")),
+        ("Bq", "kBq", 0, (None, "unit_mismatch")),
+        ("kg", "cubic meter", -0.001, (None, "unit_mismatch")),
+        ("kg", "kilogram", -1.0, (None, "unit_mismatch")),
+        ("kg", "cubic meter", math.nan, (None, "unit_mismatch")),
+        ("kg", "cubic meter", math.inf, (None, "unit_mismatch")),
+        ("tkm", "kilogram", None, (None, "unit_unknown")),
+        ("kg", "sm3", 1.0, (None, "unit_unknown")),
+        ("", "kilogram", None, (None, "unit_unknown")),
+    ],
+)
+def test_conversion(source_unit, target_unit, multiplier, expected):
+    assert bafu._conversion(source_unit, target_unit, multiplier) == expected
+
+
+def test_a_multiplier_of_zero_is_not_read_as_one(tmp_path):
+    ours = entry(NOMULT, "ef-ammonia", "ammonia")
+    assert bafu.retarget(ours, state_for(tmp_path)) == (ours, "unit_differs")
+
+
+def test_their_factorless_target_against_our_scoring_one_is_left_alone(tmp_path):
+    ours = entry(BORAX, "ef-toxic", "toxic")
+    assert bafu.retarget(ours, state_for(tmp_path)) == (ours, "theirs_zero")
+
+
+def test_their_scoring_target_against_our_factorless_one_is_left_alone(tmp_path):
+    ours = entry(TOXIC, "ef-borax", "Borax")
+    assert bafu.retarget(ours, state_for(tmp_path)) == (ours, "ours_zero")
+
+
+def test_zero_factors_and_no_factors_count_as_identical(tmp_path):
+    ours = entry(BORAX, "ef-zero", "zero")
+    new, kind = bafu.retarget(ours, state_for(tmp_path))
+    assert kind == "retargeted" and new["target"]["code"] == "ef-borax"
+    assert "neither flow carries a factor" in new["comment"]
+
+
+def test_an_entry_without_target_code_is_reported_not_skipped(tmp_path):
+    ours = {"source": AMMONIA, "target": {"name": "ammonia", "unit": "kilogram"}}
+    assert bafu.retarget(ours, state_for(tmp_path)) == (ours, "ours_without_code")
+    unusable = {"source": BROAD, "target": {"name": "ammonia"}}
+    assert bafu.retarget(unusable, state_for(tmp_path)) == (unusable, None)
+
+
+def test_a_merged_ef_flow_with_identical_factors_takes_their_code(tmp_path):
+    doc = bw_document(merged=[("ef-ammonia", "ef-ammonia-twin")])
+    ours = entry(AMMONIA, "ef-ammonia", "ammonia")
+    new, kind = bafu.retarget(ours, state_for(tmp_path, doc=doc))
+    assert kind == "retargeted" and new["target"]["code"] == "ef-ammonia-twin"
+
+
+def test_a_merged_ef_flow_with_other_factors_is_a_disagreement(tmp_path):
+    doc = bw_document(merged=[("ef-benzene", "ef-benzene-other")])
+    ours = entry(BENZENE, "ef-benzene", "benzene")
+    assert bafu.retarget(ours, state_for(tmp_path, doc=doc)) == (ours, "differ")
+
+
+def test_a_source_mapped_by_two_packages_is_refused(tmp_path):
+    ours = entry(AMMONIA, "ef-ammonia", "ammonia")
+    with pytest.raises(ValidationError, match="more than one package"):
+        state_for(tmp_path, curated=[ours], inferred=[ours])
+
+
+def test_a_package_entry_outside_the_coverage_universe_is_refused(tmp_path):
+    with pytest.raises(ValidationError, match="not in coverage"):
+        state_for(tmp_path, curated=[entry(GHOST, "ef-ammonia", "ammonia")])
+
+
+def test_a_source_record_that_differs_from_coverage_is_refused(tmp_path):
+    other = {**AMMONIA, "unit": "g"}
+    with pytest.raises(ValidationError, match="differs from its coverage record"):
+        state_for(tmp_path, curated=[entry(other, "ef-ammonia", "ammonia")])
+
+
+def test_an_undeclared_input_is_a_missing_input(tmp_path):
+    cfg = config(stage(tmp_path))
+    del cfg.inputs["nomenclature"]
+    probe = _Probe(cfg)
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    with pytest.raises(MissingInputError, match="nomenclature"):
+        probe.parse(probe.fetch(ctx))
