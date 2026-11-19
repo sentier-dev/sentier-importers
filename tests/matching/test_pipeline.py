@@ -1383,3 +1383,48 @@ def test_long_term_source_still_lands_on_the_long_term_leaf(tmp_path, flow, cont
     got = _inclusive_pipeline(tmp_path, vocab).match(flow, None)
     assert got.code == code
     assert got.placement == Placement.EXACT.value
+
+
+# --- relaxed placement: no arbitrary leaf for an "unspecified" source (2026-11-19) --
+
+
+def test_relaxed_placement_declines_an_alphabetical_leaf_for_an_unspecified_source(tmp_path):
+    # the same two leafs "high. pop." takes the alphabetically first of above. An
+    # "unspecified" source has its own bucket-level leaf, EF does not have the name
+    # there, and picking "air, indoor" for it would be arbitrary: declined.
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], _THREE_LEAF_NO_UNSPECIFIED_VOCAB, shards=1),
+        include_uncharacterised=True,
+    )
+    got = default_pipeline(index, {}).match(air("Widget3", "unspecified"), None)
+    assert got == Unmatched(
+        reason="sub_compartment_absent",
+        detail="EF has widget3 only in: emissions to air, indoor, emissions to "
+        "non-urban air or from high stacks",
+    )
+
+
+def test_relaxed_placement_still_uses_a_sole_leaf_for_an_unspecified_source(tmp_path):
+    # one leaf only: nothing is chosen between, so it is still used outright
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], _WIDGET_UNCHAR_VOCAB, shards=1),
+        include_uncharacterised=True,
+    )
+    got = default_pipeline(index, {}).match(air("Widget", "unspecified"), None)
+    assert got.code == "widget-a"
+    assert got.placement == Placement.NOMENCLATURE.value
+
+
+def test_relaxed_placement_decline_leaves_the_default_leaf_its_turn(tmp_path):
+    # water / unspecified with factorless namesakes on fresh and sea water: the
+    # relaxed placement declines, DEFAULT_LEAF then places it on fresh water.
+    vocab = [
+        vocab_row("widget-fresh", "Widget", bw="envi-wate-suwa"),
+        vocab_row("widget-sea", "Widget", bw="envi-wate-ocea"),
+    ]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [], vocab, shards=1), include_uncharacterised=True
+    )
+    got = default_pipeline(index, {}).match(water("Widget", "unspecified"), None)
+    assert got.code == "widget-fresh"
+    assert got.placement == Placement.DEFAULT_LEAF.value

@@ -44,7 +44,13 @@ long-term, among which the bucket-level unspecified (long-term) leaf
 (``unspecified_leaf`` with ``long_term=True``) is preferred, else the alphabetically
 first eligible one; a non-long-term source is unrestricted, preferring the plain
 bucket-level unspecified leaf (``long_term=False``), else the alphabetically first
-candidate leaf. The caveat names every leaf the name was found in when there is more
+candidate leaf. One exception (2026-11-19): an ``unspecified`` emission source whose
+candidates sit on several leafs, none of them its own bucket-level unspecified leaf,
+is not given the alphabetically first one. That pick would be arbitrary (BAFU
+``Benzal chloride`` to air, unspecified would land on "lower stratosphere and upper
+troposphere"), so the placement is declined and the flow goes on to DEFAULT_LEAF or
+ends ``sub_compartment_absent``; a sole candidate leaf is still used. The caveat
+names every leaf the name was found in when there is more
 than one, and which one was picked, so it never overstates "only" when several exist.
 This never fires for the matched package's (biosphere-3-matched) characterised-only
 index: that index carries no uncharacterised flow at all, so the ``not characterised``
@@ -431,6 +437,18 @@ class MatchPipeline:
                 (p for p in preferred if p in eligible_leafs),
                 eligible_leafs[0] if eligible_leafs else None,
             )
+            if (
+                effective_subcategory == "unspecified"
+                and preferred[0] is not None
+                and leaf != preferred[0]
+                and len(eligible_leafs) > 1
+            ):
+                # 2026-11-19: an "unspecified" emission has its own bucket-level
+                # leaf. When EF lacks the name there and offers several other
+                # leafs, the alphabetically first would be arbitrary (BAFU Benzal
+                # chloride to air, unspecified landed on "lower stratosphere and
+                # upper troposphere"): declined. A sole leaf is still used.
+                leaf = None
             if leaf is not None:
                 if len(leafs) == 1:
                     nomenclature_caveat = (
@@ -452,8 +470,9 @@ class MatchPipeline:
                     Placement.NOMENCLATURE,
                     (nomenclature_caveat,),
                 )
-            # no candidate leaf agrees with the source on long-term-ness: decline
-            # this placement and fall through to sub_compartment_absent below.
+            # no candidate leaf agrees with the source on long-term-ness, or an
+            # "unspecified" source would get an arbitrary leaf: decline this
+            # placement and fall through (DEFAULT_LEAF, then sub_compartment_absent).
         # Ordered after NOMENCLATURE, not before: test_relaxed_placement_falls_back_
         # to_the_alphabetically_first_leaf pins NOMENCLATURE's own alphabetical-leaf
         # fallback among uncharacterised candidates, and DEFAULT_LEAF
