@@ -47,6 +47,8 @@ GHOST, UNPLACED, SCALED = src("Ghost"), src("Unplaced"), src("Scaled")
 LONG_OK, DEEP = src("Longok", AIR_LT), src("Deep", WATER_LT)
 SHALLOW, DRIFT = src("Shallow", WATER_LT), src("Drift", AIR_LT)
 ZERO, NOMULT, REDIR = src("Zero"), src("Nomult"), src("Redir")
+#: BAFU water to air in kg: ours goes to the m3 flow with a conversion, theirs to the kg one.
+VAPOUR = src("Vapour")
 UNIVERSE = [AMMONIA, BENZENE, BORAX, HEXANE, BROAD, LONG, THORIUM, TOXIC, ODD]
 BORAX_CAS = "1303-96-4"
 
@@ -81,10 +83,13 @@ VOCAB = [
     vocab_row("ef-deep", "Deep", bw="envi-wate-unkn"),
     vocab_row("ef-shallow", "Shallow", bw="envi-wate-unkn"),
     vocab_row("ef-drift", "Drift", bw="envi-air-grle-ru10pesq"),
+    # EF has the same factorless flow once per unit
+    vocab_row("ef-vapour-m3", "Water vapour", bw="envi-air-unkn"),
+    vocab_row("ef-vapour-kg", "Water vapour", bw="envi-air-unkn"),
 ]
 #: Unit symbol of the consensus flows that are not in kg (a factorless target takes
 #: its unit from the Brightway Flows flow, the index has none for it).
-BW_UNIT = {"ef-thorium": "kBq", "ef-thorium-k": "kBq"}
+BW_UNIT = {"ef-thorium": "kBq", "ef-thorium-k": "kBq", "ef-vapour-m3": "m3"}
 #: Context code of the consensus flows that are not on ``envi-air-unkn``.
 BW_CONTEXT = {
     "ef-deep": "envi-wate-lote",
@@ -138,6 +143,7 @@ def bw_document(merged=()):
                 to(SHALLOW, "ef-shallow"),
                 to(DRIFT, "ef-drift"),
                 to(ZERO, "ef-zero"),
+                to(VAPOUR, "ef-vapour-kg"),
                 to(NOMULT, "ef-ammonia-twin", multiplier=0, basis="unit-table"),
                 to(REDIR, "old-borax", match="broadMatch"),
             ],
@@ -460,3 +466,85 @@ def test_an_undeclared_input_is_a_missing_input(tmp_path):
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
     with pytest.raises(RuntimeError, match="nomenclature"):
         probe.parse(probe.fetch(ctx))
+
+
+ALIGNED_UNIT = "target and unit aligned with brightway-flows 1.1.0 (neither flow carries a factor)"
+NO_FACTOR = "uncharacterised in EF 3.1: no factor in any method"
+
+
+def vapour_entry():
+    """Ours, as the nomenclature package writes it: the m3 flow, kg rescaled to m3."""
+    return {
+        **entry(VAPOUR, "ef-vapour-m3", "Water vapour", unit="cubic meter"),
+        "conversion_factor": 0.001,
+        "comment": "target unit is the EF convention for volume; amount rescaled by 0.001",
+    }
+
+
+def test_factorless_flows_with_another_conversion_take_their_unit(tmp_path):
+    ours = vapour_entry()
+    new, kind = bafu.retarget(ours, state_for(tmp_path))
+    assert kind == "retargeted"
+    assert new["source"] == VAPOUR
+    assert new["target"]["code"] == "ef-vapour-kg" and new["target"]["unit"] == "kilogram"
+    assert new["target"]["context"] == [
+        "Emissions",
+        "Emissions to air",
+        "Emissions to air, unspecified",
+    ]
+    assert "conversion_factor" not in new
+    # the old comment states a convention and a rescaling that no longer hold
+    assert new["comment"] == f"{NO_FACTOR}; {ALIGNED_UNIT}"
+    assert ours["conversion_factor"] == 0.001 and ours["target"]["unit"] == "cubic meter"
+
+
+def test_a_unit_aligned_entry_is_left_alone_the_next_time(tmp_path):
+    state = state_for(tmp_path)
+    new, _ = bafu.retarget(vapour_entry(), state)
+    assert bafu.retarget(new, state) == (new, None)
+
+
+def test_their_multiplier_replaces_our_conversion_when_nothing_scores(tmp_path):
+    ours = {**entry(THORIUM, "ef-long", "Longterm"), "comment": "old note"}
+    new, kind = bafu.retarget(ours, state_for(tmp_path))
+    assert kind == "retargeted"
+    assert new["target"]["code"] == "ef-thorium" and new["target"]["unit"] == "kBq"
+    assert new["conversion_factor"] == 0.001
+    assert new["comment"] == (
+        f"{NO_FACTOR}; {ALIGNED_UNIT}; amount rescaled by 0.001 (unit-table)"
+    )
+    assert list(new) == ["source", "target", "conversion_factor", "comment"]
+
+
+def test_a_unit_aligned_comment_names_zero_factors_and_an_uncertain_context(tmp_path):
+    state = state_for(tmp_path)
+    zero, _ = bafu.retarget(
+        {**entry(ZERO, "ef-long", "Longterm"), "conversion_factor": 0.5}, state
+    )
+    assert zero["comment"] == f"all factors are zero in EF 3.1; {ALIGNED_UNIT}"
+    deep, _ = bafu.retarget(
+        {**entry(DEEP, "ef-long", "Longterm"), "conversion_factor": 0.5}, state
+    )
+    assert "context" not in deep["target"] and "conversion_factor" not in deep
+    assert deep["comment"] == f"{NO_FACTOR}; {ALIGNED_UNIT}; {UNCERTAIN}"
+
+
+def test_their_unit_is_not_taken_when_their_conversion_is_not_usable(tmp_path):
+    # Bq onto a kg flow without a multiplier: nothing to convert with
+    ours = {**entry(ODD, "ef-long", "Longterm"), "conversion_factor": 0.5}
+    assert bafu.retarget(ours, state_for(tmp_path)) == (ours, "unit_differs")
+
+
+def test_their_unit_is_not_taken_when_it_is_unknown(tmp_path):
+    state = state_for(tmp_path)
+    flows = dict(state.bw.flows)
+    flows["ef-vapour-kg"] = replace(flows["ef-vapour-kg"], unit="sm3")
+    unknown = replace(state, bw=replace(state.bw, flows=flows))
+    ours = vapour_entry()
+    assert bafu.retarget(ours, unknown) == (ours, "unit_differs")
+
+
+def test_scoring_flows_with_another_conversion_are_never_unit_aligned(tmp_path):
+    # identical non-zero factors: another conversion changes the amount characterised
+    ours = {**entry(SCALED, "ef-ammonia", "ammonia"), "conversion_factor": 0.5}
+    assert bafu.retarget(ours, state_for(tmp_path)) == (ours, "unit_differs")

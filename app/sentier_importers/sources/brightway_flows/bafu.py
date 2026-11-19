@@ -89,6 +89,7 @@ _DIMENSION = {
 }
 ALIGNED = f"target aligned with {RELEASE} (identical factors)"
 ALIGNED_FACTORLESS = f"target aligned with {RELEASE} (neither flow carries a factor)"
+ALIGNED_UNIT = f"target and unit aligned with {RELEASE} (neither flow carries a factor)"
 UNCHARACTERISED = "uncharacterised in EF 3.1: no factor in any method"
 ALL_ZERO = "all factors are zero in EF 3.1"
 #: Same wording as the nomenclature package (``mappings_biosphere_matched.entry_for``):
@@ -203,16 +204,38 @@ def _target_record(flow: EfFlow, unit: str | None) -> Record:
     return record
 
 
+def _their_unit(
+    source: Mapping, decision: Decision, state: State
+) -> tuple[str | None, float | None, str | None]:
+    """``(target unit, conversion_factor, withhold reason)`` of a usable link.
+
+    The unit is the EF convention one of their target: the index knows it for a
+    characterised flow, the Brightway Flows flow gives it otherwise.
+    """
+    code = decision.target.code
+    unit = state.index.reference_unit(code) or EF_UNIT.get(decision.consensus.unit)
+    if unit is None:
+        return None, None, "unit_unknown"
+    factor, reason = _conversion(source.get("unit") or "", unit, decision.link.multiplier)
+    return unit, factor, reason
+
+
+def _no_score_note(code: str, state: State) -> str:
+    """Why the flow ``code``, which does not score, changes no result."""
+    return ALL_ZERO if state.vectors.get(code) else UNCHARACTERISED
+
+
+def _rescaled_note(factor: float, link: Link) -> str:
+    return f"amount rescaled by {factor:g} ({link.basis or 'conversion'})"
+
+
 def package_entry(source: Record, state: State) -> tuple[Record | None, str | None]:
     """The package-5 entry for an unmapped ``source``, or ``(None, reason)``."""
     decision = decide(source, state)
     if decision.reason is not None:
         return None, decision.reason
     flow, link = decision.target, decision.link
-    unit = state.index.reference_unit(flow.code) or EF_UNIT.get(decision.consensus.unit)
-    if unit is None:
-        return None, "unit_unknown"
-    factor, reason = _conversion(source.get("unit") or "", unit, link.multiplier)
+    unit, factor, reason = _their_unit(source, decision, state)
     if reason is not None:
         return None, reason
     scoring = scores(flow.code, state)
@@ -220,15 +243,53 @@ def package_entry(source: Record, state: State) -> tuple[Record | None, str | No
         return None, "characterised_held_for_review"
     comments = [f"{RELEASE}, skos:{link.match}"]
     if not scoring:
-        comments.append(ALL_ZERO if state.vectors.get(flow.code) else UNCHARACTERISED)
+        comments.append(_no_score_note(flow.code, state))
     entry: Record = {"source": dict(source), "target": _target_record(flow, unit)}
     if "context" not in entry["target"]:
         comments.append(UNCERTAIN_CONTEXT)
     if factor is not None:
         entry["conversion_factor"] = factor
-        comments.append(f"amount rescaled by {factor:g} ({link.basis or 'conversion'})")
+        comments.append(_rescaled_note(factor, link))
     entry["comment"] = "; ".join(comments)
     return entry, None
+
+
+def _their_target(entry: Record, flow: EfFlow) -> Record:
+    """Our target record renamed to ``flow``; the context goes when theirs is uncertain."""
+    target = dict(entry["target"])
+    target["name"] = flow.label or flow.name
+    target["code"] = flow.code
+    if flow.context and not flow.context_uncertain:
+        target["context"] = list(flow.context)
+    else:
+        target.pop("context", None)
+    return target
+
+
+def _unit_aligned(entry: Record, decision: Decision, state: State) -> Record | None:
+    """``entry`` on their target, in their unit and with their conversion, or ``None``
+    when their unit is unknown or their conversion is not usable.
+
+    Only for two flows that do not score (spec addition 2026-11-19): the amount is
+    then converted otherwise, and no result can tell. The comment is written anew,
+    since ours states a unit convention and a rescaling that no longer hold.
+    """
+    flow = decision.target
+    unit, factor, reason = _their_unit(entry["source"], decision, state)
+    if reason is not None:
+        return None
+    target = {**_their_target(entry, flow), "unit": unit}
+    comments = [_no_score_note(flow.code, state), ALIGNED_UNIT]
+    if factor is not None:
+        comments.append(_rescaled_note(factor, decision.link))
+    if "context" not in target:
+        comments.append(UNCERTAIN_CONTEXT)
+    kept = {k: v for k, v in entry.items() if k not in ("conversion_factor", "comment")}
+    aligned: Record = {**kept, "target": target}
+    if factor is not None:
+        aligned["conversion_factor"] = factor
+    aligned["comment"] = "; ".join(comments)
+    return aligned
 
 
 def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
@@ -246,6 +307,11 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
     Two flows that both carry no factor count as identical (spec 2026-11-19: Brightway
     Flows is the reference wherever no score can change); the comment then says so
     instead of claiming identical factors.
+
+    When the two sides convert the amount differently, the entry is left alone
+    (``unit_differs``) if a flow scores: another conversion changes the amount that
+    gets characterised. If neither scores it takes their unit and conversion too
+    (:func:`_unit_aligned`), provided their conversion is usable.
     """
     ours = entry["target"].get("code")
     decision = decide(entry["source"], state)
@@ -262,14 +328,11 @@ def retarget(entry: Record, state: State) -> tuple[Record, str | None]:
     multiplier = decision.link.multiplier
     theirs = 1.0 if multiplier is None else multiplier
     if not math.isclose(entry.get("conversion_factor", 1.0), theirs, rel_tol=1e-9):
-        return entry, "unit_differs"
-    target = dict(entry["target"])
-    target["name"] = flow.label or flow.name
-    target["code"] = flow.code
-    if flow.context and not flow.context_uncertain:
-        target["context"] = list(flow.context)
-    else:
-        target.pop("context", None)
+        if scores(ours, state) or scores(flow.code, state):
+            return entry, "unit_differs"
+        aligned = _unit_aligned(entry, decision, state)
+        return (entry, "unit_differs") if aligned is None else (aligned, "retargeted")
+    target = _their_target(entry, flow)
     parts = [entry.get("comment"), ALIGNED if scores(ours, state) else ALIGNED_FACTORLESS]
     if "context" not in target and UNCERTAIN_CONTEXT not in (entry.get("comment") or ""):
         parts.append(UNCERTAIN_CONTEXT)

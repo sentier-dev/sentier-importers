@@ -11,8 +11,9 @@
   (an unmapped flow whose link package 5 does not take), ``theirs_not_usable`` (a
   mapped flow whose link fails a rule and whose target is not the one we use),
   ``score_changing_retarget`` (their target scores differently from ours) or
-  ``retarget_withheld`` (no factor differs, but the two sides convert the amount
-  differently, or our entry names no target code to compare).
+  ``retarget_withheld`` (the two flows score the same, but the two sides convert
+  the amount differently, or our entry names no target code to compare; two flows
+  that do not score are aligned whatever the conversion, so they are not listed).
 """
 
 from __future__ import annotations

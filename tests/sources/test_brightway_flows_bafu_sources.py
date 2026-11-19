@@ -18,11 +18,13 @@ from tests.sources.test_brightway_flows_bafu import (
     THORIUM,
     TOXIC,
     UNIVERSE,
+    VAPOUR,
     ZERO,
     bw_document,
     config,
     entry,
     stage,
+    vapour_entry,
 )
 
 CURATED = [entry(AMMONIA, "ef-ammonia", "ammonia"), entry(BENZENE, "ef-benzene", "benzene")]
@@ -167,3 +169,17 @@ def test_review_names_the_resolved_target_of_a_redirected_link(tmp_path):
         tmp_path / "m", curated=[entry(REDIR, "ef-borax", "Borax")], universe=[*UNIVERSE, REDIR]
     )
     assert "Redir" not in mapped  # the resolved target is ours
+
+
+def test_factorless_flows_in_another_unit_are_aligned_not_reviewed(tmp_path):
+    kw = {"curated": [vapour_entry(), CURATED[1]], "universe": [*UNIVERSE, VAPOUR]}
+    aligned = run(BafuBrightwayFlowsAlignSource, tmp_path / "a", emit="biosphere-1-curated", **kw)
+    assert len(aligned) == 2 and aligned[1] == CURATED[1]
+    vapour = aligned[0]
+    assert vapour["target"]["code"] == "ef-vapour-kg" and vapour["target"]["unit"] == "kilogram"
+    assert "conversion_factor" not in vapour
+    assert "aligned with brightway-flows" in vapour["comment"]
+    assert "rescaled" not in vapour["comment"]
+    by_name = review(tmp_path / "r", **kw)
+    assert "Vapour" not in by_name
+    assert not [r for r in by_name.values() if r.get("reason") == "unit_differs"]
