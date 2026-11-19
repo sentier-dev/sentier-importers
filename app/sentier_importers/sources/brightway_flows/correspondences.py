@@ -25,6 +25,8 @@ RELEASE = "brightway-flows 1.1.0"
 EF_LIST = "ef-3.1"
 _EF_SOURCE_LABEL = "EF 3.1"
 _MATCHES = ("exactMatch", "closeMatch", "broadMatch")
+#: chemrof property key holding the molecular formula.
+_FORMULA_KEY = "https://w3id.org/chemrof/molecular_formula"
 
 
 def _tail(iri: str) -> str:
@@ -38,6 +40,11 @@ class ConsensusFlow:
     context_code: str
     unit: str
     is_ef: bool
+    #: What a vocabulary term needs beyond the label; all optional in the file.
+    alt_labels: tuple[str, ...] = ()
+    cas_numbers: tuple[str, ...] = ()
+    ec_numbers: tuple[str, ...] = ()
+    formula: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,39 @@ def _link(assoc: dict) -> Link:
     )
 
 
+def _strings(record: Mapping, key: str) -> tuple[str, ...]:
+    """The list of strings under ``key``; absent or null is empty."""
+    value = record.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise TypeError(f"{key!r} of flow {record.get('identifier')!r} is not a list of strings")
+    return tuple(value)
+
+
+def _formula(record: Mapping) -> str | None:
+    """Molecular formula from the chemrof properties: a scalar, or the first of a
+    list of candidate formulas (isomers, salts), as ``agribalyse.flows.formula``."""
+    value = (record.get("properties") or {}).get(_FORMULA_KEY)
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return str(value) if value else None
+
+
+def _flow(record: Mapping) -> ConsensusFlow:
+    return ConsensusFlow(
+        identifier=record["identifier"],
+        label=record["prefLabel"],
+        context_code=_tail(record["context_iri"]),
+        unit=record["unit"],
+        is_ef=record["source"] == _EF_SOURCE_LABEL,
+        alt_labels=_strings(record, "altLabel"),
+        cas_numbers=_strings(record, "cas_numbers"),
+        ec_numbers=_strings(record, "ec_numbers"),
+        formula=_formula(record),
+    )
+
+
 def load(content: bytes, expected_sha256: str | None = PINNED_SHA256) -> BrightwayFlows:
     """Parse the gzipped file. ``expected_sha256=None`` skips the release check (tests)."""
     if expected_sha256 is not None:
@@ -101,16 +141,7 @@ def load(content: bytes, expected_sha256: str | None = PINNED_SHA256) -> Brightw
             )
     try:
         doc = json.loads(gzip.decompress(content))
-        flows = {
-            f["identifier"]: ConsensusFlow(
-                identifier=f["identifier"],
-                label=f["prefLabel"],
-                context_code=_tail(f["context_iri"]),
-                unit=f["unit"],
-                is_ef=f["source"] == _EF_SOURCE_LABEL,
-            )
-            for f in doc["flows"]
-        }
+        flows = {f["identifier"]: _flow(f) for f in doc["flows"]}
         redirects = {
             r["identifier"]: r["replaced_by_identifier"]
             for r in doc["redirects"]
@@ -120,7 +151,16 @@ def load(content: bytes, expected_sha256: str | None = PINNED_SHA256) -> Brightw
             _tail(c["@id"]): tuple(_link(a) for a in c["xkos:madeOf"])
             for c in doc["correspondences"]
         }
-    except (OSError, EOFError, zlib.error, ValueError, KeyError, TypeError, StopIteration) as exc:
+    except (
+        OSError,
+        EOFError,
+        zlib.error,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+        StopIteration,
+    ) as exc:
         raise ParseError(f"not a Brightway Flows harmonised-flows-simple file: {exc!r}") from exc
     ef_alias = {
         item.source_id: item.target_id

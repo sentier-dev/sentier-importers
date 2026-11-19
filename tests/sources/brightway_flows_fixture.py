@@ -8,14 +8,37 @@ CONTEXT_IRI = "https://vocab.brightway.one/flow-contexts/"
 UNIT_IRI = "https://vocab.brightway.one/units/unit/"
 
 
-def flow(identifier, label, context_code="envi-air-unkn", unit="kg", source="EF 3.1"):
-    return {
+FORMULA_KEY = "https://w3id.org/chemrof/molecular_formula"
+
+
+def flow(
+    identifier,
+    label,
+    context_code="envi-air-unkn",
+    unit="kg",
+    source="EF 3.1",
+    *,
+    alt_labels=None,
+    cas_numbers=None,
+    ec_numbers=None,
+    formula=None,
+):
+    record = {
         "identifier": identifier,
         "source": source,
         "prefLabel": label,
         "context_iri": CONTEXT_IRI + context_code,
         "unit": unit,
     }
+    if alt_labels is not None:
+        record["altLabel"] = alt_labels
+    if cas_numbers is not None:
+        record["cas_numbers"] = cas_numbers
+    if ec_numbers is not None:
+        record["ec_numbers"] = ec_numbers
+    if formula is not None:
+        record["properties"] = {FORMULA_KEY: formula}
+    return record
 
 
 def link(
