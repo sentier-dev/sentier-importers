@@ -1,17 +1,20 @@
 import pytest
 from sentier_importers.matching.ef_index import EfFlow, EfFlowIndex
 from sentier_importers.matching.pipeline import Match
+from sentier_importers.sources.bafu import ef_units
 from sentier_importers.sources.bafu.ef_units import (
     _REGRESSION_INFERRED_ENERGY_CONTENT,
     ENERGY_CONTENT,
     ENERGY_CONTENT_NOTES,
-    NOMENCLATURE_TARGET_DIMENSION,
     STOICHIOMETRIC,
     STOICHIOMETRIC_NOTES,
     conversion_for,
+    conversion_onto,
     nomenclature_target_unit,
-    nomenclature_unit_mismatch,
+    stated_target_unit,
+    unit_agrees,
     unit_conversion,
+    unit_mismatch_detail,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow
 
@@ -294,27 +297,141 @@ def test_conversion_for_returns_none_when_nothing_applies(tmp_path):
     assert conversion_for(flow, match, index) is None
 
 
-def test_nomenclature_target_dimension_has_exactly_the_one_wood_entry():
-    # hardcoded independently of the dict under test, same rationale as
-    # _ENERGY_CONTENT_CASES/_STOICHIOMETRIC_CASES above.
-    assert dict(NOMENCLATURE_TARGET_DIMENSION) == {"Wood": "mass"}
+# --- the unit gate: a candidate that states a unit the source cannot be converted to
 
 
-def test_nomenclature_unit_mismatch_withholds_a_wrong_dimension_wood_source():
-    # round 5, decision 2026-09-14: EF counts "Wood" by mass; BAFU also reports
-    # standing wood by volume (m3), and no density convention bridges the two
-    # anywhere in this codebase (unlike water) -- the source must be withheld.
-    flow = BafuFlow("Wood, hard, standing", "resources", "in ground", "m3")
-    assert nomenclature_unit_mismatch(flow, _ef_flow("Wood")) == (
-        "EF Wood is counted by mass; no density convention converts m3 (decision 2026-09-14)"
+def _stated(unit: str | None, name: str = "Widget") -> EfFlow:
+    """A factorless ``EfFlow`` that states ``unit`` (``None``: states none)."""
+    return EfFlow(code="x", name=name, context=(), characterised=False, stated_unit=unit)
+
+
+_NO_INDEX = EfFlowIndex.from_tables([], [])
+
+
+def _source(unit: str, name: str = "Widget") -> BafuFlow:
+    return BafuFlow(name, "emissions to air", "unspecified", unit)
+
+
+@pytest.mark.parametrize("unit", ["kg", "Bq", "m3", "MJ", "tkm", ""])
+def test_a_candidate_that_states_no_unit_always_agrees(unit):
+    assert unit_agrees(_source(unit), _stated(None), _NO_INDEX)
+
+
+@pytest.mark.parametrize(
+    ("bafu_unit", "stated"),
+    [
+        ("kg", "kilogram"),
+        ("Bq", "kBq"),
+        ("kBq", "kBq"),
+        ("m3", "cubic meter"),
+        ("Nm3", "cubic meter"),
+        ("m2", "m2"),
+        ("m2a", "m2*a"),
+        ("m3y", "m3*a"),
+        ("MJ", "megajoule"),
+        ("kWh", "megajoule"),
+    ],
+)
+def test_a_stated_unit_of_the_source_dimension_agrees(bafu_unit, stated):
+    assert unit_agrees(_source(bafu_unit), _stated(stated), _NO_INDEX)
+
+
+@pytest.mark.parametrize(
+    ("bafu_unit", "stated"),
+    [
+        ("kg", "kBq"),  # the 2026-11-19 defect: Uranium in kg onto Uranium Alpha
+        ("Bq", "kilogram"),
+        ("kBq", "kilogram"),
+        ("kg", "megajoule"),
+        ("kg", "cubic meter"),
+        ("m3", "kilogram"),
+        ("m3", "megajoule"),
+        ("m2", "m2*a"),
+        ("m3", "m3*a"),
+        ("kg", "kg*a"),
+        ("m3", "Sm3"),  # a standard cubic metre is not a cubic metre of anything
+        ("Nm3", "Sm3"),
+        ("tkm", "kilogram"),  # a source unit of no known dimension
+    ],
+)
+def test_a_stated_unit_of_another_dimension_does_not_agree(bafu_unit, stated):
+    assert not unit_agrees(_source(bafu_unit), _stated(stated), _NO_INDEX)
+
+
+def test_the_water_density_rule_covers_a_mass_source_on_a_factorless_water_flow():
+    assert unit_agrees(_source("kg", "Water, DE"), _stated("cubic meter", "Water"), _NO_INDEX)
+    # only water has a density here
+    assert not unit_agrees(_source("kg", "Brine"), _stated("cubic meter", "Brine"), _NO_INDEX)
+
+
+def test_the_water_density_rule_covers_a_mass_source_on_a_water_use_flow(tmp_path):
+    cf = [cf_row("river", "river water", RES_GROUND, method="ef-3.1:water-use", value=42.95)]
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, cf, [vocab_row("river", "River")]))
+    river = EfFlow(code="river", name="river water", context=(), stated_unit="cubic meter")
+    assert unit_agrees(_source("kg", "Water, river"), river, index)
+
+
+def test_an_energy_content_rule_covers_its_own_source_on_a_megajoule_flow():
+    megajoule = _stated("megajoule", "Hard Coal")
+    assert unit_agrees(_source("kg", "Coal, hard"), megajoule, _NO_INDEX)
+    assert unit_agrees(_source("Nm3", "Gas, natural/m3"), megajoule, _NO_INDEX)
+    assert not unit_agrees(_source("kg", "Coal, soft"), megajoule, _NO_INDEX)
+    # the rule is a factor onto megajoule, not a licence to cross onto any unit
+    assert not unit_agrees(_source("kg", "Uranium"), _stated("kBq", "Uranium Alpha"), _NO_INDEX)
+
+
+def test_conversion_onto_is_what_conversion_for_applies(tmp_path):
+    flow = _source("kg", "Water")
+    assert conversion_onto(flow, "cubic meter", water_target=True) == (0.001, None)
+    assert conversion_onto(flow, "cubic meter", water_target=False) is None
+    assert conversion_onto(flow, "kilogram", water_target=True) == (1.0, None)
+    assert conversion_onto(_source("Bq"), "kBq", water_target=False) == (0.001, None)
+    factor, caveat = conversion_onto(_source("kg", "Peat"), "megajoule", water_target=False)
+    assert factor == 9.9 and caveat.startswith("energy content 9.9 MJ/kg")
+
+
+@pytest.mark.parametrize(
+    ("flow", "ef_flow", "expected"),
+    [
+        (_source("kg"), _stated("kilogram"), ("kilogram", None, None)),
+        (_source("Bq"), _stated("kBq"), ("kBq", 0.001, None)),
+        (_source("kBq"), _stated("kBq"), ("kBq", None, None)),
+        (_source("kWh"), _stated("megajoule"), ("megajoule", 3.6, None)),
+        # the stated unit, not BAFU's own spelling the convention guess kept
+        (_source("m3y"), _stated("m3*a"), ("m3*a", None, None)),
+        (_source("kg", "Water"), _stated("cubic meter", "Water"), ("cubic meter", 0.001, None)),
+        # a kilogram water flow that states kilogram is not moved onto cubic meter
+        (_source("kg", "Water"), _stated("kilogram", "Water"), ("kilogram", None, None)),
+    ],
+)
+def test_stated_target_unit_follows_the_stated_unit(flow, ef_flow, expected):
+    assert stated_target_unit(flow, ef_flow) == expected
+
+
+def test_stated_target_unit_carries_the_caveat_of_an_energy_content_factor():
+    unit, factor, caveat = stated_target_unit(_source("kg", "Peat"), _stated("megajoule", "Peat"))
+    assert (unit, factor) == ("megajoule", 9.9)
+    assert caveat.startswith("energy content 9.9 MJ/kg")
+
+
+def test_stated_target_unit_refuses_a_pair_the_gate_refuses():
+    with pytest.raises(ValueError, match="kg.*kBq"):
+        stated_target_unit(_source("kg", "Uranium"), _stated("kBq", "Uranium Alpha"))
+
+
+def test_unit_mismatch_detail_names_the_units_and_the_flows():
+    flows = [_stated("kBq", "Uranium Alpha"), _stated("kBq", "Uranium Alpha")]
+    assert unit_mismatch_detail(_source("kg", "Uranium"), flows) == (
+        "BAFU unit kg vs EF reference unit kBq for Uranium Alpha; no fixed conversion"
     )
 
 
-def test_nomenclature_unit_mismatch_allows_the_matching_dimension():
-    flow = BafuFlow("Wood, unspecified, standing/kg", "resources", "in ground", "kg")
-    assert nomenclature_unit_mismatch(flow, _ef_flow("Wood")) is None
-
-
-def test_nomenclature_unit_mismatch_ignores_a_name_outside_the_table():
-    flow = BafuFlow("Basalt", "resources", "in ground", "m3")
-    assert nomenclature_unit_mismatch(flow, _ef_flow("Basalt")) is None
+def test_no_name_table_fixes_the_dimension_of_wood_any_more():
+    # NOMENCLATURE_TARGET_DIMENSION = {"Wood": "mass"} (decision 2026-09-14) is
+    # retired: EF "Wood" is an energy resource that states megajoule, so the table
+    # was contradicted by the data, and the unit gate withholds both BAFU spellings.
+    assert not hasattr(ef_units, "NOMENCLATURE_TARGET_DIMENSION")
+    assert not hasattr(ef_units, "nomenclature_unit_mismatch")
+    wood = _stated("megajoule", "Wood")
+    assert not unit_agrees(_source("m3", "Wood, hard, standing"), wood, _NO_INDEX)
+    assert not unit_agrees(_source("kg", "Wood, unspecified, standing/kg"), wood, _NO_INDEX)

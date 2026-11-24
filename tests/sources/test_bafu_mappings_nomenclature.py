@@ -10,7 +10,15 @@ from sentier_importers.sources.bafu.mappings_biosphere_matched import ParsedInpu
 from sentier_importers.sources.bafu.mappings_biosphere_nomenclature import BafuEfNomenclatureSource
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
-from tests.matching.ef_fixtures import AIR_UNSPEC, cf_row, vocab_row
+from tests.matching.ef_fixtures import (
+    AIR_UNSPEC,
+    QUDT,
+    SENTIER_UNIT,
+    cf_row,
+    unit_row,
+    vocab_row,
+    write_unit_relations,
+)
 from tests.sources.test_bafu_mappings_matched import (
     CF,
     CO2,
@@ -389,10 +397,9 @@ def test_name_only_alignment_prefers_the_namesake_on_its_own_unspecified_leaf(tm
 
 
 def _name_only_rows(tmp_path, vocab, flow):
-    # The source itself does not read ef-context notations (EfFlowIndex's
-    # read_ef_context is off for it), and no bw-context code reaches the long-term
-    # water leaf. The index is rebuilt here with the notation read, so the
-    # long-term rule is exercised through transform() for whenever it is turned on.
+    # No bw-context code reaches the long-term water leaf: these namesakes are placed
+    # by their ef-context notation. The index is rebuilt here with the notation read,
+    # as the source itself builds it since 2026-11-19 (this helper is older).
     root = _stage(tmp_path, vocab=VOCAB + vocab)
     source = BafuEfNomenclatureSource(_config_nomenclature(root))
     ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
@@ -401,7 +408,6 @@ def _name_only_rows(tmp_path, vocab, flow):
         root / "characterization-factors.parquet",
         root / "terms",
         include_uncharacterised=True,
-        read_ef_context=True,
     )
     inputs = replace(inputs, index=index, pipeline=default_pipeline(index, load_aliases()))
     augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
@@ -552,3 +558,137 @@ def test_resource_correction_flow_carries_its_own_caveat_onto_an_uncharacterised
         "source is a resource-correction flow, mapped to the extraction of the same "
         "element" in entry["comment"]
     )
+
+
+# --- stated units (2026-11-19, spec units-on-ef31-flows, step 5) --------------------
+
+
+def _stated_unit_rows(tmp_path, vocab, units, flow):
+    """``transform`` rows of ``flow`` over an index that reads ``ef-context`` and the
+    unit relations ``units`` (flow code -> unit IRI)."""
+    root = _stage(tmp_path, vocab=VOCAB + vocab)
+    write_unit_relations(root, [unit_row(code, unit) for code, unit in units.items()])
+    source = BafuEfNomenclatureSource(_config_nomenclature(root))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    inputs = source.parse(source.fetch(ctx))[0]["inputs"]
+    index = EfFlowIndex.from_files(
+        root / "characterization-factors.parquet",
+        root / "terms",
+        include_uncharacterised=True,
+    )
+    inputs = replace(inputs, index=index, pipeline=default_pipeline(index, load_aliases()))
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    outcomes = {f.name: o for f, o in source.outcomes([{"inputs": augmented}])}
+    rows = source.transform([{"inputs": augmented}])
+    return [r for r in rows if r["source"]["name"] == flow.name], outcomes[flow.name]
+
+
+_STATED_COMMENT = (
+    "uncharacterised in EF 3.1: no factor in any method; target unit is the unit EF "
+    "states for this flow"
+)
+
+
+def test_a_factorless_target_takes_the_unit_it_states(tmp_path):
+    # the convention guess kept BAFU's own "m3y"; the flow states m3*a
+    vocab = [vocab_row("reservoir", "Volume Occupied, Reservoir", bw="envi-air-unkn")]
+    flow = BafuFlow("Volume occupied, reservoir", "emissions to air", "unspecified", "m3y")
+    (row,), _ = _stated_unit_rows(tmp_path, vocab, {"reservoir": SENTIER_UNIT + "M3-YR"}, flow)
+    assert row["target"]["unit"] == "m3*a"
+    assert "conversion_factor" not in row
+    assert row["comment"] == _STATED_COMMENT
+
+
+def test_a_becquerel_source_is_rescaled_onto_the_stated_kbq(tmp_path):
+    vocab = [vocab_row("kr", "Krypton-99", bw="envi-air-unkn")]
+    flow = BafuFlow("Krypton-99", "emissions to air", "unspecified", "Bq")
+    (row,), _ = _stated_unit_rows(tmp_path, vocab, {"kr": QUDT + "KiloBQ"}, flow)
+    assert row["target"]["unit"] == "kBq"
+    assert row["conversion_factor"] == 0.001
+    assert row["comment"] == f"{_STATED_COMMENT}; amount rescaled by 0.001"
+
+
+def test_a_mass_source_is_not_emitted_onto_a_flow_that_states_an_activity(tmp_path):
+    vocab = [vocab_row("u-alpha", "Uranium Alpha", alt=["Uranium, total"], bw="envi-air-unkn")]
+    flow = BafuFlow("Uranium, total", "emissions to air", "unspecified", "kg")
+    rows, outcome = _stated_unit_rows(tmp_path, vocab, {"u-alpha": QUDT + "KiloBQ"}, flow)
+    assert not rows
+    assert (outcome.reason, outcome.detail) == (
+        "unit_mismatch",
+        "BAFU unit kg vs EF reference unit kBq for Uranium Alpha; no fixed conversion",
+    )
+
+
+def test_name_only_alignment_respects_the_stated_unit(tmp_path):
+    # the only namesake sits in another bucket and states an activity
+    vocab = [vocab_row("gneiss-activity", "Gneiss", bw="envi-air-unkn")]
+    flow = BafuFlow("Gneiss", "resources", "in ground", "kg")
+    rows, outcome = _stated_unit_rows(tmp_path, vocab, {"gneiss-activity": QUDT + "KiloBQ"}, flow)
+    assert not rows
+    assert (outcome.reason, outcome.detail) == (
+        "unit_mismatch",
+        "BAFU unit kg vs EF reference unit kBq for Gneiss; no fixed conversion",
+    )
+
+
+def test_name_only_alignment_takes_the_namesake_of_the_source_unit(tmp_path):
+    # "a-..." sorts first by code and would be the pick; it states an activity
+    vocab = [
+        vocab_row("a-gneiss-activity", "Gneiss", bw="envi-air-unkn"),
+        vocab_row("b-gneiss-mass", "Gneiss", bw="envi-grou-indu"),
+    ]
+    units = {"a-gneiss-activity": QUDT + "KiloBQ", "b-gneiss-mass": QUDT + "KiloGM"}
+    flow = BafuFlow("Gneiss", "resources", "in ground", "kg")
+    (row,), _ = _stated_unit_rows(tmp_path, vocab, units, flow)
+    assert row["target"]["code"] == "b-gneiss-mass"
+    assert row["target"]["unit"] == "kilogram"
+
+
+def test_wood_by_mass_is_not_emitted_onto_the_wood_flow_that_states_megajoule(tmp_path):
+    # the real shape: EF "Wood" (renewable material resources from biosphere) states
+    # MJ; the convention guess had emitted BAFU "Wood, ... standing/kg" on it in kilogram
+    vocab = [vocab_row("wood", "Wood", alt=["Wood, unspecified, standing/kg"], bw="reso-biot")]
+    flow = BafuFlow("Wood, unspecified, standing/kg", "resources", "biotic", "kg")
+    rows, outcome = _stated_unit_rows(tmp_path, vocab, {"wood": QUDT + "MegaJ"}, flow)
+    assert not rows
+    assert outcome.reason == "unit_mismatch"
+
+
+def test_the_source_reads_the_ef_context_of_a_factorless_flow(tmp_path):
+    # step 6 of the same spec: the name matcher's own index now reads the ef-context
+    # notation, so a flow that has no bw-context at all is a target. Straight through
+    # parse(), no index rebuilt by the test.
+    resource = "Resources / Resources from ground / Non-renewable element resources from ground"
+    vocab = VOCAB + [
+        vocab_row(
+            "mine-gas-unchar",
+            "Mine gas",
+            alt=["Gas, mine, off-gas, process, coal mining/m3"],
+            ef_context=resource,
+        )
+    ]
+    source = BafuEfNomenclatureSource(_config_nomenclature(_stage(tmp_path, vocab=vocab)))
+    (row,) = [r for r in _run(source, tmp_path) if r["source"]["code"] == MINE_GAS]
+    assert row["target"]["code"] == "mine-gas-unchar"
+    assert row["target"]["context"][-1] == "Non-renewable element resources from ground"
+    # an exact path, not a crosswalk guess: nothing uncertain to disclose
+    assert "uncertain" not in row["comment"]
+
+
+def test_an_energy_carrier_placed_by_its_exact_leaf_keeps_its_target_context(tmp_path):
+    # 2026-11-19: the context is omitted only when it came from the crosswalk, which
+    # cannot reach an energy leaf. With the vocab's own leaf it is exact and stated.
+    leaf = "Renewable energy resources from ground"
+    vocab = VOCAB + [
+        vocab_row("energy-geo-unchar", "Energy, geothermal, converted", bw="reso-grou", sub=leaf)
+    ]
+    source = BafuEfNomenclatureSource(_config_nomenclature(_stage(tmp_path, vocab=vocab)))
+    ctx = RunContext(cache_dir=tmp_path / "cache", output_dir=tmp_path / "out")
+    inputs = source.parse(source.fetch(ctx))[0]["inputs"]
+    flow = BafuFlow("Energy, geothermal, converted", "resources", "in ground", "MJ")
+    augmented = replace(inputs, bafu=BafuFlowIndex.from_flows(list(inputs.bafu) + [flow]))
+    (row,) = [
+        r for r in source.transform([{"inputs": augmented}]) if r["source"]["name"] == flow.name
+    ]
+    assert row["target"]["context"] == ["Resources", "Resources from ground", leaf]
+    assert "not recoverable" not in row["comment"] and "uncertain" not in row["comment"]

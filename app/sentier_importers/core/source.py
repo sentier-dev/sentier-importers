@@ -62,6 +62,11 @@ class Source(ABC):
     declared ``fetch_url`` / ``fetch_format``. Only ``transform`` is required.
     """
 
+    #: sentier-vocab sources only. ``True`` for a part that emits relations on terms
+    #: other parts of its release emit: its rows hold an ``iri`` and relation slots,
+    #: and no term row is written for them (see ``vocab_layers.to_layers``).
+    relations_only: bool = False
+
     def __init__(self, config: SourceConfig) -> None:
         self.config = config
         #: ``config.inputs`` resolved to bytes by :meth:`fetch`, keyed by input name.

@@ -104,6 +104,13 @@ unit:
 # Units QUDT does not define. The IRIs are the ones Sentier's units scheme already
 # publishes (sentier-vocab, importers/input/extra-data.ttl); a term here makes them
 # valid objects of qudt:hasUnit relations.
+# KiloGM-YR is the one unit of EF 3.1 flows (a Brightway Flows 1.1.0 code) neither QUDT
+# nor that scheme has.
+- iri: https://vocab.sentier.dev/units/unit/KiloGM-YR
+  pref_label: Kilogram year
+  definition: One kilogram over one year
+  notation: kga
+  status: published
 - iri: https://vocab.sentier.dev/units/unit/KiloM-TONNE
   pref_label: Tonne (metric) kilometre
   alt_labels:

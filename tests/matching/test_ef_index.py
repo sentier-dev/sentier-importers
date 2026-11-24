@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sentier_importers.core.errors import ParseError
+from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.matching.ef_index import (
     EfFlow,
     EfFlowIndex,
@@ -16,14 +16,18 @@ from tests.matching.ef_fixtures import (
     AIR_UNSPEC,
     AIR_URBAN,
     LAND_OCC,
+    QUDT,
     RES_ENERGY,
     RES_WATER,
+    SENTIER_UNIT,
     WATER_FRESH,
     WATER_UNSPEC,
     WATER_UNSPEC_LT,
     cf_row,
+    unit_row,
     vocab_row,
     write_ef_inputs,
+    write_unit_relations,
 )
 
 #: same real-data fallback-guess pattern as test_matchers.py's own constants.
@@ -40,7 +44,8 @@ def real_index():
     """The real, inclusive EF index -- expensive (tens of seconds: ~90k flows read
     from every sentier-vocab shard plus the full CF table), so every real-data test
     in this module shares this one module-scoped build instead of paying for its
-    own.
+    own. Built as the name matcher's own sources build it since 2026-11-19: with the
+    ``ef-context`` notations read.
     """
     return EfFlowIndex.from_files(_REAL_CF, _REAL_VOCAB_DIR, include_uncharacterised=True)
 
@@ -933,17 +938,18 @@ def test_real_index_counters_pin_the_current_ef_table(real_index):
     # upstream drift guard: a new EF table or vocab payload that changes either
     # number must be looked at, not absorbed silently
     assert real_index.multi_name_codes == 0
-    assert real_index.suppressed_vocab_synonyms == 346
+    # 346 until 2026-11-19 without the ef-context flows, 354 with them; 352 since
+    # the factorless flows sit on their exact leaf (a collision is per bucket, and
+    # some left the bucket the crosswalk had put them in)
+    assert real_index.suppressed_vocab_synonyms == 352
 
 
 # --- ef-context: the exact EF context path of a factorless flow ----------------
 
 
-def _uncharacterised(tmp_path, vocab, read_ef_context=True):
+def _uncharacterised(tmp_path, vocab, cf=()):
     return EfFlowIndex.from_files(
-        *write_ef_inputs(tmp_path, [], vocab),
-        include_uncharacterised=True,
-        read_ef_context=read_ef_context,
+        *write_ef_inputs(tmp_path, list(cf), vocab), include_uncharacterised=True
     )
 
 
@@ -989,56 +995,310 @@ def test_an_energy_resource_with_an_exact_ef_context_is_not_uncertain(tmp_path):
 
 def test_ef_context_is_not_read_without_include_uncharacterised(tmp_path):
     vocab = [vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT)]
-    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, [], vocab), read_ef_context=True)
+    index = EfFlowIndex.from_files(*write_ef_inputs(tmp_path, [], vocab))
     assert index.get("lt-water") is None
 
 
-def test_ef_context_is_not_read_by_default(tmp_path):
-    # read_ef_context is off unless asked for: a row that has only an ef-context
-    # notation is skipped, exactly like a row with no notation at all.
-    vocab = [
-        vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT),
-        vocab_row("bw-only", "Gadget", bw="envi-wate-suwa"),
-    ]
-    index = EfFlowIndex.from_files(
-        *write_ef_inputs(tmp_path, [], vocab), include_uncharacterised=True
-    )
-    assert index.get("lt-water") is None
-    assert index.by_name("widget", "water") == []
-    assert index.get("bw-only") is not None
-
-
-def test_bw_context_alone_places_a_row_when_ef_context_is_not_read(tmp_path):
-    # a row with both notations is placed as before the ef-context notation existed:
-    # through the bw-context crosswalk, uncertain where that code is ambiguous.
-    vocab = [vocab_row("both", "Widget", bw="envi-wate-unkn", ef_context=WATER_UNSPEC_LT)]
-    both = _uncharacterised(tmp_path, vocab, read_ef_context=False).get("both")
-    assert (both.context_path, both.context_uncertain) == (WATER_UNSPEC, True)
-
-
-def test_an_energy_resource_is_uncertain_again_when_ef_context_is_not_read(tmp_path):
-    vocab = [
-        vocab_row("energy", "Energy, tidal, converted", bw="reso-wate", ef_context=RES_ENERGY)
-    ]
-    flow = _uncharacterised(tmp_path, vocab, read_ef_context=False).get("energy")
-    assert flow.bucket == "resource" and flow.context_path != RES_ENERGY
-    assert flow.context_uncertain is True
-
-
-def test_read_ef_context_is_the_same_flag_through_every_constructor(tmp_path):
+def test_ef_context_is_read_whenever_factorless_flows_are_indexed(tmp_path):
+    # the read_ef_context flag is gone (2026-11-19): no source wants these flows
+    # hidden any more, and their sub_compartment would place them anyway
     vocab = [vocab_row("lt-water", "Widget", ef_context=WATER_UNSPEC_LT)]
     cf_path, terms_dir = write_ef_inputs(tmp_path, [], vocab)
-    off = EfFlowIndex.from_bytes(cf_path.read_bytes(), terms_dir, include_uncharacterised=True)
-    on = EfFlowIndex.from_bytes(
-        cf_path.read_bytes(), terms_dir, include_uncharacterised=True, read_ef_context=True
+    for index in (
+        EfFlowIndex.from_files(cf_path, terms_dir, include_uncharacterised=True),
+        EfFlowIndex.from_bytes(cf_path.read_bytes(), terms_dir, include_uncharacterised=True),
+        EfFlowIndex.from_tables([], vocab, include_uncharacterised=True),
+    ):
+        assert index.get("lt-water").context_path == WATER_UNSPEC_LT
+    with pytest.raises(TypeError):
+        EfFlowIndex.from_tables([], vocab, include_uncharacterised=True, read_ef_context=True)
+
+
+# --- sub_compartment: the exact EF context leaf of a factorless flow ----------------
+# Every flow term of the ef-3.1 release states the leaf of its exact EF context. A
+# factorless flow is placed from it, not from the bw-context crosswalk, which put
+# 30 flows of the long-term water leaf on "water, unspecified" (2026-11-19).
+
+_LT_LEAF = "Emissions to water, unspecified (long-term)"
+
+
+def test_a_factorless_flow_is_placed_from_its_sub_compartment_not_the_crosswalk(tmp_path):
+    # envi-wate-unkn alone gives "water, unspecified", marked uncertain. The path of
+    # the leaf is the one a characterised flow of the CF table has.
+    vocab = [
+        vocab_row("zn-lt", "Zinc"),
+        vocab_row("th", "Thorium-228", bw="envi-wate-unkn", sub=_LT_LEAF),
+        vocab_row("old", "Gadget", bw="envi-wate-unkn"),
+    ]
+    index = _uncharacterised(tmp_path, vocab, cf=[cf_row("zn-lt", "zinc", WATER_UNSPEC_LT)])
+    flow, old = index.get("th"), index.get("old")
+    assert (flow.context_path, flow.context_uncertain) == (WATER_UNSPEC_LT, False)
+    assert flow.bucket == "water" and not flow.characterised
+    # a term without the attribute (an older vocab checkout): the crosswalk, as before
+    assert (old.context_path, old.context_uncertain) == (WATER_UNSPEC, True)
+
+
+def test_the_path_of_a_leaf_is_learnt_from_an_ef_context_notation(tmp_path):
+    vocab = [
+        vocab_row("a", "Widget", ef_context=WATER_UNSPEC_LT),
+        vocab_row("b", "Gadget", bw="envi-wate-unkn", sub=_LT_LEAF),
+    ]
+    assert _uncharacterised(tmp_path, vocab).get("b").context_path == WATER_UNSPEC_LT
+
+
+def test_the_path_of_a_leaf_no_other_flow_shows_comes_from_the_table(tmp_path):
+    # the real Wood: reso-biot cross-walks to "Renewable material resources ..."
+    leaf = "Renewable energy resources from biosphere"
+    vocab = [vocab_row("wood", "Wood", bw="reso-biot", sub=leaf)]
+    flow = _uncharacterised(tmp_path, vocab).get("wood")
+    assert flow.context == ("Resources", "Resources from biosphere", leaf)
+    assert flow.context_uncertain is False
+
+
+def test_a_sub_compartment_places_a_flow_whose_bw_context_has_no_ef_leaf(tmp_path):
+    vocab = [vocab_row("x", "Widget", bw="envi-biot", sub="Land occupation")]
+    cf = [cf_row("occ", "arable", LAND_OCC, method="ef-3.1:land-use")]
+    assert _uncharacterised(tmp_path, vocab, cf).get("x").context_path == LAND_OCC
+
+
+def test_a_leaf_without_a_path_is_an_error_listing_the_flows(tmp_path):
+    vocab = [
+        vocab_row("b", "Gadget", bw="envi-wate-unkn", sub="Emissions to the moon"),
+        vocab_row("a", "Widget", bw="envi-wate-unkn", sub="Emissions to the moon"),
+    ]
+    with pytest.raises(ParseError) as excinfo:
+        _uncharacterised(tmp_path, vocab)
+    message = str(excinfo.value)
+    assert "'Emissions to the moon': no EF context path" in message
+    assert "a (Widget), b (Gadget)" in message
+
+
+def test_a_leaf_with_two_paths_is_an_error_listing_the_flows(tmp_path):
+    vocab = [
+        vocab_row("one", "One", ef_context="Emissions / Emissions to water / Somewhere"),
+        vocab_row("two", "Two", ef_context="Emissions / Emissions to air / Somewhere"),
+        vocab_row("x", "Widget", bw="envi-wate-unkn", sub="Somewhere"),
+    ]
+    with pytest.raises(ParseError) as excinfo:
+        _uncharacterised(tmp_path, vocab)
+    message = str(excinfo.value)
+    assert "'Somewhere': 2 EF context paths" in message
+    assert "Emissions / Emissions to air / Somewhere" in message
+    assert "x (Widget)" in message
+
+
+def test_an_ambiguous_leaf_no_factorless_flow_needs_is_not_an_error(tmp_path):
+    vocab = [
+        vocab_row("one", "One", ef_context="Emissions / Emissions to water / Somewhere"),
+        vocab_row("two", "Two", ef_context="Emissions / Emissions to air / Somewhere"),
+    ]
+    assert len(_uncharacterised(tmp_path, vocab)) == 2
+
+
+def test_ef_context_and_sub_compartment_must_name_the_same_leaf(tmp_path):
+    vocab = [vocab_row("x", "Widget", ef_context=WATER_UNSPEC_LT, sub="Emissions to sea water")]
+    with pytest.raises(ParseError, match="x.*Emissions to sea water"):
+        _uncharacterised(tmp_path, vocab)
+    agreeing = [vocab_row("x", "Widget", ef_context=WATER_UNSPEC_LT, sub=_LT_LEAF)]
+    assert _uncharacterised(tmp_path, agreeing).get("x").context_path == WATER_UNSPEC_LT
+
+
+def test_an_energy_resource_with_an_exact_leaf_is_not_uncertain(tmp_path):
+    # the crosswalk cannot reach an energy leaf (UNCERTAIN_RESOURCE_NAME); the leaf can
+    leaf = "Renewable energy resources from water"
+    vocab = [
+        vocab_row("energy", "Energy, tidal, converted", bw="reso-wate", sub=leaf),
+        vocab_row("old", "Energy, wave, converted", bw="reso-wate"),
+    ]
+    index = _uncharacterised(tmp_path, vocab)
+    flow, old = index.get("energy"), index.get("old")
+    assert (flow.context_path, flow.context_uncertain) == (RES_ENERGY, False)
+    assert old.context_path != RES_ENERGY and old.context_uncertain is True
+
+
+def test_a_characterised_flow_keeps_its_cf_context_when_the_vocab_leaf_agrees(tmp_path):
+    vocab = [vocab_row("cu", "Copper", sub="Emissions to urban air close to ground")]
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, [cf_row("cu", "copper", AIR_URBAN)], vocab)
     )
-    assert off.get("lt-water") is None
-    assert on.get("lt-water").context_path == WATER_UNSPEC_LT
-    rows = [vocab[0]]
-    assert EfFlowIndex.from_tables([], rows, include_uncharacterised=True).get("lt-water") is None
+    assert index.get("cu").context_path == AIR_URBAN
+
+
+def test_a_characterised_flow_whose_vocab_leaf_differs_is_an_error_with_the_list(tmp_path):
+    cf = [cf_row("cu", "copper", AIR_URBAN), cf_row("zn", "zinc", AIR_RURAL)]
+    vocab = [
+        vocab_row("cu", "Copper", sub="Emissions to air, unspecified"),
+        vocab_row("zn", "Zinc", sub="Emissions to non-urban air or from high stacks"),
+    ]
+    with pytest.raises(ParseError) as excinfo:
+        EfFlowIndex.from_files(*write_ef_inputs(tmp_path, cf, vocab))
+    message = str(excinfo.value)
+    assert "1 characterised EF flows" in message
     assert (
-        EfFlowIndex.from_tables([], rows, include_uncharacterised=True, read_ef_context=True).get(
-            "lt-water"
-        )
-        is not None
+        "cu (Copper): CF table Emissions to urban air close to ground, "
+        "vocab Emissions to air, unspecified" in message
+    )
+    assert "zn (" not in message
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_real_index_places_every_factorless_flow_exactly(real_index):
+    # building real_index already ran both leaf checks without error
+    factorless = [flow for flow in real_index if not flow.characterised]
+    if any(flow.context_uncertain for flow in factorless):
+        pytest.skip("this sentier-vocab checkout has flow terms without a sub_compartment")
+    assert len(factorless) == 4849
+    assert len(real_index) == 93919
+
+
+# --- stated units: the qudt:hasUnit relation of an EF flow term ------------------
+
+_UNIT_CF = [
+    cf_row("cu", "copper", AIR_UNSPEC),
+    cf_row("rn", "radon-222", AIR_UNSPEC, method="ef-3.1:ionising-radiation-human-health"),
+    cf_row("occ", "arable", LAND_OCC, method="ef-3.1:land-use"),
+]
+_UNIT_VOCAB = [
+    vocab_row("cu", "Copper"),
+    vocab_row("rn", "Radon-222"),
+    vocab_row("occ", "Arable"),
+    vocab_row("u-alpha", "Uranium Alpha", ef_context=AIR_UNSPEC),
+    vocab_row("heat", "Waste Heat", ef_context=AIR_UNSPEC),
+]
+_UNIT_ROWS = [
+    unit_row("cu", QUDT + "KiloGM"),
+    unit_row("rn", QUDT + "KiloBQ"),
+    unit_row("occ", SENTIER_UNIT + "M2-YR"),
+    unit_row("u-alpha", QUDT + "KiloBQ"),
+    unit_row("heat", QUDT + "MegaJ"),
+]
+
+
+def _with_units(tmp_path, unit_rows, cf=_UNIT_CF, vocab=_UNIT_VOCAB, **kwargs):
+    cf_path, terms_dir = write_ef_inputs(tmp_path, cf, vocab)
+    write_unit_relations(tmp_path, unit_rows)
+    return EfFlowIndex.from_files(cf_path, terms_dir, include_uncharacterised=True, **kwargs)
+
+
+def test_a_flow_states_the_unit_of_its_has_unit_relation(tmp_path):
+    index = _with_units(tmp_path, _UNIT_ROWS)
+    assert index.get("cu").stated_unit == "kilogram"
+    assert index.get("rn").stated_unit == "kBq"
+    assert index.get("occ").stated_unit == "m2*a"
+    assert index.get("u-alpha").stated_unit == "kBq"
+    assert index.get("heat").stated_unit == "megajoule"
+
+
+def test_the_relations_are_read_from_the_folder_beside_the_terms(tmp_path):
+    # no registry input for them: <release root>/relations is derived from
+    # <release root>/terms, in from_files and from_bytes alike
+    cf_path, terms_dir = write_ef_inputs(tmp_path, _UNIT_CF, _UNIT_VOCAB)
+    write_unit_relations(tmp_path, _UNIT_ROWS)
+    index = EfFlowIndex.from_bytes(cf_path.read_bytes(), terms_dir, include_uncharacterised=True)
+    assert index.get("cu").stated_unit == "kilogram"
+
+
+def test_a_relations_folder_can_be_named_explicitly(tmp_path):
+    cf_path, terms_dir = write_ef_inputs(tmp_path, _UNIT_CF, _UNIT_VOCAB)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    relations_dir = write_unit_relations(elsewhere, _UNIT_ROWS)
+    for index in (
+        EfFlowIndex.from_files(cf_path, terms_dir, relations_dir=relations_dir),
+        EfFlowIndex.from_bytes(cf_path.read_bytes(), terms_dir, relations_dir=relations_dir),
+    ):
+        assert index.get("rn").stated_unit == "kBq"
+
+
+def test_without_a_relations_folder_no_flow_states_a_unit(tmp_path):
+    # an older vocab checkout, and every fixture written before units existed
+    index = EfFlowIndex.from_files(
+        *write_ef_inputs(tmp_path, _UNIT_CF, _UNIT_VOCAB),
+        include_uncharacterised=True,
+    )
+    assert all(flow.stated_unit is None for flow in index)
+    assert index.reference_unit("rn") == "kBq"
+    assert index.unit("rn") == "kBq"
+    assert index.unit("u-alpha") is None
+
+
+def test_a_flow_without_a_relation_states_no_unit(tmp_path):
+    index = _with_units(tmp_path, [unit_row("cu", QUDT + "KiloGM")])
+    assert index.get("cu").stated_unit == "kilogram"
+    assert index.get("u-alpha").stated_unit is None
+
+
+def test_from_tables_states_no_unit_by_default():
+    index = EfFlowIndex.from_tables(_UNIT_CF, _UNIT_VOCAB)
+    assert index.get("cu").stated_unit is None
+
+
+def test_a_unit_relation_of_a_flow_of_another_release_is_not_read(tmp_path):
+    # the BAFU release states units too, some of them (Bq) no EF flow has
+    bafu = "https://vocab.sentier.dev/sources/bafu-2026"
+    rows = [*_UNIT_ROWS, unit_row("bafu-x", QUDT + "BQ", source=bafu)]
+    vocab = [*_UNIT_VOCAB, vocab_row("bafu-x", "Radon-222", source=bafu)]
+    index = _with_units(tmp_path, rows, vocab=vocab)
+    assert index.get("bafu-x") is None
+    assert index.get("rn").stated_unit == "kBq"
+
+
+def test_an_ef_flow_with_a_unit_that_has_no_spelling_is_an_error(tmp_path):
+    with pytest.raises(ValidationError, match="KiloM"):
+        _with_units(tmp_path, [unit_row("cu", QUDT + "KiloM")])
+
+
+def test_two_different_units_on_one_flow_are_an_error(tmp_path):
+    rows = [unit_row("cu", QUDT + "KiloGM"), unit_row("cu", QUDT + "KiloBQ")]
+    with pytest.raises(ParseError, match="cu: two units"):
+        _with_units(tmp_path, rows)
+
+
+def test_the_unit_of_a_flow_is_inferred_when_characterised_and_stated_otherwise(tmp_path):
+    index = _with_units(tmp_path, _UNIT_ROWS)
+    assert index.unit("rn") == index.reference_unit("rn") == "kBq"
+    assert index.reference_unit("u-alpha") is None
+    assert index.unit("u-alpha") == "kBq"
+    assert index.unit("heat") == "megajoule"
+
+
+def test_stated_and_inferred_units_that_agree_on_every_characterised_flow_pass(tmp_path):
+    assert len(_with_units(tmp_path, _UNIT_ROWS)) == 5
+
+
+def test_a_stated_unit_that_disagrees_with_the_inferred_one_is_an_error_with_the_list(
+    tmp_path,
+):
+    rows = [
+        unit_row("cu", QUDT + "KiloBQ"),
+        unit_row("rn", QUDT + "KiloBQ"),
+        unit_row("occ", QUDT + "M2"),
+    ]
+    with pytest.raises(ParseError) as excinfo:
+        _with_units(tmp_path, rows)
+    message = str(excinfo.value)
+    assert "2 characterised EF flows" in message
+    assert "cu (Copper, Emissions to air, unspecified): stated kBq, inferred kilogram" in message
+    assert "ef-3.1:human-toxicity-cancer" in message
+    assert "occ (Arable, Land occupation): stated m2, inferred m2*a" in message
+    assert "rn (" not in message
+
+
+def test_a_factorless_flow_is_never_part_of_the_stated_versus_inferred_check(tmp_path):
+    # nothing is inferred for it: whatever it states stands
+    index = _with_units(tmp_path, [*_UNIT_ROWS[:3], unit_row("u-alpha", QUDT + "MegaJ")])
+    assert index.get("u-alpha").stated_unit == "megajoule"
+
+
+@pytest.mark.skipif(not _REAL_INPUTS_AVAILABLE, reason="real EF inputs not available")
+def test_real_index_states_a_unit_for_every_flow_when_the_checkout_has_them(real_index):
+    # building real_index already ran the stated-versus-inferred check without error
+    stated = [flow for flow in real_index if flow.stated_unit is not None]
+    if not stated:
+        pytest.skip("this sentier-vocab checkout has no qudt:hasUnit relation on EF flows")
+    assert len(stated) == len(real_index)
+    assert all(
+        flow.stated_unit == real_index.reference_unit(flow.code)
+        for flow in real_index
+        if flow.characterised
     )

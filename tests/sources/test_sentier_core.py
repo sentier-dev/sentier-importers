@@ -12,6 +12,7 @@ from sentier_importers.core.errors import ParseError
 from sentier_importers.core.registry import get_config
 from sentier_importers.core.types import RawData
 from sentier_importers.sources.bafu import units as bafu_units
+from sentier_importers.sources.brightway_flows import units as ef_units
 from sentier_importers.sources.sentier_core.source import SEED, SentierCoreSource
 
 #: A copy of sentier-vocab's schemas/ folder (term.yaml, relation.yaml).
@@ -105,11 +106,16 @@ def test_release_holds_its_source_term_and_passes_the_contracts(tmp_path):
     }
 
 
-def test_seed_defines_every_bafu_unit_that_qudt_lacks(tmp_path):
+def test_seed_defines_every_bafu_and_ef_flow_unit_that_qudt_lacks(tmp_path):
     (terms_file, _) = pipeline.run_release("sentier-core", [_source()], _ctx(tmp_path))
     unit_terms = {
         t["iri"]: t for t in pq.read_table(terms_file).to_pylist() if t["type"] == "unit"
     }
-    needed = {iri for iri in bafu_units.UNIT_IRI.values() if iri.startswith(bafu_units.SENTIER)}
+    stated = [*bafu_units.UNIT_IRI.values(), *ef_units.UNIT_IRI.values()]
+    needed = {iri for iri in stated if iri.startswith(bafu_units.SENTIER)}
     assert needed == set(unit_terms)
     assert unit_terms[bafu_units.SENTIER + "M2-YR"]["notation"] == "m2a"
+    assert unit_terms[bafu_units.SENTIER + "KiloGM-YR"]["notation"] == "kga"
+    # QUDT has the ISO standard cubic metre (checked 2026-11-19): not a term of ours
+    assert bafu_units.SENTIER + "SCM_1ATM_15DEG_C_ISO" not in unit_terms
+    assert len({t["notation"] for t in unit_terms.values()}) == len(unit_terms)

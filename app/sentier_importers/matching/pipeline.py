@@ -4,10 +4,21 @@ reason a reviewer can act on.
 
 Tier order: exact name, land-use class, ore composite, synonym, qualifier spelling,
 carbon-oxide rewrite, ion-strip, curated alias, the same eight tiers again applied to
-the region-stripped name (``RegionStripMatcher`` applies that same first-hit rule
-among its own inner matchers), then CAS last. The first matcher whose candidates
-resolve to a ``Match``, or to an ``Unmatched`` other than ``sub_compartment_absent``,
-decides the outcome. ``sub_compartment_absent`` alone is not final (round 4, decision
+the region-stripped name (one ``RegionStripMatcher`` per tier since 2026-11-19, so
+the rules below hold among them as among the plain ones), then CAS last. The first
+matcher whose candidates resolve to a ``Match``, or to an ``Unmatched`` other than
+``sub_compartment_absent``, decides the outcome, with one exception (2026-11-19, the
+tier-order defect): a ``Match`` placed by the UNSPECIFIED fallback is provisional. It
+is kept aside while the later name-based tiers run, and the first of them that
+places a candidate EXACTLY replaces it; whatever else they come back with (another
+fallback, a relaxed placement, an ``Unmatched`` of any reason) is ignored, and the
+provisional match is returned when none places exactly. The CAS tier is not asked:
+it stays last and never overrides a name. The case: BAFU ``Carbonate`` to a lake,
+EF ``Carbonate`` on "water, unspecified" (name tier, fallback) and EF ``Carbonate
+Ion`` on fresh water (synonym tier, exact); the fallback used to win by coming
+first. An exact match in a tier is final as before.
+
+``sub_compartment_absent`` alone is not final (round 4, decision
 2026-09-13): it means this matcher's candidates exist in EF but not in the flow's own
 sub-compartment, which a later tier's candidates may still place correctly (e.g. a
 name-tier hit that only exists on an unplaceable leaf, followed by a CAS-tier hit on
@@ -97,6 +108,19 @@ any placement: a candidate that fails it is not placeable. It still counts as fo
 so a flow with nothing else to land on ends ``sub_compartment_absent`` (naming the
 long-term leaf) and later tiers still get their chance.
 
+The unit gate, 2026-11-19 (spec units-on-ef31-flows, step 5): a candidate that states
+a unit (``EfFlow.stated_unit``) the source has no conversion onto is not a match
+(``sources.bafu.ef_units.unit_agrees``: another physical dimension, unless an
+energy-content or water-density rule covers the pair). BAFU ``Uranium`` in kg had
+matched the activity flow ``Uranium Alpha`` this way, the matcher knowing no unit for
+a factorless EF flow. ``_resolve`` drops such candidates first, before anything else
+looks at them: unlike a long-term candidate, a flow of another unit is another flow
+(EF 3.1 has unit twins, two ``Thorium`` per air context, one in kg and one in kBq)
+and does not count as found. When that leaves a tier nothing, its outcome is
+``Unmatched("unit_mismatch")``, which, like ``sub_compartment_absent``, is not final:
+later tiers still run, and the first of the two kinds met is returned when none
+matches. A candidate that states no unit is not gated.
+
 Round 4, decision 2026-09-13, one more tiebreak inside ``_pick``, tried only after the
 source CAS itself fails to single out exactly one candidate (no source CAS, or the CAS
 matches none or several of them -- a CAS that DOES single one out is positive evidence
@@ -161,7 +185,24 @@ from sentier_importers.matching.matchers import (
     RegionStripMatcher,
     SynonymMatcher,
 )
+from sentier_importers.sources.bafu.ef_units import unit_agrees, unit_mismatch_detail
 from sentier_importers.sources.eaternity.bridge import BafuFlow
+
+#: ``Unmatched`` reasons that do not stop the pipeline: this tier's candidates exist
+#: but cannot be used (wrong sub-compartment, wrong unit), which says nothing of a
+#: later tier's candidates. The first one met is returned when no tier matches.
+_NOT_FINAL = frozenset({"sub_compartment_absent", "unit_mismatch"})
+#: The caveat of a CAS match reached past an earlier tier's non-final outcome, by the
+#: reason of that outcome: CAS is name-blind, so the reader is told why it decided.
+_CAS_AFTER = {
+    "sub_compartment_absent": (
+        "an earlier tier's match could not be placed in this sub-compartment"
+    ),
+    "unit_mismatch": "an earlier tier's match states a unit the source has no conversion to",
+}
+
+#: The tier that never replaces a provisional fallback match (module docstring).
+_CAS_TIER = CasMatcher.tier
 
 #: BAFU sub-compartment -> how EF would have named it, for the fallback caveat.
 #: Absent here: ``unspecified`` (already exact on its own bucket-level leaf) and
@@ -296,34 +337,57 @@ class MatchPipeline:
         ``sub_compartment_absent`` and its own tier is ``cas``, an extra caveat names
         the CAS: CAS is name-blind, so the EF flow it lands on may carry a name that
         does not resemble the source at all (module docstring).
+
+        2026-11-19: ``unit_mismatch`` (every candidate of a tier states a unit the
+        source has no conversion onto) is treated the same way (``_NOT_FINAL``): not
+        final, the first of either kind is what is returned when no tier matches,
+        and a CAS match reached past one says so (``_CAS_AFTER``).
+
+        2026-11-19, tier order: a ``Match`` placed by the UNSPECIFIED fallback in a
+        name-based tier is provisional (module docstring). The later name-based
+        tiers still run, only for an EXACT placement, which replaces it; the CAS
+        tier is not asked. It is returned when no later tier places exactly, and it
+        comes before any ``_NOT_FINAL`` outcome an earlier tier left.
         """
         bucket = bucket_of_bafu_category(flow.category)
         if bucket is None:
             return Unmatched("non_ef_compartment", flow.category)
         if flow.subcategory not in KNOWN_SUBCATEGORIES:
             return Unmatched("unknown_sub_compartment", flow.subcategory)
-        first_absent: Unmatched | None = None
+        first_withheld: Unmatched | None = None
+        provisional: Match | None = None
         for matcher in self._matchers:
+            if provisional is not None and matcher.tier == _CAS_TIER:
+                break
             candidates = matcher.candidates(flow, cas, self._index)
             outcome = self._resolve(candidates, flow, cas, matcher)
             if outcome is None:
                 continue
+            if provisional is not None:
+                if isinstance(outcome, Match) and outcome.placement == Placement.EXACT.value:
+                    return outcome
+                continue
             if isinstance(outcome, Match):
-                if first_absent is not None and outcome.tier == "cas":
+                if outcome.placement == Placement.UNSPECIFIED.value and matcher.tier != _CAS_TIER:
+                    provisional = outcome
+                    continue
+                if first_withheld is not None and outcome.tier == "cas":
                     normalised_cas = normalise_cas(cas)
                     caveat = (
-                        f"an earlier tier's match could not be placed in this "
-                        f"sub-compartment; resolved instead by CAS {normalised_cas}, "
-                        "whose EF target name may not resemble the source name"
+                        f"{_CAS_AFTER[first_withheld.reason]}; resolved instead by CAS "
+                        f"{normalised_cas}, whose EF target name may not resemble the "
+                        "source name"
                     )
                     outcome = replace(outcome, caveats=outcome.caveats + (caveat,))
                 return outcome
-            if outcome.reason != "sub_compartment_absent":
+            if outcome.reason not in _NOT_FINAL:
                 return outcome
-            if first_absent is None:
-                first_absent = outcome
-        if first_absent is not None:
-            return first_absent
+            if first_withheld is None:
+                first_withheld = outcome
+        if provisional is not None:
+            return provisional
+        if first_withheld is not None:
+            return first_withheld
         template = (
             _NO_MATCH_INCLUSIVE
             if self._index.includes_uncharacterised
@@ -341,6 +405,10 @@ class MatchPipeline:
         """Place and disambiguate one matcher's ``candidates``, or ``None`` to try the
         next matcher (an empty ``candidates`` list -- this matcher found nothing in
         the flow's compartment at all).
+
+        First of all the unit gate (2026-11-19, module docstring): candidates that
+        state a unit the source has no conversion onto are dropped; when none is
+        left the outcome is ``unit_mismatch``, naming their units and names.
 
         In order: EXACT placement wins outright; failing that, UNSPECIFIED placement
         (the bucket-level fallback, ``unspecified_fallback`` permitting); failing
@@ -363,6 +431,13 @@ class MatchPipeline:
         """
         if not candidates:
             return None
+        # The one unit gate (module docstring): a candidate that states a unit the
+        # source has no conversion onto is another flow. It is dropped here, before
+        # anything below sees it, so it is neither placed nor counted as found.
+        found = candidates
+        candidates = [c for c in found if unit_agrees(flow, c.flow, self._index)]
+        if not candidates:
+            return Unmatched("unit_mismatch", unit_mismatch_detail(flow, [c.flow for c in found]))
         # The one long-term gate (module docstring): a long-term source only on a
         # long-term leaf, any other source never on one. Every placement below
         # draws from ``placeable``; ``candidates`` itself is kept for what was
@@ -840,7 +915,13 @@ def default_pipeline(
     unmatched in every air sub-compartment instead of resolving through the qualifier
     spelling, and "Water, KR" resolved to (or, for the real EF water families,
     remained ambiguous by) a bare CAS lookup instead of the more specific
-    region-stripped name match.
+    region-stripped name match. The region-stripped tiers are one
+    ``RegionStripMatcher`` per name-based matcher, in the same order (2026-11-19).
+
+    Where this docstring says the pipeline "commits" to the first tier that yields a
+    candidate, two outcomes are excepted (module docstring): a tier whose candidates
+    cannot be used (``_NOT_FINAL``) and a fallback match, which is provisional until
+    the later name-based tiers have had the chance of an exact placement.
 
     ``CarbonOxideMatcher`` and ``IonStripMatcher`` both run right after
     ``QualifierMatcher``, ahead of ``AliasMatcher``: both rewrite a BAFU name to an EF
@@ -865,8 +946,12 @@ def default_pipeline(
         IonStripMatcher(),
         AliasMatcher(aliases),
     ]
+    # one RegionStripMatcher per name-based tier (2026-11-19), not one over all of
+    # them: each tier of the region-stripped name is then a tier of the pipeline,
+    # so a fallback match among them is provisional and a tier that cannot place
+    # its candidates leaves the next its turn, exactly as among the plain tiers.
     return MatchPipeline(
-        [*named, RegionStripMatcher(named), CasMatcher()],
+        [*named, *(RegionStripMatcher([matcher]) for matcher in named), CasMatcher()],
         index,
         unspecified_fallback=unspecified_fallback,
         resource_fallback=resource_fallback,

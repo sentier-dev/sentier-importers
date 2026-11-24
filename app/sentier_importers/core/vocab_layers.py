@@ -7,6 +7,10 @@ splits such rows into the two shapes sentier-vocab stores:
 - term rows: the common columns, ``type``, and the literal slots as ``attributes``;
 - relation rows: one ``subject, predicate, object`` row per IRI-valued slot.
 
+A relations-only part (``Source.relations_only``) states edges on terms other parts
+of its release emit: its rows hold the ``iri`` and relation slots, and yield relation
+rows only.
+
 ``write_layers`` writes one release as ``terms/<release>[-NN].parquet`` and
 ``relations/<release>.parquet``, with the Arrow schemas, row order and shard rule of
 sentier-vocab's own ``layers.py`` so a regenerated release diffs cleanly there.
@@ -86,6 +90,9 @@ TYPE_RELATION_SLOTS: dict[str, dict[str, str]] = {
     },
 }
 
+#: What a row of a relations-only part may hold of the term it is a subject of.
+_SUBJECT_COLUMNS = frozenset({"iri", "type", "source", "status"})
+
 _SHARD_SUFFIX = re.compile(r"-\d{2}$")
 
 
@@ -155,14 +162,31 @@ def _type_of(row: Record, term_type: str, contract: Contract) -> str:
     return own
 
 
+def _refuse_term_content(term: Record) -> None:
+    """A relations-only row describes no term: another part of the release does."""
+    described = sorted(set(term) - _SUBJECT_COLUMNS)
+    if described:
+        raise ValidationError(
+            f"{term.get('iri')}: a row of a relations-only part holds {described}; the term "
+            "is emitted by another part of the release"
+        )
+
+
 def to_layers(
-    rows: Rows, *, term_type: str, release: str, contract: Contract
+    rows: Rows,
+    *,
+    term_type: str,
+    release: str,
+    contract: Contract,
+    relations_only: bool = False,
 ) -> tuple[Rows, Rows]:
     """Split a source's flat rows into ``(term rows, relation rows)`` for ``release``.
 
     Every row gets the release's source term as ``source`` unless it names one.
     ``term_type`` is the type of every row, or ``ROW_TYPE`` when each row carries its
-    own in a ``type`` slot.
+    own in a ``type`` slot. With ``relations_only`` the rows are subjects of relations
+    and not terms: no term row is returned, and a row that holds anything of a term
+    beyond its ``iri`` is an error.
     """
     if term_type != ROW_TYPE and term_type not in contract.types:
         raise ValidationError(f"term type {term_type!r} is not listed in the vocab term contract")
@@ -171,7 +195,10 @@ def to_layers(
     relations: Rows = []
     for row in rows:
         term, edges = _split(row, _type_of(row, term_type, contract), source, contract)
-        terms.append(term)
+        if relations_only:
+            _refuse_term_content(term)
+        else:
+            terms.append(term)
         relations.extend(edges)
     return terms, relations
 
@@ -231,17 +258,18 @@ def write_layers(terms: Rows, relations: Rows, root: Path, release: str) -> dict
 
     Terms are sorted by ``(type, iri)``, relations by ``(subject, predicate, object)``.
     Files of an earlier run for the same release are removed first; a release without
-    relations has no relation file.
+    relations has no relation file, and a relations-only part no term file.
     """
     _check_columns(terms, TERM_SCHEMA)
     _check_columns(relations, RELATION_SCHEMA)
     term_records = [_term_record(r) for r in sorted(terms, key=lambda r: (r["type"], r["iri"]))]
     edges = sorted(relations, key=lambda r: (r["subject"], r["predicate"], r["object"]))
     edge_records = [{name: r.get(name) for name in RELATION_SCHEMA.names} for r in edges]
-    written = {
-        TERMS_DIR: _write_sharded(term_records, TERM_SCHEMA, Path(root) / TERMS_DIR, release),
-        RELATIONS_DIR: [],
-    }
+    written: dict[str, list[Path]] = {TERMS_DIR: [], RELATIONS_DIR: []}
+    if term_records:
+        written[TERMS_DIR] = _write_sharded(
+            term_records, TERM_SCHEMA, Path(root) / TERMS_DIR, release
+        )
     if edge_records:
         written[RELATIONS_DIR] = _write_sharded(
             edge_records, RELATION_SCHEMA, Path(root) / RELATIONS_DIR, release

@@ -1,5 +1,11 @@
 """Brightway-context crosswalk for EF 3.1 flows that carry no characterization factor.
 
+Since 2026-11-19 this crosswalk is only the fallback of ``ef_index.EfFlowIndex``: a
+factorless flow whose vocab term states its exact EF context (an ``ef-context``
+notation, or the ``sub_compartment`` leaf every flow term of the current ef-3.1
+release carries) is placed from that, never from its ``bw-context`` code. What
+follows describes the fallback, for terms of an older vocab checkout.
+
 Every EF 3.1 vocab row (sentier-vocab ``terms/*.parquet``, ``source ==
 ef-3.1``) carries an ``additional_notations`` list with exactly one
 ``bw-context:<code>`` entry -- the Brightway/ecoinvent context code the flow was

@@ -180,9 +180,7 @@ class AgribalyseBrightwayFlowsBase(Source):
             dropped=dropped,
             # reads ef-context notations, as the BAFU pair does: the flows of the
             # Brightway Flows 1.1 part of the ef-3.1 release are link targets here
-            index=EfFlowIndex.from_bytes(
-                cf_bytes, vocab_dir, include_uncharacterised=True, read_ef_context=True
-            ),
+            index=EfFlowIndex.from_bytes(cf_bytes, vocab_dir, include_uncharacterised=True),
             vectors=factor_vectors(cf_bytes),
             vocab_codes=vocab_flow_codes(vocab_dir),
             defects=load_label_defects(),

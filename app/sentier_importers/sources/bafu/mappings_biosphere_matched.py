@@ -70,13 +70,27 @@ from sentier_importers.sources.bafu.ef_units import (
     WATER_USE_METHOD,
     conversion_for,
     nomenclature_target_unit,
-    nomenclature_unit_mismatch,
+    stated_target_unit,
+    unit_agrees,
+    unit_mismatch_detail,
 )
 from sentier_importers.sources.eaternity.bridge import BafuFlow, BafuFlowIndex
 
 _VOCAB_DIR = "ef_vocab"
 _REQUIRED = ("curated", "inferred", "ef_cfs")
 _BIOSPHERE_GROUP = 4
+
+#: How the comment of an entry onto a factorless target opens: no factor, then where
+#: the target unit comes from. A flow that states its unit (``EfFlow.stated_unit``,
+#: 2026-11-19) is given that unit; a flow that states none (an index built without
+#: unit relations) keeps the EF convention for the source's dimension. The
+#: ``sources.brightway_flows.bafu`` align pass knows both sentences.
+_NO_FACTOR = "uncharacterised in EF 3.1: no factor in any method"
+_STATED_UNIT = "target unit is the unit EF states for this flow"
+_CONVENTION_UNIT = (
+    "target unit is the EF convention for this dimension "
+    "(EF states no reference unit for this flow)"
+)
 
 #: Ion / oxidation-state markers BAFU bakes into a name: a trailing ``, ion`` /
 #: `` ion``, a trailing roman numeral (``II``-``VI``), or a trailing ``+``. Used only
@@ -255,7 +269,7 @@ def _sits_on_own_unspecified_leaf(flow: EfFlow) -> bool:
     return flow.leaf == unspecified_leaf(bucket, long_term=False)
 
 
-def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
+def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | Unmatched | None:
     """Round 5, decision 2026-09-14: "for the ones with names: we map, else: nothing".
 
     Called by ``_decide`` only after the pipeline itself has given up entirely
@@ -299,6 +313,12 @@ def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
     eligible (``compartments.is_long_term``, the same test the pipeline's own
     ``long_term_agrees`` gate uses); when no other namesake is left the flow stays
     ``no_ef_flow``. The caveat still names every leaf the name was found on.
+
+    The unit gate holds here too (2026-11-19, ``ef_units.unit_agrees``, the test the
+    pipeline's own ``_resolve`` applies): a namesake that states a unit the source
+    has no conversion onto is not eligible. When that is what leaves no namesake,
+    the outcome is ``Unmatched("unit_mismatch")`` rather than ``None``, so the flow
+    is reported with the reason that applies.
     """
     namesakes = index.by_name_any_bucket(flow.name)
     if not namesakes or any(namesake.characterised for namesake in namesakes):
@@ -310,6 +330,10 @@ def _name_only_match(flow: BafuFlow, index: EfFlowIndex) -> Match | None:
     )
     if not eligible:
         return None
+    refused = [namesake for namesake in eligible if not unit_agrees(flow, namesake, index)]
+    eligible = [namesake for namesake in eligible if namesake not in refused]
+    if not eligible:
+        return Unmatched("unit_mismatch", unit_mismatch_detail(flow, refused))
     chosen = next(
         (namesake for namesake in eligible if _sits_on_own_unspecified_leaf(namesake)),
         eligible[0],
@@ -356,13 +380,12 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
        b. uncharacterised (round 5, decision 2026-09-14): the nomenclature package
           (``mappings_biosphere_nomenclature``) uses ``nomenclature_target_unit``
           instead, at entry-building time, not here (an EF-convention unit per
-          physical dimension, with its own factor when the source differs). But a
-          name in ``ef_units.NOMENCLATURE_TARGET_DIMENSION`` (EF's "Wood", counted by
-          mass) has no such fixed factor for a wrong-dimension source at all (BAFU
-          also reports standing wood by volume) -- ``ef_units.
-          nomenclature_unit_mismatch`` withholds that pairing here, before
-          ``nomenclature_target_unit`` is ever asked to guess a conversion that does
-          not exist;
+          physical dimension, with its own factor when the source differs), or,
+          when the flow states its unit, ``stated_target_unit``. Nothing is withheld
+          here for it: a target that states a unit the source has no conversion onto
+          never becomes a ``Match`` (the unit gate, ``ef_units.unit_agrees``). The
+          name table that withheld a volume source of EF "Wood" here is retired
+          (2026-11-19, ``ef_units`` module docstring);
     4. name-only alignment (round 5, decision 2026-09-14, ``_name_only_match``): only
        when the pipeline came back with a plain ``no_ef_flow`` AND ``index`` is the
        inclusive one (``EfFlowIndex.includes_uncharacterised`` -- the nomenclature
@@ -417,8 +440,8 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
     (``matching/aliases.yaml``), decision (g) = the mine-gas energy content
     (``ef_units.ENERGY_CONTENT``/``ENERGY_CONTENT_NOTES``). Round 5, decision
     2026-09-14 = name-only alignment (rule 4 above, ``_name_only_match``) and the
-    nomenclature-package dimension-mismatch withholding (rule 3b above,
-    ``ef_units.nomenclature_unit_mismatch``).
+    nomenclature-package dimension-mismatch withholding (rule 3b above, retired
+    2026-11-19 for the unit gate).
     """
     if flow.name.startswith(_NON_FRESHWATER):
         return Unmatched(
@@ -451,16 +474,6 @@ def _decide(flow: BafuFlow, outcome: Match | Unmatched, index: EfFlowIndex) -> M
                     f"BAFU unit {flow.unit} vs EF reference unit {ef_unit} for "
                     f"{ef_flow.name}; no fixed conversion",
                 )
-        else:
-            # round 5, decision 2026-09-14: a name in
-            # ef_units.NOMENCLATURE_TARGET_DIMENSION fixes one physical dimension for
-            # the substance (EF's "Wood" is counted by mass); a source outside it has
-            # no fixed conversion the way water's density does, so it is withheld
-            # rather than guessed. Reached by either an ordinary pipeline Match (an
-            # alias landing on an uncharacterised target) or a name-only one.
-            mismatch = nomenclature_unit_mismatch(flow, ef_flow)
-            if mismatch is not None:
-                return Unmatched("unit_mismatch", mismatch)
         return outcome
     return _refine_unmatched(flow, outcome)
 
@@ -550,7 +563,11 @@ class BafuEfMatchedSource(Source):
 
         For an uncharacterised target (the nomenclature package only -- ``_decide``
         never lets one reach here for the default, characterised-only source), there is
-        no EF reference unit at all: the target unit is ``nomenclature_target_unit``'s
+        no inferred EF reference unit. When the flow states its unit
+        (``EfFlow.stated_unit``, 2026-11-19) the target unit is that unit, with the
+        factor and caveat of ``ef_units.stated_target_unit``, and the comment says
+        so (``_STATED_UNIT``). When it states none, the target unit is
+        ``nomenclature_target_unit``'s
         EF-convention spelling for the source unit's physical dimension (round 5,
         decision 2026-09-14), and ``conversion_factor`` is set whenever that function
         returns a factor (a source unit already at the EF-convention scale gets
@@ -559,8 +576,10 @@ class BafuEfMatchedSource(Source):
         distinct cases, never both disclosed at once:
 
         - the target is a resource-bucket flow whose name is energy-carrier-shaped
-          (``ef_flow.bucket == "resource"`` and ``ef_index.UNCERTAIN_RESOURCE_NAME``
-          matches, decision (f)(2), 2026-09-13) -- the bw-context crosswalk cannot
+          and whose context came from the crosswalk (``ef_flow.context_uncertain``,
+          ``ef_flow.bucket == "resource"`` and ``ef_index.UNCERTAIN_RESOURCE_NAME``
+          matches, decision (f)(2), 2026-09-13; since 2026-11-19 a flow placed by
+          its exact leaf keeps its context) -- the bw-context crosswalk cannot
           reach an EF energy-resource branch at all (see
           ``ef_index.UNCERTAIN_RESOURCE_NAME``'s own docstring, which is specifically
           about the *resource* branch the crosswalk cannot reach; an emission-bucket
@@ -614,6 +633,7 @@ class BafuEfMatchedSource(Source):
 
         uncertain_energy = (
             not ef_flow.characterised
+            and ef_flow.context_uncertain  # placed by the crosswalk, not exactly
             and ef_flow.bucket == "resource"
             and bool(UNCERTAIN_RESOURCE_NAME.match(ef_flow.name))
         )
@@ -639,16 +659,17 @@ class BafuEfMatchedSource(Source):
         )
 
         if not ef_flow.characterised:
-            target_unit, rescale_factor = nomenclature_target_unit(flow, ef_flow)
+            if ef_flow.stated_unit is not None:
+                target_unit, rescale_factor, unit_caveat = stated_target_unit(flow, ef_flow)
+                unit_sentence = _STATED_UNIT
+            else:
+                target_unit, rescale_factor = nomenclature_target_unit(flow, ef_flow)
+                unit_caveat, unit_sentence = None, _CONVENTION_UNIT
             target["unit"] = target_unit
             entry: Record = {"source": source, "target": target}
             if rescale_factor is not None:
                 entry["conversion_factor"] = rescale_factor
-            comments = [
-                "uncharacterised in EF 3.1: no factor in any method; target unit is "
-                "the EF convention for this dimension (EF states no reference unit "
-                "for this flow)"
-            ]
+            comments = [f"{_NO_FACTOR}; {unit_sentence}"]
             if uncertain_energy and not name_only:
                 comments.append("EF context not recoverable from the source context code")
             elif ef_flow.context_uncertain and not name_only:
@@ -680,6 +701,8 @@ class BafuEfMatchedSource(Source):
                 comments.extend(match.caveats)
             if resource_correction_caveat:
                 comments.append(resource_correction_caveat)
+            if unit_caveat:
+                comments.append(unit_caveat)
             if rescale_factor is not None:
                 comments.append(f"amount rescaled by {rescale_factor:g}")
             entry["comment"] = "; ".join(comments)

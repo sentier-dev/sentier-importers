@@ -14,7 +14,7 @@ from sentier_importers.core import deliver as deliver_mod
 from sentier_importers.core import schema_provider, vocab_contract, vocab_layers
 from sentier_importers.core import write as write_mod
 from sentier_importers.core.context import RunContext
-from sentier_importers.core.errors import DeliveryError, FetchError, RegistryError
+from sentier_importers.core.errors import DeliveryError, FetchError, RegistryError, ValidationError
 from sentier_importers.core.registry import DATA_ROOT_VAR
 from sentier_importers.core.source import Source, SourceConfig
 from sentier_importers.core.targets import VOCAB_CONTRACT, Target, get_target
@@ -104,20 +104,35 @@ def _vocab_part(source: Source, target: Target, ctx: RunContext) -> tuple[Rows, 
         term_type=config.term_type,
         release=config.category,
         contract=_contract(target, ctx),
+        relations_only=source.relations_only,
     )
 
 
+def _validated_part(source: Source, target: Target, ctx: RunContext) -> tuple[Rows, Rows]:
+    """One vocab part's layers, checked on their own. The subjects of a
+    relations-only part are terms of other parts: here they are typed by namespace,
+    and ``run_release`` checks that each one is a term of the release."""
+    terms, relations = _vocab_part(source, target, ctx)
+    vocab_contract.validate(
+        terms,
+        relations,
+        _contract(target, ctx),
+        release=source.config.category,
+        complete=False,
+        subjects_elsewhere=source.relations_only,
+    )
+    return terms, relations
+
+
 def validate_source(source: Source, ctx: RunContext) -> int:
-    """Run the pipeline up to and including validation; return the row count."""
+    """Run the pipeline up to and including validation; return the row count
+    (terms of a vocab part, relations of a relations-only one)."""
     config = source.config
     target = get_target(config.target)
     if not _is_vocab(target):
         return len(_rows(source, target, ctx))
-    terms, relations = _vocab_part(source, target, ctx)
-    vocab_contract.validate(
-        terms, relations, _contract(target, ctx), release=config.category, complete=False
-    )
-    return len(terms)
+    terms, relations = _validated_part(source, target, ctx)
+    return len(relations) if source.relations_only else len(terms)
 
 
 def _run_vocab_part(source: Source, target: Target, ctx: RunContext) -> Path:
@@ -127,21 +142,21 @@ def _run_vocab_part(source: Source, target: Target, ctx: RunContext) -> Path:
             f"source {config.name!r} is one part of the vocab release {config.category!r}; "
             f"a release is delivered whole: run --release {config.category}"
         )
-    terms, relations = _vocab_part(source, target, ctx)
-    vocab_contract.validate(
-        terms, relations, _contract(target, ctx), release=config.category, complete=False
-    )
+    terms, relations = _validated_part(source, target, ctx)
     root = ctx.output_dir / config.target / PARTS_DIR / config.name
-    return vocab_layers.write_layers(terms, relations, root, config.category)[
-        vocab_layers.TERMS_DIR
-    ][0]
+    written = vocab_layers.write_layers(terms, relations, root, config.category)
+    layer = vocab_layers.RELATIONS_DIR if source.relations_only else vocab_layers.TERMS_DIR
+    if not written[layer]:
+        raise ValidationError(f"source {config.name!r} emits no row for the {layer} layer")
+    return written[layer][0]
 
 
 def run_source(source: Source, ctx: RunContext) -> Path:
     """Run the full pipeline. Emits to ``output_dir``; delivers a PR unless dry-run.
 
     A vocab source is staged as its two layer files under
-    ``<output_dir>/<target>/parts/<source>/`` and is never delivered on its own.
+    ``<output_dir>/<target>/parts/<source>/`` (a relations-only part as its relation
+    file alone) and is never delivered on its own.
     """
     config = source.config
     target = get_target(config.target)

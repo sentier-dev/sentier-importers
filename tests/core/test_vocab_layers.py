@@ -251,3 +251,41 @@ def test_read_iris_skips_the_named_release(tmp_path):
     vocab_layers.write_layers([_term(3)], [], tmp_path, "other")
     assert vocab_layers.read_iris(tmp_path / "terms", skip_release="demo-1") == {f"{FLOWS}000003"}
     assert vocab_layers.read_iris(tmp_path / "missing", skip_release="demo-1") == set()
+
+
+def test_a_relations_only_part_yields_edges_and_no_term(contract):
+    rows = [{"iri": FLOWS + "a", "unit": "http://qudt.org/vocab/unit/KiloGM"}]
+    terms, relations = vocab_layers.to_layers(
+        rows, term_type="elementary-flow", release="demo-1", contract=contract, relations_only=True
+    )
+    assert terms == []
+    assert relations == [
+        {
+            "subject": FLOWS + "a",
+            "predicate": "qudt:hasUnit",
+            "object": "http://qudt.org/vocab/unit/KiloGM",
+            "source": SOURCE,
+            "status": "draft",
+        }
+    ]
+
+
+@pytest.mark.parametrize("extra", [{"pref_label": "a"}, {"compartment": "air"}])
+def test_a_relations_only_row_may_not_describe_the_term(contract, extra):
+    rows = [{"iri": FLOWS + "a", "unit": "http://qudt.org/vocab/unit/KiloGM", **extra}]
+    with pytest.raises(ValidationError, match="relations-only"):
+        vocab_layers.to_layers(
+            rows,
+            term_type="elementary-flow",
+            release="demo-1",
+            contract=contract,
+            relations_only=True,
+        )
+
+
+def test_write_layers_without_terms_writes_no_term_file(tmp_path):
+    edge = {"subject": FLOWS + "a", "predicate": "skos:related", "object": FLOWS + "b"}
+    written = vocab_layers.write_layers([], [edge], tmp_path, "demo-1")
+    assert written["terms"] == []
+    assert not (tmp_path / "terms").exists()
+    assert written["relations"] == [tmp_path / "relations" / "demo-1.parquet"]

@@ -12,9 +12,10 @@ exactly those (spec 2026-11-19-ef31-flows-from-brightway-flows-1.1).
   (``flows.is_emitted``), the ``jrc`` input by every ``FLOW_uuid`` of the CF table.
 - Label, alt labels, CAS number, formula and ``ec:`` notations as the harmonised part.
   The JRC flow name is an alt label when it differs from the list's label.
-- ``compartment`` and an ``ef-context:<path>`` notation from the flow's own entry in
-  the file's EF correspondence, which gives the exact EF context path. A flow without
-  such an entry is an error, never a row without context.
+- ``compartment``, ``sub_compartment`` (the leaf of the path, see
+  ``agribalyse.ef_context``) and an ``ef-context:<path>`` notation from the flow's own
+  entry in the file's EF correspondence, which gives the exact EF context path. A flow
+  without such an entry is an error, never a row without context.
 - No ``bw-context`` notation: the 1.1.0 context codes do not mean what the codes of
   the earlier edition mean (``envi-air-grle-ru10pesq``), and ``matching.bw_context``
   would misread them. ``matching.ef_index`` places these flows from ``ef-context``.
@@ -31,6 +32,8 @@ from sentier_importers.core.errors import ParseError, ValidationError
 from sentier_importers.core.source import Source
 from sentier_importers.core.types import RawData, Record, Records, Rows
 from sentier_importers.matching.bw_context import EF_CONTEXT_PREFIX
+from sentier_importers.sources.agribalyse import ef_context
+from sentier_importers.sources.agribalyse.ef_context import correspondence_path as context_path
 from sentier_importers.sources.agribalyse.flows import FLOWS_SCHEME, alt_labels
 from sentier_importers.sources.agribalyse.flows_jrc import (
     _harmonised_identifiers,
@@ -52,9 +55,6 @@ HARMONISED = "harmonised"
 #: Registry input: the JRC CF table, whose flows the harmonised and JRC parts cover.
 JRC = "jrc"
 _JRC_UUID = "FLOW_uuid"
-#: Level separator of a context path in the file, and in an ``ef-context`` notation.
-_FILE_SEP = "/"
-_SEP = " / "
 
 
 def _jrc_identifiers(raw: RawData) -> frozenset[str]:
@@ -70,9 +70,22 @@ def _jrc_identifiers(raw: RawData) -> frozenset[str]:
     return identifiers
 
 
-def context_path(context: str) -> str:
-    """An EF context path of the file (``a/b/c``) in the ``" / "``-joined spelling."""
-    return _SEP.join(level.strip() for level in context.split(_FILE_SEP) if level.strip())
+def covered_identifiers(inputs: Mapping[str, RawData]) -> frozenset[str]:
+    """Identifiers the harmonised and JRC parts of the release emit, from their inputs."""
+    for name in (HARMONISED, JRC):
+        if name not in inputs:
+            raise ValidationError(f"input {name!r} not fetched: the registry must declare it")
+    return _harmonised_identifiers(inputs[HARMONISED].content) | _jrc_identifiers(inputs[JRC])
+
+
+def new_flows(bw: BrightwayFlows, covered: frozenset[str]) -> list[tuple[ConsensusFlow, str]]:
+    """The EF flows of the file this part emits, each with its label: those with a
+    label whose identifier is not among ``covered``."""
+    return [
+        (flow, flow.label.strip())
+        for flow in bw.flows.values()
+        if flow.is_ef and flow.identifier not in covered and flow.label.strip()
+    ]
 
 
 def _own_links(bw: BrightwayFlows) -> Mapping[str, Link]:
@@ -103,6 +116,7 @@ def _row(flow: ConsensusFlow, label: str, link: Link) -> Record:
         row["formula"] = flow.formula
     if (compartment := compartment_for_path(path)) is not None:
         row["compartment"] = compartment
+    row[ef_context.SUB_COMPARTMENT] = ef_context.leaf(path)
     row["additional_notations"] = [
         *(f"ec:{ec}" for ec in flow.ec_numbers if ec),
         f"{EF_CONTEXT_PREFIX}{path}",
@@ -121,24 +135,10 @@ class BrightwayFlowsVocabSource(Source):
     def parse(self, raw: RawData) -> Records:
         return [{"bw": load(raw.content, self.expected_sha256)}]
 
-    def _excluded(self) -> frozenset[str]:
-        """Identifiers the two existing parts of the release emit."""
-        for name in (HARMONISED, JRC):
-            if name not in self.inputs:
-                raise ValidationError(f"input {name!r} not fetched: the registry must declare it")
-        return _harmonised_identifiers(self.inputs[HARMONISED].content) | _jrc_identifiers(
-            self.inputs[JRC]
-        )
-
     def transform(self, records: Records) -> Rows:
         bw: BrightwayFlows = records[0]["bw"]
-        skip = self._excluded()
         own = _own_links(bw)
-        new = [
-            (flow, flow.label.strip())
-            for flow in bw.flows.values()
-            if flow.is_ef and flow.identifier not in skip and flow.label.strip()
-        ]
+        new = new_flows(bw, covered_identifiers(self.inputs))
         orphans = sorted(flow.identifier for flow, _ in new if flow.identifier not in own)
         if orphans:
             raise ValidationError(

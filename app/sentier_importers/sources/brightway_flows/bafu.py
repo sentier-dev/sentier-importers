@@ -90,9 +90,11 @@ _CONVENTION_UNIT = (
     "target unit is the EF convention for this dimension "
     "(EF states no reference unit for this flow)"
 )
+#: The same, of a factorless target that states its unit (2026-11-19).
+_STATED_UNIT = "target unit is the unit EF states for this flow"
 #: Sentences of an entry's comment that describe a target without factors. They turn
 #: false when a reviewed decision moves the entry onto a target that scores.
-_NO_SCORE_SENTENCES = frozenset({UNCHARACTERISED, ALL_ZERO, _CONVENTION_UNIT})
+_NO_SCORE_SENTENCES = frozenset({UNCHARACTERISED, ALL_ZERO, _CONVENTION_UNIT, _STATED_UNIT})
 
 
 @dataclass(frozen=True)
@@ -390,9 +392,7 @@ class BafuBrightwayFlowsBase(Source):
             # the one index that reads ef-context notations: the flows of the
             # Brightway Flows 1.1 part of the ef-3.1 release are reachable through
             # their links here, and stay out of our own name matcher's index
-            index=EfFlowIndex.from_bytes(
-                cf_bytes, vocab_dir, include_uncharacterised=True, read_ef_context=True
-            ),
+            index=EfFlowIndex.from_bytes(cf_bytes, vocab_dir, include_uncharacterised=True),
             vectors=factor_vectors(cf_bytes),
             vocab_codes=vocab_flow_codes(vocab_dir),
             defects=load_label_defects(),

@@ -72,7 +72,7 @@ VOCAB = [
     vocab_row("ef-toxic", "Toxic"),
     vocab_row("ef-thorium-k", "Thorium-232"),
     # only an ef-context notation, like the Brightway Flows 1.1 part of the ef-3.1
-    # release: these sources read it (read_ef_context=True), our own matcher does not
+    # release
     vocab_row("ef-borax", "Borax", cas=BORAX_CAS, ef_context=AIR_UNSPEC),
     vocab_row("ef-thorium", "Thorium-232", bw="envi-air-unkn"),
     vocab_row("ef-long", "Longterm", bw="envi-air-unkn"),
@@ -721,6 +721,12 @@ def test_a_reviewed_target_that_scores_drops_what_the_old_comment_said_of_no_fac
     assert kind == "retargeted" and new["comment"] == f"kept note; {REVIEWED}"
     zero = {**entry(TOXIC, "ef-zero", "zero"), "comment": "all factors are zero in EF 3.1"}
     assert bafu.retarget(zero, state)[0]["comment"] == REVIEWED
+    stated = (
+        "uncharacterised in EF 3.1: no factor in any method; target unit is the unit EF "
+        "states for this flow; kept note"
+    )
+    new, _ = bafu.retarget({**entry(TOXIC, "ef-borax", "Borax"), "comment": stated}, state)
+    assert new["comment"] == f"kept note; {REVIEWED}"
     # their target carries no factor: nothing the old comment says of ours is touched
     kept, _ = bafu.retarget({**entry(BORAX, "ef-toxic", "toxic"), "comment": old}, state)
     assert kept["comment"] == f"{old}; {REVIEWED}"
